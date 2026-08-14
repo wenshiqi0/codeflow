@@ -27,7 +27,7 @@ import { fileURLToPath } from "node:url";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { type ExtensionAPI, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { blockedReasons, delegationPointer } from "./handoff-gate";
+import { blockedReasons, delegationPointer, STREAM_IDLE_ABORT_MARKER } from "./handoff-gate";
 import {
 	finishHandoff as finishHandoffState,
 	openHandoff as openHandoffState,
@@ -122,6 +122,7 @@ function reconcileHandoff(
 		exitCode: result.exitCode,
 		stopReason: result.stopReason,
 		aborted: result.aborted,
+		watchdogAborted: result.stderr.includes(STREAM_IDLE_ABORT_MARKER),
 		receiptPresent,
 	});
 	const recorded = readHandoffState(handoff.statePath);

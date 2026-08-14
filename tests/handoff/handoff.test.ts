@@ -418,6 +418,84 @@ describe("finish", () => {
 		});
 		expect(eventNames().some((name) => name.includes("run_finished"))).toBe(false);
 	});
+
+	test("a handoff-less planner's delegations never end the run", () => {
+		// Incident reproduction: codeflow-task opens every delegation with
+		// parentId: process.env.CODEFLOW_HANDOFF_ID ?? null and depth: 1. A
+		// depth-0 planner started directly has no handoff id, so its children
+		// are recorded parentless at depth 1 — and a depth-1 finish must still
+		// not end the run, because the planner above them is the run's root
+		// even when it holds no handoff id itself.
+		const saved = process.env.CODEFLOW_HANDOFF_ID;
+		delete process.env.CODEFLOW_HANDOFF_ID;
+		try {
+			const openDelegation = (role: string) => {
+				const result = openHandoff(paths, {
+					role,
+					depth: 1,
+					parentId: process.env.CODEFLOW_HANDOFF_ID ?? null,
+					body: "Goal: x\n",
+				});
+				// Prove the precondition: these delegations really are parentless.
+				expect(readJson<any>(result.state).lineage.parent_handoff_id).toBe(null);
+				return result;
+			};
+			const passed = openDelegation("test-writer");
+			const failed = openDelegation("coder");
+			const blocked = openDelegation("verifier");
+
+			finishHandoff(paths, {
+				handoffId: passed.handoff_id,
+				status: "PASS",
+				summary: "done",
+				receipt: receiptFile("pass.json", { status: "PASS" }),
+			});
+			finishHandoff(paths, {
+				handoffId: failed.handoff_id,
+				status: "FAIL",
+				summary: "nope",
+				receipt: receiptFile("fail.json", { status: "FAIL" }),
+			});
+			finishHandoff(paths, {
+				handoffId: blocked.handoff_id,
+				status: "BLOCKED",
+				summary: "stuck",
+				blockedReasons: ["PROVIDER_FAILURE"],
+			});
+
+			// All three finishes landed, so the run_finished assertions below
+			// are not vacuous.
+			expect(eventNames().filter((name) => name.includes("handoff_finished"))).toHaveLength(3);
+			expect(eventNames().some((name) => name.includes("run_finished"))).toBe(false);
+			const spoolNames = fs.existsSync(paths.spool) ? fs.readdirSync(paths.spool) : [];
+			expect(spoolNames.some((name) => name.includes("run_finished"))).toBe(false);
+		} finally {
+			if (saved === undefined) delete process.env.CODEFLOW_HANDOFF_ID;
+			else process.env.CODEFLOW_HANDOFF_ID = saved;
+		}
+	});
+
+	test("the root handoff finishing emits exactly one run_finished", () => {
+		// One run, one ending: a duplicate run_finished would double-count the
+		// run in the metadata plane.
+		const result = open();
+		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done" });
+		expect(eventNames().filter((name) => name.includes("run_finished"))).toHaveLength(1);
+	});
+
+	test("a parented handoff never ends the run, even at depth 0", () => {
+		// Defensive combination: depth says root, lineage says child. The
+		// parent link must win — somebody delegated this work, so its finish
+		// is not the run's end.
+		const child = openHandoff(paths, {
+			role: "coder",
+			depth: 0,
+			parentId: "h00001-planner",
+			body: "Goal: x\n",
+		});
+		finishHandoff(paths, { handoffId: child.handoff_id, status: "PASS", summary: "done" });
+		expect(eventNames().some((name) => name.includes("run_finished"))).toBe(false);
+	});
 });
 
 describe("receipt validation", () => {

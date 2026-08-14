@@ -668,8 +668,14 @@ export function finishHandoff(paths: RunPaths, options: FinishOptions): FinishRe
 	if (options.status === "BLOCKED") payload.reasons = [...reasons];
 	emitHandoffEvent(paths, handoffId, "handoff_finished", options.status, payload);
 
-	// Only the root handoff finishing means the run is over.
-	if (!state.lineage?.parent_handoff_id) {
+	// Only the root handoff finishing means the run is over. Depth must be
+	// part of the check, not parentage alone: a depth-0 role started without
+	// a handoff of its own has no CODEFLOW_HANDOFF_ID to pass down, so its
+	// delegations (always opened at depth 1 by extensions/codeflow-task) are
+	// recorded parentless — parentage alone cannot tell "run root" from
+	// "delegated by a handoff-less root". runnerExited below sets the
+	// precedent for gating run-level events on depth 0.
+	if ((state.depth ?? 0) === 0 && !state.lineage?.parent_handoff_id) {
 		emitRunEvent(paths, "run_finished", options.status, {
 			ref: `handoffs/${handoffId}/state.json`,
 			handoff_id: handoffId,
