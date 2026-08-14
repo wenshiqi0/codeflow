@@ -1,0 +1,56 @@
+{
+  "providers": {
+    "zhipuai-coding-plan": {
+      "name": "ZhipuAI Coding Plan",
+      "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+      "apiKey": "$ZHIPU_API_KEY",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "glm-5.2",
+          "name": "GLM-5.2"
+        }
+      ]
+    },
+    "deepseek": {
+      "name": "DeepSeek",
+      "baseUrl": "https://api.deepseek.com",
+      "apiKey": "$DEEPSEEK_API_KEY",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro"
+        },
+        {
+          "id": "deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash"
+        }
+      ]
+    },
+    "kimi": {
+      "name": "Moonshot Kimi Coding",
+      "baseUrl": "https://api.kimi.com/coding/v1",
+      "apiKey": "$KIMI_API_KEY",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "k3",
+          "name": "Kimi K3"
+        }
+      ]
+    },
+    "mimo": {
+      "name": "MiMo",
+      "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+      "apiKey": "$MIMO_API_KEY",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "mimo-v2.5-pro",
+          "name": "MiMo v2.5 Pro"
+        }
+      ]
+    }
+  }
+}

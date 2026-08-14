@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Locate the pi CLI and run it under Bun.
+#
+# Bun rather than Node is deliberate: the extensions are TypeScript and are
+# loaded directly, with no build step.
+set -euo pipefail
+
+# An explicit path wins, for pinning a version or testing a build.
+if [[ -n "${CODEFLOW_PI_CLI:-}" && -f "$CODEFLOW_PI_CLI" ]]; then
+  exec bun "$CODEFLOW_PI_CLI" "$@"
+fi
+
+REL="@earendil-works/pi-coding-agent/dist/cli.js"
+
+for candidate in \
+  "$HOME/.bun/install/global/node_modules/$REL" \
+  "/usr/local/lib/node_modules/$REL" \
+  "/opt/homebrew/lib/node_modules/$REL"; do
+  if [[ -f "$candidate" ]]; then
+    exec bun "$candidate" "$@"
+  fi
+done
+
+# Fall back to the active npm prefix, which covers version-managed installs
+# (nvm, fnm, volta) whose paths cannot be enumerated ahead of time.
+if command -v npm >/dev/null 2>&1; then
+  NPM_ROOT="$(npm root -g 2>/dev/null || true)"
+  if [[ -n "$NPM_ROOT" && -f "$NPM_ROOT/$REL" ]]; then
+    exec bun "$NPM_ROOT/$REL" "$@"
+  fi
+fi
+
+echo "error: pi not found. Install it with:" >&2
+echo "  bun install -g @earendil-works/pi-coding-agent" >&2
+echo "Then verify with scripts/doctor.sh" >&2
+exit 1

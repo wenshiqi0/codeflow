@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Codeflow CLI dispatcher.
+#
+# The runtime is global — it lives beside this script inside the installed
+# skill, not inside the project being worked on. Only run artifacts land in
+# the project, under .codeflow/runs/. That is why RUNTIME_DIR is resolved
+# relative to this file while the working directory becomes the target
+# repository root.
+set -euo pipefail
+
+RUNTIME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CODEFLOW_HOME="${CODEFLOW_HOME:-$HOME/.codeflow}"
+
+HANDOFF_SCRIPTS="$RUNTIME_DIR/skills/write-handoff/scripts"
+OBSERVER_DIR="$RUNTIME_DIR/observer"
+
+# Run artifacts belong to the repository being changed, so every command
+# operates from its root. Outside a repository the current directory is the
+# project: codeflow never silently writes somewhere the user is not standing.
+if PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  cd "$PROJECT_ROOT"
+fi
+
+export PI_CODING_AGENT_DIR="$RUNTIME_DIR"
+export PATH="$RUNTIME_DIR/bin:$PATH"
+
+# Metadata inspection must work without credentials configured.
+if [[ "${1:-}" == "debug" ]]; then
+  shift
+  exec python3 "$RUNTIME_DIR/bin/pi-runtime" debug "$@"
+fi
+
+# Credentials come from the environment. A global env file is a convenience
+# for keys that are the same everywhere; an exported shell variable always
+# wins, so a per-project override needs no file and leaves no trace on disk.
+INHERITED_KIMI_API_KEY="${KIMI_API_KEY:-}"
+INHERITED_ZHIPU_API_KEY="${ZHIPU_API_KEY:-}"
+INHERITED_MIMO_API_KEY="${MIMO_API_KEY:-}"
+INHERITED_DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-}"
+if [[ -f "$CODEFLOW_HOME/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$CODEFLOW_HOME/.env"
+  set +a
+fi
+[[ -n "$INHERITED_KIMI_API_KEY" ]] && export KIMI_API_KEY="$INHERITED_KIMI_API_KEY"
+[[ -n "$INHERITED_ZHIPU_API_KEY" ]] && export ZHIPU_API_KEY="$INHERITED_ZHIPU_API_KEY"
+[[ -n "$INHERITED_MIMO_API_KEY" ]] && export MIMO_API_KEY="$INHERITED_MIMO_API_KEY"
+[[ -n "$INHERITED_DEEPSEEK_API_KEY" ]] && export DEEPSEEK_API_KEY="$INHERITED_DEEPSEEK_API_KEY"
+
+case "${1:-}" in
+  handoff|agents)
+    exec python3 "$HANDOFF_SCRIPTS/handoff_state.py" "$@"
+    ;;
+  facts)
+    shift
+    exec python3 "$HANDOFF_SCRIPTS/facts_cli.py" "$@"
+    ;;
+  test-patch)
+    shift
+    exec python3 "$RUNTIME_DIR/skills/write-tests/scripts/test_patch.py" "$@"
+    ;;
+  source-check)
+    shift
+    exec python3 "$RUNTIME_DIR/skills/implement-change/scripts/source_safety.py" "$@"
+    ;;
+  wait)
+    shift
+    exec python3 "$OBSERVER_DIR/wait.py" "$@"
+    ;;
+  probe)
+    shift
+    exec python3 "$OBSERVER_DIR/probe.py" "$@"
+    ;;
+  agent-status)
+    shift
+    exec python3 "$RUNTIME_DIR/bin/agent-status" "$@"
+    ;;
+  run)
+    shift
+    exec python3 "$RUNTIME_DIR/bin/pi-runtime" run "$@"
+    ;;
+  session)
+    shift
+    exec python3 "$RUNTIME_DIR/bin/pi-runtime" session "$@"
+    ;;
+  command)
+    shift
+    exec python3 "$RUNTIME_DIR/bin/pi-runtime" run --agent command "$@"
+    ;;
+  *)
+    exec pi "$@"
+    ;;
+esac

@@ -1,0 +1,10 @@
+# Run artifacts, if codeflow is ever run against this repository itself
+.codeflow/
+
+# Credentials never belong in the repository; keys come from the environment
+.env
+
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store
