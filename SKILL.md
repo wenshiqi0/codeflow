@@ -1,11 +1,15 @@
 ---
 name: codeflow
-description: Run a test-first multi-agent coding workflow, where specialized roles on separate models write failing tests, implement, and verify a change under a handoff protocol. Use when a code change deserves proven tests rather than a direct edit, or when observing, diagnosing, or resuming a codeflow run that is already in progress.
+description: Explicitly invoked Codeflow test-first multi-agent workflow. Use only when the user asks for Codeflow by name or explicitly asks to observe, diagnose, or resume an existing Codeflow run; never auto-select it for an ordinary coding task.
 ---
 
 # Codeflow
 
 You are the **observe loop**. Codeflow's roles do the work in their own processes on their own models; you start a run, watch it from metadata, and report. Their context is not your context — that separation is the whole point, and reading their transcripts would spend the tokens the split was meant to save.
+
+## Activation gate
+
+Codeflow is opt-in. Start or resume a run only after the user explicitly asks for Codeflow — for example, “use Codeflow”, “start a Codeflow run”, or “resume Codeflow run `<id>`”. Do not infer Codeflow from the size of a change, the presence of tests, a repository's conventions, or your own judgment that a task would benefit from a multi-agent workflow. Without that explicit request, use the normal direct workflow.
 
 ## Your vocabulary
 
