@@ -1,0 +1,13 @@
+{
+  "name": "codeflow",
+  "private": true,
+  "type": "module",
+  "description": "Test-first multi-agent coding workflow, packaged as a single skill",
+  "scripts": {
+    "test": "bun test",
+    "doctor": "./scripts/doctor.sh"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

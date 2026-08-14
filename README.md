@@ -26,14 +26,17 @@ Codeflow 把编码工作分成两层，两层之间只通过元数据通信：
 
 ```text
 SKILL.md              # 外环协议：如何发起、如何观察、何时停机
-scripts/              # 外环与内环之间的包装层
-references/           # 渐进披露：handoff 契约、回执 schema、停机语义
+scripts/              # doctor 等运维脚本
+references/           # 渐进披露：handoff 契约、事实台账、角色与模型绑定
 runtime/              # 内环运行时
 ├── agents/           #   角色定义，frontmatter 是模型绑定的唯一事实源
-├── extensions/       #   pi 扩展（委派、活性、上下文）
-├── bin/              #   codeflow / pi / pi-runtime
+├── lib/              #   状态机、事实台账、序号分配、CLI（TypeScript）
+├── extensions/       #   pi 扩展（委派、上下文、活性）
+├── bin/              #   codeflow 分发器 + pi 定位器
 └── models.json       #   provider 注册表
 ```
+
+`lib/` 里的模块既是 CLI 实现，也被扩展直接 import——同一份逻辑只有一个实现，不存在跨语言副本漂移。
 
 运行时全局单份，不按项目安装。目标项目里只多出 `.codeflow/runs/`（gitignored），无需修改根 `AGENTS.md`——skill 本身就是入口。
 
@@ -45,7 +48,7 @@ Codeflow 用 **run 内的共享事实缓存**解决这个问题：角色确认�
 
 ## 安装
 
-要求：macOS 或 Linux、Git、Bun 1.3+、Python 3。
+要求：macOS 或 Linux、Git、Bun 1.3+。运行时全部是 TypeScript，由 Bun 直接执行，没有构建步骤，也不需要第二个运行时。
 
 ```bash
 git clone git@github.com:wenshiqi0/codeflow.git

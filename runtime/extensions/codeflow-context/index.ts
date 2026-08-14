@@ -17,10 +17,11 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { type ExtensionAPI, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { buildContext, resolveLevel, type ContextLevel } from "./context";
+import { ledgerPath, render } from "../../lib/facts";
+import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
 
 const CONTEXT_CUSTOM_TYPE = "codeflow:context";
 const COMPACT_INTERCEPTED_TYPE = "codeflow:compact_intercepted";
@@ -28,7 +29,6 @@ const COMPACT_VIOLATION_TYPE = "codeflow:compact_violation";
 
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const AGENTS_DIR = path.join(RUNTIME_DIR, "agents");
-const FACTS_SCRIPT = path.join(RUNTIME_DIR, "skills", "write-handoff", "scripts", "facts_cli.py");
 
 const levelCache = new Map<string, ContextLevel>();
 
@@ -61,18 +61,13 @@ function roleLevel(role: string | undefined): ContextLevel {
 /**
  * Render the run's fact ledger.
  *
- * Delegated to the Python CLI that owns the ledger format, so there is one
- * implementation of supersede resolution rather than a TypeScript copy that
- * can drift. A failure here yields no facts: missing facts cost redundant
- * searching, while wrong facts cost correctness.
+ * A failure here yields no facts rather than propagating: missing facts cost
+ * redundant searching, while a failed turn costs the whole handoff.
  */
 function renderFacts(runId: string | undefined, runsDir: string): string {
 	if (!runId) return "";
 	try {
-		return execFileSync("python3", [FACTS_SCRIPT, "render", "--run-id", runId, "--runs-dir", runsDir], {
-			encoding: "utf-8",
-			timeout: 5000,
-		}).trim();
+		return render(ledgerPath(new RunPaths(runsDir, runId).runDir)).trim();
 	} catch {
 		return "";
 	}

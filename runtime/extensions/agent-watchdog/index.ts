@@ -22,28 +22,17 @@
  * are skipped — running `pi` by hand stays possible. (3) still applies.
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { startHandoff } from "../../lib/handoff";
+import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
 
 // .codeflow/extensions/agent-watchdog/index.ts -> .codeflow
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const WATCHDOG_SCRIPT = path.join(
-	RUNTIME_DIR,
-	"skills",
-	"observer",
-	"scripts",
-	"watchdog.py",
-);
-const HANDOFF_CLI = path.join(
-	RUNTIME_DIR,
-	"skills",
-	"write-handoff",
-	"scripts",
-	"handoff_state.py",
-);
+const WATCHDOG_SCRIPT = path.join(RUNTIME_DIR, "lib", "watchdog.ts");
 const HEARTBEAT_SECONDS = "60";
 
 /**
@@ -90,28 +79,21 @@ function markProgress(ctx: ExtensionContext | null | undefined): void {
 let ignited = false;
 
 function markHandoffRunning(runId: string, handoffId: string): void {
-	if (!fs.existsSync(HANDOFF_CLI)) return;
-	spawnSync(
-		"python3",
-		[
-			HANDOFF_CLI,
-			"handoff",
-			"start",
-			"--run-id",
-			runId,
-			"--id",
+	try {
+		startHandoff(
+			new RunPaths(process.env.CODEFLOW_RUNS_DIR ?? DEFAULT_RUNS_DIR, runId),
 			handoffId,
-			"--pid",
-			String(process.pid),
-		],
-		{ stdio: "ignore" },
-	);
+			process.pid,
+		);
+	} catch {
+		// Already terminal, or no such handoff: neither is this layer's business.
+	}
 }
 
 function igniteWatchdog(runId: string, role: string, depth: string): void {
 	if (!fs.existsSync(WATCHDOG_SCRIPT)) return;
 	const child = spawn(
-		"python3",
+		"bun",
 		[
 			WATCHDOG_SCRIPT,
 			"--pid",

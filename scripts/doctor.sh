@@ -8,7 +8,8 @@
 # Exit codes: 0 ready, 1 blocking problem found.
 set -uo pipefail
 
-RUNTIME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../runtime" && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUNTIME_DIR="$ROOT_DIR/runtime"
 CODEFLOW_HOME="${CODEFLOW_HOME:-$HOME/.codeflow}"
 
 PASS=0
@@ -18,7 +19,6 @@ WARN=0
 ok()   { printf '  ok    %s\n' "$1"; PASS=$((PASS + 1)); }
 bad()  { printf '  FAIL  %s\n' "$1"; FAIL=$((FAIL + 1)); }
 warn() { printf '  warn  %s\n' "$1"; WARN=$((WARN + 1)); }
-
 section() { printf '\n%s\n' "$1"; }
 
 # --- dependencies ---------------------------------------------------------
@@ -30,7 +30,7 @@ if command -v bun >/dev/null 2>&1; then
   BUN_MAJOR="${BUN_VERSION%%.*}"
   BUN_REST="${BUN_VERSION#*.}"
   BUN_MINOR="${BUN_REST%%.*}"
-  # Bun 1.3+ : the extensions are loaded as TypeScript with no build step.
+  # Bun 1.3+ : extensions and CLI are TypeScript loaded with no build step.
   if [[ "$BUN_MAJOR" -gt 1 ]] || { [[ "$BUN_MAJOR" -eq 1 ]] && [[ "$BUN_MINOR" -ge 3 ]]; }; then
     ok "bun $BUN_VERSION"
   else
@@ -38,12 +38,6 @@ if command -v bun >/dev/null 2>&1; then
   fi
 else
   bad "bun not found — install from https://bun.sh"
-fi
-
-if command -v python3 >/dev/null 2>&1; then
-  ok "python3 $(python3 --version 2>&1 | cut -d' ' -f2)"
-else
-  bad "python3 not found"
 fi
 
 if command -v git >/dev/null 2>&1; then
@@ -73,8 +67,8 @@ else
   warn "no $CODEFLOW_HOME/.env (fine if keys are exported in your shell)"
 fi
 
-# Report which roles a missing key takes out, so the impact is concrete
-# rather than an abstract "key missing".
+# Report which roles a missing key takes out, so the impact is concrete rather
+# than an abstract "key missing".
 check_key() {
   local name="$1" roles="$2"
   if [[ -n "${!name:-}" ]]; then
@@ -96,9 +90,12 @@ section "Runtime"
 for required in \
   "$RUNTIME_DIR/models.json" \
   "$RUNTIME_DIR/AGENTS.md" \
-  "$RUNTIME_DIR/bin/pi-runtime" \
-  "$RUNTIME_DIR/skills/write-handoff/scripts/handoff_state.py" \
-  "$RUNTIME_DIR/skills/write-handoff/scripts/facts.py" \
+  "$RUNTIME_DIR/lib/handoff.ts" \
+  "$RUNTIME_DIR/lib/facts.ts" \
+  "$RUNTIME_DIR/lib/seq.ts" \
+  "$RUNTIME_DIR/lib/wait.ts" \
+  "$RUNTIME_DIR/lib/cli-run.ts" \
+  "$RUNTIME_DIR/lib/cli-handoff.ts" \
   "$RUNTIME_DIR/extensions/codeflow-task/index.ts" \
   "$RUNTIME_DIR/extensions/codeflow-context/index.ts" \
   "$RUNTIME_DIR/extensions/agent-watchdog/index.ts"; do
@@ -109,9 +106,9 @@ for required in \
   fi
 done
 
-# Every role must resolve to a provider that exists in models.json. A typo
-# here fails at model-call time, which is the most expensive place to learn it.
-ROLES="$(python3 "$RUNTIME_DIR/bin/pi-runtime" debug agent 2>/dev/null)"
+# Every role must resolve to a provider that exists in models.json. A typo here
+# fails at model-call time, which is the most expensive place to learn it.
+ROLES="$(bun "$RUNTIME_DIR/lib/cli-run.ts" debug agent 2>/dev/null)"
 if [[ -z "$ROLES" ]]; then
   bad "no agent roles found"
 else
@@ -120,7 +117,7 @@ else
   while IFS= read -r role; do
     [[ -z "$role" ]] && continue
     ROLE_COUNT=$((ROLE_COUNT + 1))
-    if ! python3 "$RUNTIME_DIR/bin/pi-runtime" run --agent "$role" --print "probe" >/dev/null 2>&1; then
+    if ! bun "$RUNTIME_DIR/lib/cli-run.ts" run --agent "$role" --print "probe" >/dev/null 2>&1; then
       bad "role $role does not resolve (check its model: line against models.json)"
       ROLE_BAD=$((ROLE_BAD + 1))
     fi

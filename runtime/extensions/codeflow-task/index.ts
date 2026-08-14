@@ -20,7 +20,7 @@
  * pointer, so a receipt body never enters the delegator's context.
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,17 +28,15 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { type ExtensionAPI, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { blockedReasons, delegationPointer } from "./handoff-gate";
+import {
+	finishHandoff as finishHandoffState,
+	openHandoff as openHandoffState,
+} from "../../lib/handoff";
+import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
 
-// .codeflow/extensions/codeflow-task/index.ts -> .codeflow
+// runtime/extensions/codeflow-task/index.ts -> runtime
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const AGENTS_DIR = path.join(RUNTIME_DIR, "agents");
-const HANDOFF_CLI = path.join(
-	RUNTIME_DIR,
-	"skills",
-	"write-handoff",
-	"scripts",
-	"handoff_state.py",
-);
 const WATCHDOG_EXTENSION = path.join(RUNTIME_DIR, "extensions", "agent-watchdog", "index.ts");
 const ROLE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const MAX_CONCURRENCY = 8;
@@ -49,37 +47,32 @@ interface OpenedHandoff {
 	receiptPath: string;
 }
 
+/** Resolve the run paths for the run this process belongs to. */
+function currentRun(): RunPaths | null {
+	const runId = process.env.CODEFLOW_RUN_ID;
+	if (!runId) return null;
+	return new RunPaths(process.env.CODEFLOW_RUNS_DIR ?? DEFAULT_RUNS_DIR, runId);
+}
+
 /**
  * Register the delegation as a handoff. Returns null when there is no run to
  * record against (for example `pi` started by hand), so delegation keeps
  * working without a registry rather than failing.
  */
 function openHandoff(role: string, prompt: string, cwd: string): OpenedHandoff | null {
-	const runId = process.env.CODEFLOW_RUN_ID;
-	if (!runId || !fs.existsSync(HANDOFF_CLI)) return null;
-	const args = [
-		HANDOFF_CLI,
-		"handoff",
-		"open",
-		"--run-id",
-		runId,
-		"--role",
-		role,
-		"--depth",
-		"1",
-		"--body-file",
-		"-",
-	];
-	const parent = process.env.CODEFLOW_HANDOFF_ID;
-	if (parent) args.push("--parent-id", parent);
-	const result = spawnSync("python3", args, { cwd, input: prompt, encoding: "utf-8" });
-	if (result.status !== 0 || !result.stdout) return null;
+	const paths = currentRun();
+	if (!paths) return null;
 	try {
-		const payload = JSON.parse(result.stdout);
+		const opened = openHandoffState(paths, {
+			role,
+			body: prompt,
+			depth: 1,
+			parentId: process.env.CODEFLOW_HANDOFF_ID ?? null,
+		});
 		return {
-			handoffId: payload.handoff_id,
-			statePath: payload.state,
-			receiptPath: payload.receipt,
+			handoffId: opened.handoff_id,
+			statePath: opened.state,
+			receiptPath: opened.receipt,
 		};
 	} catch {
 		return null;
@@ -96,23 +89,19 @@ function readHandoffState(statePath: string): { status?: string; result?: string
 }
 
 function finishBlocked(handoffId: string, reasons: string[], summary: string, cwd: string): void {
-	const runId = process.env.CODEFLOW_RUN_ID;
-	if (!runId) return;
-	const args = [
-		HANDOFF_CLI,
-		"handoff",
-		"finish",
-		"--run-id",
-		runId,
-		"--id",
-		handoffId,
-		"--status",
-		"BLOCKED",
-		"--summary",
-		summary,
-	];
-	for (const reason of reasons) args.push("--blocked-reason", reason);
-	spawnSync("python3", args, { cwd, stdio: "ignore" });
+	const paths = currentRun();
+	if (!paths) return;
+	try {
+		finishHandoffState(paths, {
+			handoffId,
+			status: "BLOCKED",
+			summary,
+			blockedReasons: reasons,
+		});
+	} catch {
+		// A handoff the child already finished is terminal and immutable; the
+		// rejection is expected and must not mask the child's own verdict.
+	}
 }
 
 /**
