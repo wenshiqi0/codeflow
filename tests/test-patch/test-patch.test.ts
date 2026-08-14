@@ -19,7 +19,7 @@ import {
 	rustTestRanges,
 	validatePatch,
 	verifyPatch,
-} from "./test-patch";
+} from "../../runtime/lib/test-patch";
 
 let dir: string;
 let cwd: string;

@@ -18,8 +18,8 @@ import {
 	readFrontmatter,
 	resolveRole,
 	RoleError,
-} from "./roles";
-import { newRunId } from "./cli-run";
+} from "../../runtime/lib/roles";
+import { newRunId } from "../../runtime/lib/cli-run";
 
 let dir: string;
 

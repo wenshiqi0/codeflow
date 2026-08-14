@@ -22,7 +22,7 @@ import {
 	MAX_FACTS_PER_HANDOFF,
 	render,
 	type FactRecord,
-} from "./facts";
+} from "../../runtime/lib/facts";
 
 let dir: string;
 let ledger: string;

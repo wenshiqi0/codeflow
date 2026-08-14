@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { nextSeq } from "./seq";
+import { nextSeq } from "../../runtime/lib/seq";
 
 let dir: string;
 let counter: string;
@@ -82,7 +82,7 @@ describe("cross-process concurrency", () => {
 	 */
 	test("concurrent processes never receive the same number", async () => {
 		const script = path.join(dir, "claim.ts");
-		const seqModule = path.join(import.meta.dir, "seq.ts");
+		const seqModule = path.resolve(import.meta.dir, "..", "..", "runtime", "lib", "seq.ts");
 		const perProcess = 25;
 		const processes = 8;
 		fs.writeFileSync(

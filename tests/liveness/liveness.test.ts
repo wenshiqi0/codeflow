@@ -20,7 +20,7 @@ import {
 	readLiveness,
 	verdictFor,
 	type Probe,
-} from "./liveness";
+} from "../../runtime/lib/liveness";
 
 let dir: string;
 

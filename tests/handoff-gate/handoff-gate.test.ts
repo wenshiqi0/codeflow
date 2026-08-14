@@ -4,7 +4,7 @@ import {
 	delegationPointer,
 	isClean,
 	type ChildOutcome,
-} from "./handoff-gate";
+} from "../../runtime/extensions/codeflow-task/handoff-gate";
 
 function outcome(overrides: Partial<ChildOutcome> = {}): ChildOutcome {
 	return { exitCode: 0, receiptPresent: true, ...overrides };

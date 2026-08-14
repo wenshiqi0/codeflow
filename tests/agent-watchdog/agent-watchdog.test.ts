@@ -17,7 +17,7 @@ import { test, expect } from "bun:test";
 test("aborts a stalled provider request at TTFT (no message_update)", async () => {
 	process.env.CODEFLOW_STREAM_IDLE_TIMEOUT_MS = "120";
 	process.env.CODEFLOW_STREAM_IDLE_TICK_MS = "30";
-	const mod = await import("./index.ts");
+	const mod = await import("../../runtime/extensions/agent-watchdog/index.ts");
 
 	const handlers: Record<string, (e: unknown, ctx: unknown) => void> = {};
 	const stubPi = {
@@ -42,7 +42,7 @@ test("aborts a stalled provider request at TTFT (no message_update)", async () =
 test("does not abort while real streaming tokens keep arriving", async () => {
 	process.env.CODEFLOW_STREAM_IDLE_TIMEOUT_MS = "120";
 	process.env.CODEFLOW_STREAM_IDLE_TICK_MS = "30";
-	const mod = await import("./index.ts?live");
+	const mod = await import("../../runtime/extensions/agent-watchdog/index.ts?live");
 
 	const handlers: Record<string, (e: unknown, ctx: unknown) => void> = {};
 	const stubPi = {

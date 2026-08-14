@@ -28,6 +28,7 @@ Codeflow 把编码工作分成两层，两层之间只通过元数据通信：
 SKILL.md              # 外环协议：如何发起、如何观察、何时停机
 scripts/              # doctor 等运维脚本
 references/           # 渐进披露：handoff 契约、事实台账、角色与模型绑定
+tests/                # 每个模块一个目录，各自可独立运行
 runtime/              # 内环运行时
 ├── agents/           #   角色定义，frontmatter 是模型绑定的唯一事实源
 ├── lib/              #   状态机、事实台账、序号分配、CLI（TypeScript）
@@ -39,6 +40,15 @@ runtime/              # 内环运行时
 `lib/` 里的模块既是 CLI 实现，也被扩展直接 import——同一份逻辑只有一个实现，不存在跨语言副本漂移。
 
 运行时全局单份，不按项目安装。目标项目里只多出 `.codeflow/runs/`（gitignored），无需修改根 `AGENTS.md`——skill 本身就是入口。
+
+## 测试
+
+```bash
+bun test                # 全部
+bun test tests/handoff  # 单个模块
+```
+
+测试集中在 `tests/`，每个被测模块一个目录，源码目录只放实现。约定与各目录职责见 `tests/README.md`。
 
 ## 短期上下文
 

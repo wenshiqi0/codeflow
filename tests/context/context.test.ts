@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildContext, escapeXml, resolveLevel, sha256 } from "./context";
+import { buildContext, escapeXml, resolveLevel, sha256 } from "../../runtime/extensions/codeflow-context/context";
 
 const base = {
 	projectRules: "project rules body",

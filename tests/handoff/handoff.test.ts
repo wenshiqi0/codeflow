@@ -25,9 +25,9 @@ import {
 	runStart,
 	startHandoff,
 	TITLE_BUDGET,
-} from "./handoff";
-import { LEDGER_NAME, materialize } from "./facts";
-import { RunPaths, readJson } from "./paths";
+} from "../../runtime/lib/handoff";
+import { LEDGER_NAME, materialize } from "../../runtime/lib/facts";
+import { RunPaths, readJson } from "../../runtime/lib/paths";
 
 const RUN_ID = "run-test-0001";
 const RUNS_DIR = ".codeflow/runs/code";
