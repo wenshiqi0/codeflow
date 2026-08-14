@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { startHandoff } from "../../lib/handoff";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
+import { STREAM_IDLE_ABORT_MARKER } from "../codeflow-task/handoff-gate";
 
 // .codeflow/extensions/agent-watchdog/index.ts -> .codeflow
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -47,9 +48,19 @@ const HEARTBEAT_SECONDS = "60";
  * `message_update`. This layer owns that signal and aborts the stalled
  * request via `ctx.abort()`, which trips the AbortSignal pi passes into the
  * provider fetch — turning an infinite hang into a recoverable turn failure.
+ *
+ * The default is derived from two existing bounds, not guessed:
+ * DEFAULT_STALE_SECONDS = 600 in runtime/lib/handoff.ts is the age at which
+ * the state layer first calls a silent handoff "stale" (its own docs treat
+ * ten minutes of quiet reasoning as normal), plus the previous 300s of
+ * abort patience on top. An idle abort firing before the age annotation
+ * would kill requests the rest of the runtime still considers ordinary
+ * work; a genuinely dead stream is still bounded at ~15 min instead of
+ * never.
  */
-const STREAM_IDLE_TIMEOUT_MS = Number.parseInt(
-	process.env.CODEFLOW_STREAM_IDLE_TIMEOUT_MS ?? "300000",
+export const STREAM_IDLE_DEFAULT_MS = 900_000;
+export const STREAM_IDLE_TIMEOUT_MS = Number.parseInt(
+	process.env.CODEFLOW_STREAM_IDLE_TIMEOUT_MS ?? String(STREAM_IDLE_DEFAULT_MS),
 	10,
 );
 const STREAM_IDLE_TICK_MS = Number.parseInt(
@@ -168,7 +179,7 @@ export default function (pi: ExtensionAPI) {
 			const idleMs = Date.now() - lastProgressAt;
 			if (idleMs <= STREAM_IDLE_TIMEOUT_MS) return;
 			process.stderr.write(
-				`[agent-watchdog] stream idle ${idleMs}ms > ${STREAM_IDLE_TIMEOUT_MS}ms ` +
+				`${STREAM_IDLE_ABORT_MARKER} ${idleMs}ms > ${STREAM_IDLE_TIMEOUT_MS}ms ` +
 					`(set CODEFLOW_STREAM_IDLE_TIMEOUT_MS=0 to disable); aborting stalled provider request\n`,
 			);
 			lastProgressAt = Date.now(); // give the abort room before re-entry

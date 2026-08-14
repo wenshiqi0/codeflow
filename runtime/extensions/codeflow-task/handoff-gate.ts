@@ -13,10 +13,20 @@ export const BLOCKED_OUTPUT_TRUNCATED = "OUTPUT_TRUNCATED";
 export const BLOCKED_PROVIDER_FAILURE = "PROVIDER_FAILURE";
 export const BLOCKED_USER_CANCELLED = "USER_CANCELLED";
 
+/**
+ * Single producer/consumer contract: the agent-watchdog's stderr abort line
+ * begins with this prefix, and reconcileHandoff matches on it to recognise
+ * a stream-idle abort. Both sides import this one string so they cannot
+ * drift apart.
+ */
+export const STREAM_IDLE_ABORT_MARKER = "[agent-watchdog] stream idle";
+
 export interface ChildOutcome {
 	exitCode: number;
 	stopReason?: string;
 	aborted?: boolean;
+	/** The stream-idle watchdog aborted this child's provider request (external abort, not user cancellation). */
+	watchdogAborted?: boolean;
 	receiptPresent: boolean;
 }
 
@@ -39,7 +49,7 @@ export function blockedReasons(outcome: ChildOutcome): string[] {
 		reasons.push(BLOCKED_USER_CANCELLED);
 	} else {
 		if (outcome.stopReason === "length") reasons.push(BLOCKED_OUTPUT_TRUNCATED);
-		if (outcome.stopReason === "error" || outcome.exitCode !== 0) {
+		if (outcome.stopReason === "error" || outcome.exitCode !== 0 || outcome.watchdogAborted) {
 			reasons.push(BLOCKED_PROVIDER_FAILURE);
 		}
 	}

@@ -1,4 +1,5 @@
 import { test, expect, describe } from "bun:test";
+import * as handoffGate from "../../runtime/extensions/codeflow-task/handoff-gate";
 import {
 	blockedReasons,
 	delegationPointer,
@@ -57,6 +58,46 @@ describe("blockedReasons", () => {
 		expect(
 			blockedReasons(outcome({ aborted: true, receiptPresent: false })),
 		).toEqual(["USER_CANCELLED", "DELEGATION_ARTIFACT_MISSING"]);
+	});
+
+	test("a watchdog-aborted child is a provider failure, not a silent non-delivery", () => {
+		// The stream-idle watchdog aborts the provider request from outside:
+		// exit 0, stopReason "aborted", no receipt. Classifying that as only
+		// DELEGATION_ARTIFACT_MISSING would blame the role for an external
+		// abort, so the cause (PROVIDER_FAILURE) is recorded first.
+		expect(
+			blockedReasons(
+				outcome({
+					exitCode: 0,
+					stopReason: "aborted",
+					watchdogAborted: true,
+					receiptPresent: false,
+				}),
+			),
+		).toEqual(["PROVIDER_FAILURE", "DELEGATION_ARTIFACT_MISSING"]);
+	});
+
+	test("user cancellation still outranks the watchdog marker", () => {
+		// outcome.aborted means a human cancelled; that fact leads even when
+		// the watchdog also fired on the same child.
+		expect(
+			blockedReasons(
+				outcome({ aborted: true, watchdogAborted: true, receiptPresent: false }),
+			),
+		).toEqual(["USER_CANCELLED", "DELEGATION_ARTIFACT_MISSING"]);
+	});
+});
+
+describe("STREAM_IDLE_ABORT_MARKER", () => {
+	test("is exported as the single producer/consumer contract", () => {
+		// The watchdog writes this prefix on its abort line and the gate
+		// matches on it; both sides import the one string so they cannot drift.
+		// Namespace access keeps a missing export a test failure here rather
+		// than a module-load error that hides the rest of this file.
+		// biome-ignore lint/suspicious/noExplicitAny: the marker export is the contract under test
+		const marker = (handoffGate as any).STREAM_IDLE_ABORT_MARKER;
+		expect(typeof marker).toBe("string");
+		expect(marker.length).toBeGreaterThan(0);
 	});
 });
 
