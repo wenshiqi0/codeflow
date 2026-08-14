@@ -1,43 +1,71 @@
-# Skills
+# Codeflow
 
-记录我编写的 Skill。
+Codeflow 是一个 test-first 多 Agent 编码工作流，以**单个 skill** 的形式分发。
 
-## 什么是 Skill
+本仓库就是这个 skill 本身：仓库根即 skill 根，clone 到宿主的 skill 目录即可使用。
 
-Skill 是给 AI Agent 使用的专项能力包：用自然语言描述某类任务的工作流、约束和参考资料，Agent 在遇到匹配场景时按需加载。
+## 双层 loop
+
+Codeflow 把编码工作分成两层，两层之间只通过元数据通信：
+
+```text
+外环（宿主 Agent，读 SKILL.md）
+  发起一次 run，然后阻塞等待事件；只看元数据，不进内层上下文
+        │
+        ▼
+内环（pi agents，各自绑定不同模型）
+  planner → test-writer → test-runner(RED) → coder → test-runner(GREEN) → review
+```
+
+- **内环**沿用 pi agents 机制与 handoff 语义：每个角色是一个独立进程，由 frontmatter 绑定自己的 provider/model，通过 handoff 移交工作单元。
+- **外环**是宿主 Agent（Claude Code、opencode 等），通过 `SKILL.md` 感知协议、通过 `scripts/` 与内环交互。一次阻塞调用，绝不轮询——内环没有进展时外环不应付出任何代价。
+
+铁律：**状态变更与状态查询是程序式的，需求表达与任务编排走模型与提示词。** CLI 独占状态迁移、序号分配、回执校验与事件投递；模型只写 handoff 正文、回执叙述与诊断。任何角色都不得手写状态文件。
 
 ## 目录结构
 
-每个 Skill 一个目录，目录名即 Skill 名（小写连字符）：
-
-```
-<skill-name>/
-├── SKILL.md        # 必需：元信息 + 工作流说明
-├── scripts/        # 可选：辅助脚本
-└── references/     # 可选：参考文档
-```
-
-`SKILL.md` 以 YAML frontmatter 开头：
-
-```markdown
----
-name: skill-name
-description: 这个 Skill 做什么，以及什么时候该用它
----
-
-# Skill Name
-
-具体的工作流说明……
+```text
+SKILL.md              # 外环协议：如何发起、如何观察、何时停机
+scripts/              # 外环与内环之间的包装层
+references/           # 渐进披露：handoff 契约、回执 schema、停机语义
+runtime/              # 内环运行时
+├── agents/           #   角色定义，frontmatter 是模型绑定的唯一事实源
+├── extensions/       #   pi 扩展（委派、活性、上下文）
+├── bin/              #   codeflow / pi / pi-runtime
+└── models.json       #   provider 注册表
 ```
 
-## Skill 列表
+运行时全局单份，不按项目安装。目标项目里只多出 `.codeflow/runs/`（gitignored），无需修改根 `AGENTS.md`——skill 本身就是入口。
 
-| Skill | 说明 |
-| --- | --- |
-| _待补充_ | |
+## 短期上下文
 
-## 编写要点
+多 Agent 隔离带来一个真实代价：每个角色都从零开始探索，plan 阶段已经查清的事实，coder 会再 grep 一遍。
 
-- `description` 决定 Skill 能否被正确触发，需写明**适用场景**和**不适用场景**。
-- 正文面向 Agent 而非人类读者，给明确的步骤和判断条件。
-- 单个 Skill 只解决一类问题，边界重叠时拆分。
+Codeflow 用 **run 内的共享事实缓存**解决这个问题：角色确认过的事实（文件位置、接口签名、既有约定）记入当前 run 的共识区，后续角色直接读取而不是重新搜索。这是执行期的短期上下文，不是跨项目知识库——不依赖外部记忆后端。
+
+## 安装
+
+要求：macOS 或 Linux、Git、Bun 1.3+、Python 3。
+
+```bash
+git clone git@github.com:wenshiqi0/codeflow.git
+```
+
+密钥统一从全局环境获取，仓库内不含任何凭据。在 shell 配置或全局 env 文件中提供：
+
+```dotenv
+KIMI_API_KEY=...
+ZHIPU_API_KEY=...
+MIMO_API_KEY=...
+DEEPSEEK_API_KEY=...
+```
+
+安装后运行预检，确认依赖与密钥齐备：
+
+```bash
+./scripts/doctor.sh
+```
+
+## 与 Teamflow 的关系
+
+Codeflow 承接 [teamflow](https://github.com/wenshiqi0/teamflow) 的执行流程——pi agents 协同与 handoff 语义原样保留。差别在交付形态：teamflow 是按项目安装的运行时，codeflow 是一个 skill，运行时全局单份，外环协议住在宿主的 skill 命名空间里而不是各项目的根 `AGENTS.md`。
