@@ -21,7 +21,7 @@ Execute the exact focused and regression commands in the handoff from a fresh pr
 Then record it: write the JSON to a file and run
 
 ```bash
-codeflow handoff finish --id "$CODEFLOW_HANDOFF_ID" --status <STATUS> --receipt <file> --summary "<one line>"
+code-agent handoff finish --id "$CODEFLOW_HANDOFF_ID" --status <STATUS> --receipt <file> --summary "<one line>"
 ```
 
 The CLI validates the receipt against the schema and rejects prose, a status that contradicts `--status`, or a missing required field. Your final assistant text is not a receipt: without this command the delegation is recorded `BLOCKED` with `DELEGATION_ARTIFACT_MISSING`. Never write `state.json` or an event file yourself.

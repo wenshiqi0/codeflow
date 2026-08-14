@@ -1,9 +1,13 @@
 #!/usr/bin/env bun
 /**
- * `codeflow probe` and `codeflow agent-status` — is the execute loop alive?
+ * Liveness rendering: is the execute loop alive?
  *
- * Both answer the same question at different verbosity. The exit code is the
- * contract, and it keeps three cases apart on purpose:
+ * No binary dispatches this diagnostic entry point on the outer PATH. The old
+ * `probe` and `agent-status` verbs are gone because an ungated liveness query
+ * invites an observer to poll it every turn; `codeflow audit` uses the same
+ * bounded probe only after its health gate admits the run.
+ *
+ * The exit code is the contract, and it keeps three cases apart on purpose:
  *
  *   0 — every known agent is alive
  *   1 — at least one is dead
@@ -43,7 +47,7 @@ export function main(argv: string[]): number {
 	const { runId, runsDir, json } = parse(argv);
 	if (!runId) {
 		console.error(
-			"codeflow probe: error: --run-id is required (or set CODEFLOW_RUN_ID)",
+			"liveness: error: --run-id is required (or set CODEFLOW_RUN_ID)",
 		);
 		return 2;
 	}

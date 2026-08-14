@@ -1,5 +1,5 @@
 /**
- * `codeflow wait` — the outer loop's whole listening surface.
+ * `codeflow sub` — the outer loop's whole listening surface.
  *
  * One blocking call, never a poll: an execute loop that makes no progress must
  * cost the observer nothing. The caller passes the highest sequence it has
@@ -193,17 +193,17 @@ export async function main(argv: string[]): Promise<number> {
 				index++;
 				break;
 			default:
-				console.error(`codeflow wait: error: unknown option: ${token}`);
+				console.error(`codeflow sub: error: unknown option: ${token}`);
 				return 1;
 		}
 	}
 
 	if (!Number.isSafeInteger(since) || since < 0) {
-		console.error("codeflow wait: error: --since must be a non-negative integer");
+		console.error("codeflow sub: error: --since must be a non-negative integer");
 		return 1;
 	}
 	if (!Number.isSafeInteger(timeout) || timeout < 0) {
-		console.error("codeflow wait: error: --timeout must be a non-negative integer");
+		console.error("codeflow sub: error: --timeout must be a non-negative integer");
 		return 1;
 	}
 

@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Inner-ring CLI: the mechanical plane a role process is allowed to touch.
+#
+# This script is deliberately not installed on a user PATH. It is reachable
+# only from inside a run, because `codeflow` prepends this directory to the PATH
+# of the processes it spawns. The environment enforces the ring boundary that
+# documentation alone cannot: an outer-loop agent that tries to drive the
+# handoff state machine by hand gets "command not found" instead of a
+# half-updated state.json.
+#
+# The gate below is the second half of that boundary. Even with this script on
+# the PATH, no run id means no run to act on, so there is nothing legitimate to
+# do and the call is refused.
+set -euo pipefail
+
+RUNTIME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LIB_DIR="$RUNTIME_DIR/lib"
+
+if [[ -z "${CODEFLOW_RUN_ID:-}" ]]; then
+  echo "code-agent: error: CODEFLOW_RUN_ID is not set; code-agent runs only inside a codeflow run" >&2
+  exit 1
+fi
+
+# Run artifacts belong to the repository being changed.
+if PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  cd "$PROJECT_ROOT"
+fi
+
+export PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$RUNTIME_DIR}"
+export PATH="$RUNTIME_DIR/bin:$PATH"
+
+usage() {
+  cat <<'EOF'
+usage: code-agent <command> [options]
+
+  delegate --role <role> [--handoff-file <file>]   run a role in this run
+  handoff open|start|finish|status|list            handoff state machine
+  facts render|list                                this run's fact ledger
+  check source [paths...]                          source safety check
+  check patch <patch>                              validate a test patch
+  verify patch <patch>                             verify an applied test patch
+  apply patch <patch>                              apply a validated test patch
+  roster                                           roles, depth, heartbeat, scope
+EOF
+}
+
+case "${1:-}" in
+  handoff|facts)
+    exec bun "$LIB_DIR/cli-handoff.ts" "$@"
+    ;;
+  roster)
+    shift
+    exec bun "$LIB_DIR/cli-handoff.ts" agents list "$@"
+    ;;
+  delegate)
+    shift
+    exec bun "$LIB_DIR/cli-run.ts" delegate "$@"
+    ;;
+  # `check`/`apply`/`verify` group the two mechanical pre-commit gates under one
+  # verb, so a role has a single entry point to remember.
+  check)
+    case "${2:-}" in
+      source)
+        shift 2
+        exec bun "$LIB_DIR/source-safety.ts" "$@"
+        ;;
+      patch)
+        shift 2
+        exec bun "$LIB_DIR/test-patch.ts" check "$@"
+        ;;
+      *)
+        echo "code-agent: error: check requires source or patch" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  apply|verify)
+    action="$1"
+    if [[ "${2:-}" != "patch" ]]; then
+      echo "code-agent: error: $action requires patch" >&2
+      exit 1
+    fi
+    shift 2
+    exec bun "$LIB_DIR/test-patch.ts" "$action" "$@"
+    ;;
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  *)
+    if [[ -n "${1:-}" ]]; then
+      echo "code-agent: error: unknown command: $1" >&2
+    fi
+    usage >&2
+    exit 1
+    ;;
+esac

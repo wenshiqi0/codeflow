@@ -9,7 +9,7 @@
  * It does two things and nothing else:
  *
  * - refresh `liveness/<pid>--<role>--<depth>.json` while the monitored process
- *   lives, so `codeflow agents list` has a fact source; and
+ *   lives, so `code-agent roster` has a fact source; and
  * - record the exit once it happens, publishing `runner_exited` only for depth
  *   0 — a depth-1 child's exit is already observed by its parent delegation,
  *   so publishing it would be noise the observer could mistake for a stop

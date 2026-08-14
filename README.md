@@ -18,7 +18,16 @@ Codeflow 把编码工作分成两层，两层之间只通过元数据通信：
 ```
 
 - **内环**沿用 pi agents 机制与 handoff 语义：每个角色是一个独立进程，由 frontmatter 绑定自己的 provider/model，通过 handoff 移交工作单元。
-- **外环**是宿主 Agent（Claude Code、opencode 等），通过 `SKILL.md` 感知协议、通过 `scripts/` 与内环交互。一次阻塞调用，绝不轮询——内环没有进展时外环不应付出任何代价。
+- **外环**是宿主 Agent（Claude Code、opencode 等），通过 `SKILL.md` 感知协议。一次阻塞调用，绝不轮询——内环没有进展时外环不应付出任何代价。
+
+两层各有自己的二进制，词汇表严格不相交：
+
+| 二进制 | 受众 | 命令 |
+|---|---|---|
+| `codeflow` | 人 / 外环 Agent | `exec` `ls` `sub` `memo` `audit` `stop` |
+| `code-agent` | 角色进程 | `delegate` `handoff` `facts` `check` `roster` |
+
+边界由进程环境强制，而不是靠文档纪律：`code-agent` 不装在用户 PATH 上（只有 `codeflow` 拉起的子进程能看到它），且 `CODEFLOW_RUN_ID` 未设置时直接拒绝执行。外环 Agent 想手工驱动交接状态机时会得到 command not found，而不是一个半更新的 `state.json`。
 
 铁律：**状态变更与状态查询是程序式的，需求表达与任务编排走模型与提示词。** CLI 独占状态迁移、序号分配、回执校验与事件投递；模型只写 handoff 正文、回执叙述与诊断。任何角色都不得手写状态文件。
 
@@ -33,7 +42,7 @@ runtime/              # 内环运行时
 ├── agents/           #   角色定义，frontmatter 是模型绑定的唯一事实源
 ├── lib/              #   状态机、事实台账、序号分配、CLI（TypeScript）
 ├── extensions/       #   pi 扩展（委派、上下文、活性）
-├── bin/              #   codeflow 分发器 + pi 定位器
+├── bin/              #   codeflow（外环）+ code-agent（内环）+ pi 定位器
 └── models.json       #   provider 注册表
 ```
 
