@@ -713,6 +713,11 @@ export function handoffStatus(paths: RunPaths, handoffId?: string): HandoffState
 	return loadStates(paths, true).map(decorateAge);
 }
 
+/** Bounded state view for audit: every handoff, not only currently active ones. */
+export function handoffHistory(paths: RunPaths): HandoffState[] {
+	return loadStates(paths, false).map(decorateAge);
+}
+
 export function handoffList(paths: RunPaths, onlyActive = false): Record<string, unknown>[] {
 	return loadStates(paths, onlyActive).map((state) => ({
 		handoff_id: state.handoff_id,
@@ -745,6 +750,28 @@ export function runStart(
 	writeJsonAtomic(file, runner);
 	emitRunEvent(paths, "run_started", "STARTED", { ref: "runner.json", role });
 	return { run_id: paths.runId, runner: file };
+}
+
+/**
+ * Record the depth-0 agent process once it exists.
+ *
+ * `runner.pid` is the supervisor that must reap the agent; `child_pid` is the
+ * agent whose process group carries the agent's descendants. Keeping both lets
+ * observation distinguish "supervisor is alive" from "the execute-loop tree can
+ * still be signalled", and gives `stop` a target that does not depend on the
+ * supervisor remaining alive to forward a signal.
+ */
+export function runnerChildStarted(
+	paths: RunPaths,
+	childPid: number,
+	pgid: number = childPid,
+): Record<string, unknown> {
+	const file = path.join(paths.runDir, "runner.json");
+	const runner = readJson<Record<string, unknown>>(file);
+	runner.child_pid = childPid;
+	runner.pgid = pgid;
+	writeJsonAtomic(file, runner);
+	return runner;
 }
 
 /**

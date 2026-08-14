@@ -2,11 +2,10 @@
 /**
  * Liveness rendering: is the execute loop alive?
  *
- * No binary dispatches this yet. It backed the old `probe` and `agent-status`
- * verbs, which the outer ring no longer exposes because an ungated liveness
- * query invites an observer to poll it every turn. The logic is kept because
- * `codeflow audit` is built on exactly this — the gate is what still has to be
- * written, not the probing.
+ * No binary dispatches this diagnostic entry point on the outer PATH. The old
+ * `probe` and `agent-status` verbs are gone because an ungated liveness query
+ * invites an observer to poll it every turn; `codeflow audit` uses the same
+ * bounded probe only after its health gate admits the run.
  *
  * The exit code is the contract, and it keeps three cases apart on purpose:
  *

@@ -18,7 +18,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
-import { finishHandoff, openHandoff, runStart, runnerExited } from "./handoff";
+import { finishHandoff, openHandoff, runStart, runnerChildStarted, runnerExited } from "./handoff";
 import { DEFAULT_RUNS_DIR, RunPaths } from "./paths";
 import { buildArgv, listRoles, readFrontmatter, resolveRole, RoleError } from "./roles";
 
@@ -54,7 +54,7 @@ interface ParsedRun {
 	handoffFile?: string;
 }
 
-function parse(argv: string[]): ParsedRun {
+function parseDelegate(argv: string[]): ParsedRun {
 	let role: string | undefined;
 	let handoffFile: string | undefined;
 	let printOnly = false;
@@ -77,6 +77,24 @@ function parse(argv: string[]): ParsedRun {
 	return { role, prompt: prompt.join(" "), printOnly, handoffFile };
 }
 
+function parseExec(argv: string[]): ParsedRun | { error: string } {
+	const prompt: string[] = [];
+	for (const token of argv) {
+		if (token === "--role" || token === "--agent") {
+			return { error: `${token} is a delegate-only role option; exec always starts the planner` };
+		}
+		if (token === "--handoff-file") {
+			return { error: `${token} is delegate-only; handoff state belongs to code-agent delegate` };
+		}
+		if (token === "--print") {
+			return { error: "--print is delegate-only; exec starts the planner and follows the run" };
+		}
+		if (token.startsWith("--")) return { error: `unknown exec option: ${token}` };
+		prompt.push(token);
+	}
+	return { role: "planner", prompt: prompt.join(" "), printOnly: false, handoffFile: undefined };
+}
+
 /**
  * `entry` only changes how arguments are validated and reported.
  *
@@ -85,7 +103,9 @@ function parse(argv: string[]): ParsedRun {
  * because that is precisely the decision the planner is making.
  */
 export async function run(argv: string[], entry: "exec" | "delegate" = "delegate"): Promise<number> {
-	const args = parse(argv);
+	const parsed = entry === "exec" ? parseExec(argv) : parseDelegate(argv);
+	if ("error" in parsed) return fail(parsed.error, entry);
+	const args = parsed;
 
 	if (entry === "exec") {
 		if (args.prompt.trim() === "") {
@@ -154,10 +174,35 @@ export async function run(argv: string[], entry: "exec" | "delegate" = "delegate
 		`codeflow run_id=${runId} run_dir=${paths.runDir} handoff_id=${handoffId ?? "-"}`,
 	);
 
-	const child = Bun.spawn(buildArgv(resolved, args.prompt, EXTENSIONS), {
+	let child: Bun.Subprocess | undefined;
+	let escalation: ReturnType<typeof setTimeout> | undefined;
+	const terminateChild = (signal: "SIGTERM" | "SIGKILL"): void => {
+		if (child?.pid === undefined) return;
+		try {
+			process.kill(-child.pid, signal);
+		} catch {
+			try {
+				child.kill(signal);
+			} catch {
+				// The child is already gone.
+			}
+		}
+	};
+	const onTermination = (): void => {
+		terminateChild("SIGTERM");
+		if (escalation) clearTimeout(escalation);
+		escalation = setTimeout(() => terminateChild("SIGKILL"), 5_000);
+	};
+	if (freshRun) {
+		process.on("SIGTERM", onTermination);
+		process.on("SIGINT", onTermination);
+	}
+
+	child = Bun.spawn(buildArgv(resolved, args.prompt, EXTENSIONS), {
 		stdin: "inherit",
 		stdout: "inherit",
 		stderr: "inherit",
+		detached: freshRun,
 		env: {
 			...process.env,
 			PATH: `${path.join(RUNTIME_DIR, "bin")}:${process.env.PATH ?? ""}`,
@@ -168,8 +213,10 @@ export async function run(argv: string[], entry: "exec" | "delegate" = "delegate
 			...(handoffId ? { CODEFLOW_HANDOFF_ID: handoffId } : {}),
 		},
 	});
+	if (freshRun && child.pid !== undefined) runnerChildStarted(paths, child.pid);
 
 	const code = await child.exited;
+	if (escalation) clearTimeout(escalation);
 
 	// The watchdog may have missed the exit; recording it here is what lets an
 	// outer loop distinguish "finished" from "died without finishing".

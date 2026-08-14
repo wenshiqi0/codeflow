@@ -16,7 +16,7 @@ codeflow exec "<requirement>"          # start a run
 codeflow ls                            # id, status, duration, requirement
 codeflow sub <run-id> [--since <seq>]  # subscribe to the event stream
 codeflow memo <run-id> "<text>"        # append to the requirement
-codeflow audit <run-id> [--force]      # gated look at a blocked or stale run
+codeflow audit <run-id> [--force]      # gated look at a blocked, stale, dead, or missing run
 codeflow stop <run-id>                 # terminate a run
 ```
 

@@ -14,8 +14,10 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { handoffHistory, type HandoffState } from "./handoff";
+import { probeAll } from "./liveness";
 import { DEFAULT_RUNS_DIR, RunPaths } from "./paths";
-import { wait } from "./wait";
+import { scan, wait } from "./wait";
 
 /** Requirements are summarized for a table, not reproduced in it. */
 const REQUIREMENT_WIDTH = 60;
@@ -33,6 +35,8 @@ export interface RunRow {
 
 interface Runner {
 	pid?: number;
+	child_pid?: number;
+	pgid?: number;
 	started_at?: string;
 	requirement?: string;
 	role?: string;
@@ -78,20 +82,33 @@ function seconds(fromIso: string | undefined, toMs: number): number | null {
  * meaningful without it. Here the only question is "did something exit, and
  * when", so a record missing its pid still answers it.
  */
-function readExit(livenessDir: string): { exited_at?: string } | null {
+const LIVENESS_NAME = /^(?<pid>\d+)--(?<role>[a-z0-9-]+)--(?<depth>\d+)\.json$/;
+
+function readExit(
+	livenessDir: string,
+	runner: Runner,
+): { exited_at?: string } | null {
 	let names: string[];
 	try {
 		names = fs.readdirSync(livenessDir).filter((name) => name.endsWith(".json")).sort();
 	} catch {
 		return null;
 	}
+	const expected = runner.child_pid ?? runner.pid;
+	if (expected === undefined) return null;
 	for (const name of names) {
+		const match = LIVENESS_NAME.exec(name);
 		try {
 			const record = JSON.parse(fs.readFileSync(path.join(livenessDir, name), "utf-8")) as {
+				pid?: number;
+				depth?: number;
 				status?: string;
 				exited_at?: string;
 			};
-			if (record.status === "exited") return record;
+			const pid = record.pid ?? (match?.groups ? Number.parseInt(match.groups.pid, 10) : undefined);
+			const depth = record.depth ??
+				(match?.groups ? Number.parseInt(match.groups.depth, 10) : undefined);
+			if (record.status === "exited" && pid === expected && depth === 0) return record;
 		} catch {
 			// A damaged heartbeat is one missing signal, not a failure.
 		}
@@ -114,7 +131,7 @@ export function classify(runsDir: string, runId: string, now = Date.now()): RunR
 		return { run_id: runId, status: "unknown", duration_seconds: null, requirement };
 	}
 
-	const exited = readExit(paths.liveness);
+	const exited = readExit(paths.liveness, runner);
 	if (exited) {
 		const end = exited.exited_at ? Date.parse(exited.exited_at) : Number.NaN;
 		return {
@@ -125,7 +142,10 @@ export function classify(runsDir: string, runId: string, now = Date.now()): RunR
 		};
 	}
 
-	const alive = typeof runner.pid === "number" && pidAlive(runner.pid);
+	const identities = [runner.pid, runner.child_pid, runner.pgid].filter(
+		(pid): pid is number => typeof pid === "number",
+	);
+	const alive = identities.some((pid) => pidAlive(pid));
 	return {
 		run_id: runId,
 		status: alive ? "running" : "finished",
@@ -177,12 +197,23 @@ function stop(runsDir: string, runId: string | undefined): number {
 	}
 
 	try {
-		process.kill(runner.pid, "SIGTERM");
+		const group = runner.pgid ?? runner.child_pid;
+		if (group !== undefined) process.kill(-group, "SIGTERM");
+		else process.kill(runner.pid, "SIGTERM");
+		if (runner.pid !== group) process.kill(runner.pid, "SIGTERM");
 	} catch (error) {
 		throw new OuterError(`could not signal pid ${runner.pid}: ${(error as Error).message}`);
 	}
 
-	console.log(JSON.stringify({ run_id: runId, stopped: true, pid: runner.pid }));
+	console.log(
+		JSON.stringify({
+			run_id: runId,
+			stopped: true,
+			pid: runner.pid,
+			...(runner.child_pid !== undefined ? { child_pid: runner.child_pid } : {}),
+			...(runner.pgid !== undefined ? { pgid: runner.pgid } : {}),
+		}),
+	);
 	return 0;
 }
 
@@ -251,6 +282,118 @@ async function sub(runsDir: string, argv: string[]): Promise<number> {
 	return 0;
 }
 
+interface AuditArgs {
+	runId?: string;
+	force: boolean;
+}
+
+function parseAudit(argv: string[]): AuditArgs {
+	let runId: string | undefined;
+	let force = false;
+	for (let index = 0; index < argv.length; index++) {
+		const token = argv[index];
+		if (token === "--force") {
+			force = true;
+			continue;
+		}
+		if (token.startsWith("--")) throw new OuterError(`unknown option: ${token}`);
+		if (runId !== undefined) throw new OuterError(`unexpected argument: ${token}`);
+		runId = token;
+	}
+	if (!runId) throw new OuterError("audit requires a run id");
+	return { runId, force };
+}
+
+function auditHandoffs(paths: RunPaths): Array<{
+	id: string;
+	role: string;
+	depth: number;
+	status: HandoffState["status"];
+	result: HandoffState["result"] | null;
+	blocked_reasons: string[];
+	stale: boolean | null;
+	age_seconds: number | null;
+}> {
+	const rows = handoffHistory(paths);
+	return rows.map((state) => ({
+		id: state.handoff_id,
+		role: state.role,
+		depth: state.depth,
+		status: state.status,
+		result: state.result ?? null,
+		blocked_reasons: [
+			...(((state.blocked as { reasons?: unknown } | undefined)?.reasons ?? []) as string[]),
+		],
+		stale: state.stale ?? null,
+		age_seconds: state.age_seconds ?? null,
+	}));
+}
+
+function auditAgents(paths: RunPaths): Array<{
+	pid: number;
+	role: string | null;
+	depth: number | null;
+	verdict: "ALIVE" | "DEAD" | "UNKNOWN";
+	heartbeat_age_seconds: number | null;
+}> {
+	return probeAll(paths.liveness).map((probe) => ({
+		pid: probe.pid,
+		role: probe.role,
+		depth: probe.depth,
+		verdict: probe.verdict,
+		heartbeat_age_seconds: probe.heartbeatAgeSeconds,
+	}));
+}
+
+function lastEventIdentity(paths: RunPaths): {
+	seq: number;
+	subject: string;
+	kind: string;
+	status: string;
+} | null {
+	const events = scan(paths.events, 0, []).events;
+	const event = events.at(-1);
+	return event
+		? { seq: event.seq, subject: event.subject, kind: event.kind, status: event.status }
+		: null;
+}
+
+function audit(runsDir: string, argv: string[]): number {
+	const args = parseAudit(argv);
+	const paths = new RunPaths(runsDir, args.runId as string);
+	if (!fs.existsSync(paths.runDir)) throw new OuterError(`no such run: ${args.runId}`);
+
+	const runner = readRunner(paths.runDir);
+	const row = classify(runsDir, args.runId as string);
+	const handoffs = auditHandoffs(paths);
+	const hasBlocked = handoffs.some((handoff) => handoff.status === "blocked");
+	const hasActive = handoffs.some((handoff) => handoff.status === "open" || handoff.status === "running");
+	const hasStale = handoffs.some((handoff) => handoff.status !== "blocked" && handoff.stale === true);
+
+	let trigger: "blocked" | "stale_active" | "dead_runner" | "missing_runner" | "forced";
+	if (hasBlocked) trigger = "blocked";
+	else if (hasStale) trigger = "stale_active";
+	else if (runner === null && hasActive) trigger = "missing_runner";
+	else if (row.status !== "running" && hasActive) trigger = "dead_runner";
+	else if (args.force) trigger = "forced";
+	else {
+		throw new OuterError("audit refused: run is healthy and progressing; use --force only when a human asked");
+	}
+
+	console.log(
+		JSON.stringify({
+			run_id: args.runId,
+			trigger,
+			run_status: row.status,
+			forced: args.force,
+			handoffs,
+			agents: auditAgents(paths),
+			last_event: lastEventIdentity(paths),
+		}),
+	);
+	return 0;
+}
+
 export async function main(argv: string[]): Promise<number> {
 	const [command, ...rest] = argv;
 	const runsDir = process.env.CODEFLOW_RUNS_DIR ?? DEFAULT_RUNS_DIR;
@@ -264,12 +407,11 @@ export async function main(argv: string[]): Promise<number> {
 			case "stop":
 				return stop(runsDir, rest[0]);
 
-			// Declared so the vocabulary is complete and discoverable, refusing
-			// so nobody builds on a promise the runtime does not yet keep.
+			// Declared so the vocabulary remains complete and discoverable.
 			case "memo":
 				throw new OuterError("memo is not implemented yet");
 			case "audit":
-				throw new OuterError("audit is not implemented yet");
+				return audit(runsDir, rest);
 
 			default:
 				throw new OuterError(`unknown command: ${command ?? "(none)"}`);
