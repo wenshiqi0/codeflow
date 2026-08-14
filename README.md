@@ -71,7 +71,12 @@ Codeflow 用 **run 内的共享事实缓存**解决这个问题：角色确认�
 
 ```bash
 git clone git@github.com:wenshiqi0/codeflow.git
+cd codeflow
+mkdir -p "$HOME/.codex/skills"
+ln -s "$PWD" "$HOME/.codex/skills/codeflow"
 ```
+
+安装使用符号链接而不是复制仓库：之后在这个 checkout 里 `git pull`，全局 skill 立即使用同一份最新代码，不会出现两份运行时漂移。
 
 密钥统一从全局环境获取，仓库内不含任何凭据。在 shell 配置或全局 env 文件中提供：
 
