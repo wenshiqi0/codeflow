@@ -117,7 +117,7 @@ else
   while IFS= read -r role; do
     [[ -z "$role" ]] && continue
     ROLE_COUNT=$((ROLE_COUNT + 1))
-    if ! bun "$RUNTIME_DIR/lib/cli-run.ts" run --agent "$role" --print "probe" >/dev/null 2>&1; then
+    if ! bun "$RUNTIME_DIR/lib/cli-run.ts" delegate --role "$role" --print "probe" >/dev/null 2>&1; then
       bad "role $role does not resolve (check its model: line against models.json)"
       ROLE_BAD=$((ROLE_BAD + 1))
     fi
@@ -138,5 +138,5 @@ if [[ "$FAIL" -gt 0 ]]; then
 fi
 
 echo "Ready. Start a run with:"
-echo "  codeflow run --agent planner \"<requirement>\""
+echo "  codeflow exec \"<requirement>\""
 exit 0

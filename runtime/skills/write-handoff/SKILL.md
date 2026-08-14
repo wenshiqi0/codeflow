@@ -7,7 +7,7 @@ description: Author a structured delegation handoff with verifiable acceptance c
 
 A handoff turns a requested outcome into a bounded, testable delegation. It is the only contract between agents, so it must be precise and self-consistent.
 
-You write the body. The CLI records the state: `codeflow handoff open` persists your body as `handoff.md`, and the receiver reports through `codeflow handoff finish`. Never hand-write `state.json`, an event file, or an `active/` sentinel.
+You write the body. The CLI records the state: `code-agent handoff open` persists your body as `handoff.md`, and the receiver reports through `code-agent handoff finish`. Never hand-write `state.json`, an event file, or an `active/` sentinel.
 
 ## Input
 

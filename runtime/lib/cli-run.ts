@@ -1,10 +1,14 @@
 #!/usr/bin/env bun
 /**
- * `codeflow run` — resolve a role and supervise its pi process.
+ * `codeflow exec` and `code-agent delegate` — resolve a role and supervise its
+ * pi process.
  *
- * A fresh depth-0 invocation allocates the run id and announces it; a nested
- * invocation inherits the one already in the environment, so a delegated role
- * lands inside the run that delegated it.
+ * One implementation, two entry points, because the two rings mean different
+ * things by it. `exec` starts a run from a requirement: it allocates the run id
+ * and announces it. `delegate` runs a role inside a run that already exists and
+ * inherits that id from the environment. Splitting the spelling keeps "run" out
+ * of a role's vocabulary entirely, so no role can mistake delegating a unit of
+ * work for starting a whole run.
  *
  * pi is spawned and waited on rather than exec'd. Replacing this process would
  * leave nobody to reap pi or anything it detaches, which produces zombies
@@ -20,6 +24,7 @@ import { buildArgv, listRoles, readFrontmatter, resolveRole, RoleError } from ".
 
 const RUNTIME_DIR = path.resolve(import.meta.dir, "..");
 const AGENTS_DIR = path.join(RUNTIME_DIR, "agents");
+const VERSION = "0.1.0";
 const EXTENSIONS = [
 	path.join(RUNTIME_DIR, "extensions", "codeflow-task", "index.ts"),
 	path.join(RUNTIME_DIR, "extensions", "codeflow-context", "index.ts"),
@@ -37,8 +42,8 @@ export function newRunId(now = new Date()): string {
 	return `run-${stamp}-${randomBytes(2).toString("hex")}`;
 }
 
-function fail(message: string): number {
-	console.error(`codeflow run: error: ${message}`);
+function fail(message: string, command = "exec"): number {
+	console.error(`codeflow ${command}: error: ${message}`);
 	return 1;
 }
 
@@ -57,7 +62,9 @@ function parse(argv: string[]): ParsedRun {
 
 	for (let index = 0; index < argv.length; index++) {
 		const token = argv[index];
-		if (token === "--agent") {
+		// `--role` is the spelling the inner vocabulary uses; `--agent` stays
+		// accepted so a role prompt or script from before the split still works.
+		if (token === "--role" || token === "--agent") {
 			role = argv[++index];
 		} else if (token === "--handoff-file") {
 			handoffFile = argv[++index];
@@ -70,18 +77,32 @@ function parse(argv: string[]): ParsedRun {
 	return { role, prompt: prompt.join(" "), printOnly, handoffFile };
 }
 
-export async function run(argv: string[]): Promise<number> {
+/**
+ * `entry` only changes how arguments are validated and reported.
+ *
+ * `exec` takes a requirement and always drives the planner: choosing the role
+ * is the planner's job, not the caller's. `delegate` takes an explicit role
+ * because that is precisely the decision the planner is making.
+ */
+export async function run(argv: string[], entry: "exec" | "delegate" = "delegate"): Promise<number> {
 	const args = parse(argv);
-	if (!args.role) return fail("run requires --agent ROLE");
+
+	if (entry === "exec") {
+		if (args.prompt.trim() === "") {
+			return fail("exec requires a requirement", "exec");
+		}
+		args.role ??= "planner";
+	}
+	if (!args.role) return fail("delegate requires --role ROLE", "delegate");
 
 	let resolved;
 	try {
 		resolved = resolveRole(AGENTS_DIR, args.role);
 	} catch (error) {
-		if (error instanceof RoleError) return fail(error.message);
+		if (error instanceof RoleError) return fail(error.message, entry);
 		throw error;
 	}
-	if (resolved === null) return fail(`unknown role: ${args.role}`);
+	if (resolved === null) return fail(`unknown role: ${args.role}`, entry);
 
 	const inherited = process.env.CODEFLOW_RUN_ID;
 	const freshRun = inherited === undefined;
@@ -113,7 +134,7 @@ export async function run(argv: string[]): Promise<number> {
 
 	if (args.handoffFile) {
 		if (!fs.existsSync(args.handoffFile)) {
-			return fail(`handoff body not found: ${args.handoffFile}`);
+			return fail(`handoff body not found: ${args.handoffFile}`, entry);
 		}
 		const opened = openHandoff(paths, {
 			role: args.role,
@@ -123,8 +144,10 @@ export async function run(argv: string[]): Promise<number> {
 		handoffId = opened.handoff_id;
 	}
 
+	// The requirement is recorded with the run so `ls` can label it without
+	// reading anything from inside the execute loop.
 	if (freshRun) {
-		runStart(paths, args.role, process.pid);
+		runStart(paths, args.role, process.pid, args.prompt);
 	}
 
 	console.error(
@@ -192,12 +215,17 @@ function debug(argv: string[]): number {
 export async function main(argv: string[]): Promise<number> {
 	const [command, ...rest] = argv;
 	switch (command) {
-		case "run":
-			return await run(rest);
+		case "exec":
+			return await run(rest, "exec");
+		case "delegate":
+			return await run(rest, "delegate");
 		case "debug":
 			return debug(rest);
+		case "--version":
+			console.log(VERSION);
+			return 0;
 		default:
-			return fail("usage: <run|debug> ...");
+			return fail("usage: <exec|delegate|debug> ...");
 	}
 }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * `codeflow handoff` / `codeflow agents` / `codeflow facts`.
+ * `code-agent handoff` / `code-agent roster` / `code-agent facts`.
  *
  * The CLI surface is the whole mechanical plane: every state transition a role
  * can cause goes through a subcommand here, so no model ever writes state
@@ -84,7 +84,7 @@ function resolveRunId(args: Args): string {
 	const runId = one(args, "run-id") ?? process.env.CODEFLOW_RUN_ID;
 	if (!runId) {
 		throw new CliError(
-			"--run-id is required (or set CODEFLOW_RUN_ID; `codeflow run` allocates and exports it)",
+			"--run-id is required (or set CODEFLOW_RUN_ID; `codeflow exec` allocates and exports it)",
 		);
 	}
 	return runId;
@@ -272,7 +272,7 @@ export async function main(argv: string[]): Promise<number> {
 		}
 	} catch (error) {
 		if (error instanceof CliError) {
-			console.error(`codeflow handoff: error: ${error.message}`);
+			console.error(`code-agent: error: ${error.message}`);
 			return 1;
 		}
 		throw error;

@@ -14,7 +14,7 @@
  * Every delegation is also a handoff. Before the child starts, the prompt is
  * registered as `handoffs/<id>/handoff.md` and the id is injected into the
  * child's environment so the child can write its own receipt through
- * `codeflow handoff finish`. Afterwards this extension checks mechanically
+ * `code-agent handoff finish`. Afterwards this extension checks mechanically
  * that a terminal receipt landed; when it did not, it records `blocked` with
  * the observable reasons rather than retrying. The tool's return value is a
  * pointer, so a receipt body never enters the delegator's context.

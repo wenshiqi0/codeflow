@@ -22,13 +22,13 @@ Terminal states are immutable. Re-finishing a terminal handoff is rejected as an
 ## Commands
 
 ```bash
-codeflow handoff open   --role <role> --body-file <path> [--depth N] [--scope PATH]...
-codeflow handoff start  --id <id> [--pid N]
-codeflow handoff finish --id <id> --status <PASS|FAIL|BLOCKED> --summary "<one line>" \
+code-agent handoff open   --role <role> --body-file <path> [--depth N] [--scope PATH]...
+code-agent handoff start  --id <id> [--pid N]
+code-agent handoff finish --id <id> --status <PASS|FAIL|BLOCKED> --summary "<one line>" \
                         [--receipt <file>] [--artifact <path>]... [--blocked-reason <enum>]...
-codeflow handoff status --run-id <id> [--id <handoff-id>]
-codeflow handoff list   [--active]
-codeflow agents list    [--format lines|json]
+code-agent handoff status --run-id <id> [--id <handoff-id>]
+code-agent handoff list   [--active]
+code-agent roster    [--format lines|json]
 ```
 
 ## Receipts

@@ -723,6 +723,7 @@ export function runStart(
 	paths: RunPaths,
 	role: string,
 	pid: number,
+	requirement = "",
 ): { run_id: string; runner: string } {
 	const runner = {
 		schema_version: SCHEMA_VERSION,
@@ -730,6 +731,9 @@ export function runStart(
 		role,
 		pid,
 		started_at: nowIso(),
+		// Stored so the outer ring can label a run without opening anything
+		// that belongs to the execute loop.
+		requirement,
 	};
 	const file = path.join(paths.runDir, "runner.json");
 	writeJsonAtomic(file, runner);

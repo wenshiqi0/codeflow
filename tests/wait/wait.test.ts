@@ -1,5 +1,5 @@
 /**
- * Contract tests for `codeflow wait`.
+ * Contract tests for the event-stream wait, which `codeflow sub` exposes.
  *
  * The outer loop's correctness rests on three properties here: a reconnect
  * never replays, a timeout with no events is normal rather than a failure, and

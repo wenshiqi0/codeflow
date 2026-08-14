@@ -1,5 +1,6 @@
 {
   "name": "codeflow",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Test-first multi-agent coding workflow, packaged as a single skill",

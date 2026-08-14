@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
-# Codeflow CLI dispatcher.
+# Outer-ring CLI: everything about a run as a whole.
 #
 # The runtime is global — it lives beside this script inside the installed
 # skill, not inside the project being worked on. Only run artifacts land in the
 # project, under .codeflow/runs/. That is why RUNTIME_DIR is resolved relative
 # to this file while the working directory becomes the target repository root.
+#
+# This binary speaks exec/ls/sub/memo/audit/stop and nothing else. The
+# mechanical verbs a role needs (handoff, facts, check, roster, delegate) live
+# in `code-agent`, which is not on a user PATH. Two vocabularies with no overlap
+# mean the ring boundary is enforced by which binary is reachable, not by a
+# paragraph asking an agent to behave. There is also no passthrough default: an
+# unknown verb fails here instead of quietly reaching a model.
 #
 # Everything below is Bun: the extensions are TypeScript loaded without a build
 # step, so a second runtime would only add a dependency and a cold start.
@@ -13,6 +20,21 @@ set -euo pipefail
 RUNTIME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LIB_DIR="$RUNTIME_DIR/lib"
 CODEFLOW_HOME="${CODEFLOW_HOME:-$HOME/.codeflow}"
+
+usage() {
+  cat <<'EOF'
+usage: codeflow <command> [options]
+
+  exec "<requirement>"              start a run and follow it
+  ls                                list runs: id, status, duration, requirement
+  sub <run-id> [--since <seq>]      subscribe to a run's event stream
+  memo <run-id> "<text>"            append to a run's requirement
+  audit <run-id> [--force]          gated audit of a blocked or stale run
+  stop <run-id>                     terminate a running run
+
+  --help, --version
+EOF
+}
 
 # Run artifacts belong to the repository being changed, so every command
 # operates from its root. Outside a repository the current directory is the
@@ -24,10 +46,23 @@ fi
 export PI_CODING_AGENT_DIR="$RUNTIME_DIR"
 export PATH="$RUNTIME_DIR/bin:$PATH"
 
-# Metadata inspection must work without credentials configured.
-if [[ "${1:-}" == "debug" ]]; then
-  exec bun "$LIB_DIR/cli-run.ts" "$@"
-fi
+# Metadata inspection and the pure-metadata commands must work without
+# credentials configured, so they are dispatched before any env file is read.
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  --version)
+    exec bun "$LIB_DIR/cli-run.ts" --version
+    ;;
+  debug)
+    exec bun "$LIB_DIR/cli-run.ts" "$@"
+    ;;
+  ls|sub|stop|memo|audit)
+    exec bun "$LIB_DIR/cli-outer.ts" "$@"
+    ;;
+esac
 
 # Credentials come from the environment. A global env file is a convenience for
 # keys that are the same everywhere; an exported shell variable always wins, so
@@ -48,33 +83,15 @@ fi
 [[ -n "$INHERITED_DEEPSEEK_API_KEY" ]] && export DEEPSEEK_API_KEY="$INHERITED_DEEPSEEK_API_KEY"
 
 case "${1:-}" in
-  handoff|agents|facts)
-    exec bun "$LIB_DIR/cli-handoff.ts" "$@"
-    ;;
-  test-patch)
+  exec)
     shift
-    exec bun "$LIB_DIR/test-patch.ts" "$@"
-    ;;
-  source-check)
-    shift
-    exec bun "$LIB_DIR/source-safety.ts" "$@"
-    ;;
-  wait)
-    shift
-    exec bun "$LIB_DIR/wait.ts" "$@"
-    ;;
-  probe|agent-status)
-    shift
-    exec bun "$LIB_DIR/cli-status.ts" "$@"
-    ;;
-  run)
-    exec bun "$LIB_DIR/cli-run.ts" "$@"
-    ;;
-  command)
-    shift
-    exec bun "$LIB_DIR/cli-run.ts" run --agent command "$@"
+    exec bun "$LIB_DIR/cli-run.ts" exec "$@"
     ;;
   *)
-    exec pi "$@"
+    if [[ -n "${1:-}" ]]; then
+      echo "codeflow: error: unknown command: $1" >&2
+    fi
+    usage >&2
+    exit 1
     ;;
 esac
