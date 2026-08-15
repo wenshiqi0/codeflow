@@ -28,6 +28,7 @@ const VERSION = "0.1.0";
 const EXTENSIONS = [
 	path.join(RUNTIME_DIR, "extensions", "codeflow-task", "index.ts"),
 	path.join(RUNTIME_DIR, "extensions", "codeflow-context", "index.ts"),
+	path.join(RUNTIME_DIR, "extensions", "directory-policy", "index.ts"),
 	path.join(RUNTIME_DIR, "extensions", "agent-watchdog", "index.ts"),
 ];
 
@@ -40,6 +41,26 @@ const EXTENSIONS = [
 export function newRunId(now = new Date()): string {
 	const stamp = now.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
 	return `run-${stamp}-${randomBytes(2).toString("hex")}`;
+}
+
+/**
+ * `exec` must give its depth-0 planner the same terminal contract as every
+ * delegated role. Without this root handoff, the planner prompt asks it to run
+ * `handoff finish` with no handoff id, and the observe loop can never receive
+ * a business-terminal `run_finished` event.
+ */
+export function openRootHandoffForRun(
+	paths: RunPaths,
+	role: string,
+	requirement: string,
+): ReturnType<typeof openHandoff> {
+	const body = `Goal: ${requirement}\n\n## Requirement\n\n${requirement}\n`;
+	return openHandoff(paths, {
+		role,
+		depth: 0,
+		body,
+		title: requirement.split("\n", 1)[0].slice(0, 80),
+	});
 }
 
 function fail(message: string, command = "exec"): number {
@@ -168,6 +189,8 @@ export async function run(argv: string[], entry: "exec" | "delegate" = "delegate
 	// reading anything from inside the execute loop.
 	if (freshRun) {
 		runStart(paths, args.role, process.pid, args.prompt);
+		const root = openRootHandoffForRun(paths, args.role, args.prompt);
+		handoffId = root.handoff_id;
 	}
 
 	console.error(
@@ -198,21 +221,28 @@ export async function run(argv: string[], entry: "exec" | "delegate" = "delegate
 		process.on("SIGINT", onTermination);
 	}
 
-	child = Bun.spawn(buildArgv(resolved, args.prompt, EXTENSIONS), {
-		stdin: "inherit",
-		stdout: "inherit",
-		stderr: "inherit",
-		detached: freshRun,
-		env: {
-			...process.env,
-			PATH: `${path.join(RUNTIME_DIR, "bin")}:${process.env.PATH ?? ""}`,
-			PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR ?? RUNTIME_DIR,
-			CODEFLOW_AGENT_ROLE: args.role,
-			CODEFLOW_AGENT_DEPTH: freshRun ? "0" : "1",
-			CODEFLOW_RUN_ID: runId,
-			...(handoffId ? { CODEFLOW_HANDOFF_ID: handoffId } : {}),
+	fs.mkdirSync(paths.piSessions, { recursive: true });
+	child = Bun.spawn(
+		buildArgv(resolved, args.prompt, EXTENSIONS, {
+			id: `${runId}-planner`,
+			dir: paths.piSessions,
+		}),
+		{
+			stdin: "inherit",
+			stdout: "inherit",
+			stderr: "inherit",
+			detached: freshRun,
+			env: {
+				...process.env,
+				PATH: `${path.join(RUNTIME_DIR, "bin")}:${process.env.PATH ?? ""}`,
+				PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR ?? RUNTIME_DIR,
+				CODEFLOW_AGENT_ROLE: args.role,
+				CODEFLOW_AGENT_DEPTH: freshRun ? "0" : "1",
+				CODEFLOW_RUN_ID: runId,
+				...(handoffId ? { CODEFLOW_HANDOFF_ID: handoffId } : {}),
+			},
 		},
-	});
+	);
 	if (freshRun && child.pid !== undefined) runnerChildStarted(paths, child.pid);
 
 	const code = await child.exited;

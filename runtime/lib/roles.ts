@@ -21,6 +21,9 @@ export const ALLOWED_KEYS = new Set([
 	"tools",
 	"delegates",
 	"needs_project_rules",
+	"goal_lane",
+	"write_policy",
+	"bash_policy",
 ]);
 
 export interface Frontmatter {
@@ -29,6 +32,9 @@ export interface Frontmatter {
 	tools?: string;
 	delegates?: string;
 	needs_project_rules?: string;
+	goal_lane?: string;
+	write_policy?: string;
+	bash_policy?: string;
 }
 
 export interface ResolvedRole {
@@ -38,6 +44,9 @@ export interface ResolvedRole {
 	systemPrompt: string;
 	tools: string[];
 	delegates: boolean;
+	goalLane?: string;
+	writePolicy?: string;
+	bashPolicy?: string;
 }
 
 export class RoleError extends Error {}
@@ -98,6 +107,28 @@ export function resolveRole(agentsDir: string, role: string): ResolvedRole | nul
 		throw new RoleError(`agent ${role}: frontmatter model must be '<provider>/<model>'`);
 	}
 	const separator = binding.indexOf("/");
+	if (
+		frontmatter.goal_lane &&
+		!/^(?:test|code|verify)$/.test(frontmatter.goal_lane)
+	) {
+		throw new RoleError(
+			`agent ${role}: goal_lane must be test, code, or verify`,
+		);
+	}
+	if (
+		frontmatter.write_policy &&
+		!/^(?:(?:allow|deny):[A-Za-z0-9_.\-/]+|none)$/.test(frontmatter.write_policy)
+	) {
+		throw new RoleError(
+			`agent ${role}: write_policy must be 'allow:<root>', 'deny:<root>', or 'none'`,
+		);
+	}
+	if (
+		frontmatter.bash_policy &&
+		!/^(?:codeflow-only|read-only|guarded-work|unrestricted)$/.test(frontmatter.bash_policy)
+	) {
+		throw new RoleError(`agent ${role}: invalid bash_policy`);
+	}
 
 	return {
 		role,
@@ -110,6 +141,9 @@ export function resolveRole(agentsDir: string, role: string): ResolvedRole | nul
 			.filter(Boolean),
 		// Strict equality: a role delegates only when it says so exactly.
 		delegates: frontmatter.delegates === "true",
+		goalLane: frontmatter.goal_lane,
+		writePolicy: frontmatter.write_policy,
+		bashPolicy: frontmatter.bash_policy,
 	};
 }
 
@@ -124,6 +158,7 @@ export function buildArgv(
 	resolved: ResolvedRole,
 	prompt: string,
 	extensions: string[],
+	session?: { id: string; dir: string },
 ): string[] {
 	const argv = [
 		"pi",
@@ -139,6 +174,9 @@ export function buildArgv(
 	argv.push("--no-context-files");
 	if (resolved.tools.length > 0) {
 		argv.push("--tools", resolved.tools.join(","));
+	}
+	if (session) {
+		argv.push("--session-id", session.id, "--session-dir", session.dir);
 	}
 	return argv;
 }

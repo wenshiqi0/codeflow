@@ -14,7 +14,13 @@ Codeflow 把编码工作分成两层，两层之间只通过元数据通信：
         │
         ▼
 内环（pi agents，各自绑定不同模型）
-  planner → test-writer → test-runner(RED) → coder → test-runner(GREEN) → review
+  planner → [architect: initialization / anti-degradation / direction]
+        → goal contract: tests/biz/<goal-id>/ + test/code/verify lane sessions
+        → test lane: directly author business tests
+        → verify lane: business RED
+        → code lane: related unit RED/GREEN cycles + checkpoints
+        → verify lane: unit + business + regression GREEN
+        → review / derived goal join
 ```
 
 - **内环**沿用 pi agents 机制与 handoff 语义：每个角色是一个独立进程，由 frontmatter 绑定自己的 provider/model，通过 handoff 移交工作单元。
@@ -37,6 +43,7 @@ Codeflow 把编码工作分成两层，两层之间只通过元数据通信：
 SKILL.md              # 外环协议：如何发起、如何观察、何时停机
 scripts/              # doctor 等运维脚本
 references/           # 渐进披露：handoff 契约、事实台账、角色与模型绑定
+                      # goals / directory-policy 等运行契约同样在这里
 tests/                # 每个模块一个目录，各自可独立运行
 runtime/              # 内环运行时
 ├── agents/           #   角色定义，frontmatter 是模型绑定的唯一事实源

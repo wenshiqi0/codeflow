@@ -7,6 +7,8 @@
  * ├── _spool/                      run-level events, for cross-run discovery
  * └── <run-id>/
  *     ├── handoffs/<handoff-id>/   handoff.md, state.json, receipt.json, title.txt
+ *     ├── goals/<goal-id>/        immutable goal contracts; no goal state machine
+ *     ├── pi-sessions/              goal/lane session files
  *     ├── active/<handoff-id>      sentinel per in-flight handoff
  *     ├── events/                  the outer loop's only listening surface
  *     ├── tmp/                     staging; rename into events/ delivers
@@ -41,6 +43,12 @@ export class RunPaths {
 	get handoffs(): string {
 		return path.join(this.runDir, "handoffs");
 	}
+	get goals(): string {
+		return path.join(this.runDir, "goals");
+	}
+	get piSessions(): string {
+		return path.join(this.runDir, "pi-sessions");
+	}
 	get active(): string {
 		return path.join(this.runDir, "active");
 	}
@@ -65,6 +73,12 @@ export class RunPaths {
 
 	handoffDir(handoffId: string): string {
 		return path.join(this.handoffs, handoffId);
+	}
+	goalDir(goalId: string): string {
+		return path.join(this.goals, goalId);
+	}
+	goalContractPath(goalId: string): string {
+		return path.join(this.goalDir(goalId), "contract.json");
 	}
 	statePath(handoffId: string): string {
 		return path.join(this.handoffDir(handoffId), "state.json");

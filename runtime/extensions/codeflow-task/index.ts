@@ -1,11 +1,12 @@
 /**
  * Codeflow task role launcher.
  *
- * Registers `task(agent, prompt)` and `task_group(tasks, max_concurrency)`
+ * Registers `goal`, `task(agent, prompt)`, and `task_group(tasks, max_concurrency)`
  * tools only on depth-0 roles whose frontmatter declares `delegates: true`.
- * Each
- * call spawns isolated `pi` children in JSON mode whose system prompt is the
+ * Each call spawns `pi` children in JSON mode whose system prompt is the
  * Markdown body of `.codeflow/agents/<role>.md`, discovered by filename.
+ * Non-goal tasks are ephemeral; a goal lane reuses a deterministic session id
+ * so its logical agent context persists while each handoff stays independent.
  * Frontmatter is parsed with Pi's parseFrontmatter; `model` must be
  * "<provider>/<model>", while `description`, `tools`, and the strict boolean
  * `delegates` permission are optional. The Markdown agent files are the sole
@@ -27,17 +28,34 @@ import { fileURLToPath } from "node:url";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { type ExtensionAPI, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { blockedReasons, delegationPointer, STREAM_IDLE_ABORT_MARKER } from "./handoff-gate";
+import {
+	blockedReasons,
+	delegationPointer,
+	immediateFailureReasons,
+	MISSING_HANDOFF_FINISH_SUMMARY,
+	STREAM_IDLE_ABORT_MARKER,
+} from "./handoff-gate";
+import { eventLogExcerpt } from "../../lib/events";
 import {
 	finishHandoff as finishHandoffState,
+	handoffHistory,
 	openHandoff as openHandoffState,
 } from "../../lib/handoff";
+import {
+	type GoalContract,
+	type GoalLane,
+	defineGoal,
+	goalSessionId,
+	loadGoal,
+} from "../../lib/goals";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
 
 // runtime/extensions/codeflow-task/index.ts -> runtime
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const AGENTS_DIR = path.join(RUNTIME_DIR, "agents");
 const WATCHDOG_EXTENSION = path.join(RUNTIME_DIR, "extensions", "agent-watchdog", "index.ts");
+const CONTEXT_EXTENSION = path.join(RUNTIME_DIR, "extensions", "codeflow-context", "index.ts");
+const DIRECTORY_POLICY_EXTENSION = path.join(RUNTIME_DIR, "extensions", "directory-policy", "index.ts");
 const ROLE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const MAX_CONCURRENCY = 8;
 
@@ -45,6 +63,7 @@ interface OpenedHandoff {
 	handoffId: string;
 	statePath: string;
 	receiptPath: string;
+	sessionId?: string;
 }
 
 /** Resolve the run paths for the run this process belongs to. */
@@ -59,7 +78,60 @@ function currentRun(): RunPaths | null {
  * record against (for example `pi` started by hand), so delegation keeps
  * working without a registry rather than failing.
  */
-function openHandoff(role: string, prompt: string, cwd: string): OpenedHandoff | null {
+interface GoalTaskRef {
+	goalId: string;
+	lane: GoalLane;
+	contract: GoalContract;
+	sessionId: string;
+}
+
+function resolveGoalTask(
+	agent: string,
+	goalId: string | undefined,
+	lane: string | undefined,
+): GoalTaskRef | null {
+	if (!goalId && !lane) return null;
+	if (!goalId || !lane) throw new Error("goal_id and lane must be provided together");
+	if (!/^(?:test|code|verify)$/.test(lane)) throw new Error(`invalid goal lane: ${lane}`);
+	const paths = currentRun();
+	if (!paths) throw new Error("cannot use a goal task outside a Codeflow run");
+	const contract = loadGoal(paths, goalId);
+	const goalLane = lane as GoalLane;
+	if (contract.lanes[goalLane].role !== agent) {
+		throw new Error(
+			`role ${agent} does not own goal ${contract.id} lane ${goalLane}; expected ${contract.lanes[goalLane].role}`,
+		);
+	}
+	return {
+		goalId: contract.id,
+		lane: goalLane,
+		contract,
+		sessionId: goalSessionId(process.env.CODEFLOW_RUN_ID ?? "", contract.id, goalLane),
+	};
+}
+
+function assertGoalLaneAvailable(goal: GoalTaskRef): void {
+	const paths = currentRun();
+	if (!paths) return;
+	const active = handoffHistory(paths).find(
+		(state) =>
+			state.goal_id === goal.goalId &&
+			state.lane === goal.lane &&
+			(state.status === "open" || state.status === "running"),
+	);
+	if (active) {
+		throw new Error(
+			`goal ${goal.goalId} lane ${goal.lane} already has active handoff ${active.handoff_id}`,
+		);
+	}
+}
+
+function openHandoff(
+	role: string,
+	prompt: string,
+	cwd: string,
+	goal?: GoalTaskRef,
+): OpenedHandoff | null {
 	const paths = currentRun();
 	if (!paths) return null;
 	try {
@@ -68,11 +140,19 @@ function openHandoff(role: string, prompt: string, cwd: string): OpenedHandoff |
 			body: prompt,
 			depth: 1,
 			parentId: process.env.CODEFLOW_HANDOFF_ID ?? null,
+			...(goal
+				? {
+					goalId: goal.goalId,
+					lane: goal.lane,
+					scope: goal.contract.lanes[goal.lane].write_roots,
+				}
+				: {}),
 		});
 		return {
 			handoffId: opened.handoff_id,
 			statePath: opened.state,
 			receiptPath: opened.receipt,
+			sessionId: goal?.sessionId,
 		};
 	} catch {
 		return null;
@@ -88,7 +168,13 @@ function readHandoffState(statePath: string): { status?: string; result?: string
 	}
 }
 
-function finishBlocked(handoffId: string, reasons: string[], summary: string, cwd: string): void {
+function finishBlocked(
+	handoffId: string,
+	reasons: string[],
+	detail: string,
+	cwd: string,
+	summary = MISSING_HANDOFF_FINISH_SUMMARY,
+): void {
 	const paths = currentRun();
 	if (!paths) return;
 	try {
@@ -97,6 +183,7 @@ function finishBlocked(handoffId: string, reasons: string[], summary: string, cw
 			status: "BLOCKED",
 			summary,
 			blockedReasons: reasons,
+			detail,
 		});
 	} catch {
 		// A handoff the child already finished is terminal and immutable; the
@@ -134,7 +221,10 @@ function reconcileHandoff(
 		};
 	}
 	if (reasons.length === 0) reasons.push("DELEGATION_ARTIFACT_MISSING");
-	finishBlocked(handoff.handoffId, reasons, result.content.slice(0, 400), cwd);
+	const fallbackSummary =
+		eventLogExcerpt(result.errorMessage || result.stderr || result.content) ||
+		MISSING_HANDOFF_FINISH_SUMMARY;
+	finishBlocked(handoff.handoffId, reasons, fallbackSummary, cwd, fallbackSummary);
 	return {
 		status: "BLOCKED",
 		reasons,
@@ -149,6 +239,9 @@ interface TaskDetails {
 	stderr: string;
 	handoffId?: string;
 	handoffStatus?: string;
+	goalId?: string;
+	lane?: string;
+	sessionId?: string;
 }
 
 interface ResolvedRole {
@@ -164,6 +257,7 @@ interface RoleRunResult {
 	content: string;
 	exitCode: number;
 	stopReason?: string;
+	errorMessage?: string;
 	stderr: string;
 	aborted?: boolean;
 }
@@ -246,7 +340,7 @@ function resolveRole(agent: string): { ok: true; role: string; resolved: Resolve
 }
 
 /**
- * Spawn one isolated pi child for a role and collect its final assistant text.
+ * Spawn one pi child for a role and collect its final assistant text.
  * On signal abort the child is killed (SIGTERM, then SIGKILL) so no orphan
  * process is left running.
  */
@@ -256,6 +350,8 @@ async function runRoleChild(
 	signal: AbortSignal | undefined,
 	cwd: string,
 	handoffId?: string,
+	session?: { id: string; dir: string },
+	goal?: GoalTaskRef,
 ): Promise<RoleRunResult> {
 	const resolution = resolveRole(agent);
 	if (!resolution.ok) {
@@ -267,7 +363,6 @@ async function runRoleChild(
 	const args = [
 		"--mode",
 		"json",
-		"--no-session",
 		"--provider",
 		resolved.provider,
 		"--model",
@@ -278,8 +373,18 @@ async function runRoleChild(
 	// A delegated child is a pi process too, so it needs the same liveness
 	// coverage as depth 0; without it a SIGKILLed child leaves no trace.
 	if (fs.existsSync(WATCHDOG_EXTENSION)) args.push("--extension", WATCHDOG_EXTENSION);
+	if (fs.existsSync(CONTEXT_EXTENSION)) args.push("--extension", CONTEXT_EXTENSION);
+	if (fs.existsSync(DIRECTORY_POLICY_EXTENSION)) {
+		args.push("--extension", DIRECTORY_POLICY_EXTENSION);
+	}
 	if (resolved.tools.length > 0) args.push("--tools", resolved.tools.join(","));
 	args.push("-p", prompt);
+	if (session) {
+		fs.mkdirSync(session.dir, { recursive: true });
+		args.push("--session-id", session.id, "--session-dir", session.dir);
+	} else {
+		args.push("--no-session");
+	}
 
 	const childEnv: Record<string, string | undefined> = {
 		...process.env,
@@ -288,12 +393,43 @@ async function runRoleChild(
 	};
 	if (handoffId) childEnv.CODEFLOW_HANDOFF_ID = handoffId;
 	else delete childEnv.CODEFLOW_HANDOFF_ID;
+	if (goal) {
+		childEnv.CODEFLOW_GOAL_ID = goal.goalId;
+		childEnv.CODEFLOW_LANE = goal.lane;
+	} else {
+		delete childEnv.CODEFLOW_GOAL_ID;
+		delete childEnv.CODEFLOW_LANE;
+	}
 
 	let buffer = "";
 	let finalText = "";
 	let stopReason: string | undefined;
 	let errorMessage: string | undefined;
 	let wasAborted = false;
+
+	/**
+	 * A terminal provider signal is state, not prose. Publishing it before the
+	 * process closes removes the quota/transport failure window in which the
+	 * outer loop would otherwise continue waiting while the provider has already
+	 * failed. The event carries only a bounded, redacted head/tail log excerpt.
+	 */
+	function publishImmediateFailure(
+		observedStopReason: string | undefined,
+		watchdogAborted: boolean,
+		fallbackSummary: string,
+	): void {
+		if (!handoffId) return;
+		const paths = currentRun();
+		const reasons = immediateFailureReasons({
+			stopReason: observedStopReason,
+			watchdogAborted,
+			receiptPresent: paths ? fs.existsSync(paths.receiptPath(handoffId)) : false,
+		});
+		if (reasons.length === 0) return;
+		const summary =
+			eventLogExcerpt(errorMessage || stderr.text || finalText) || fallbackSummary;
+		finishBlocked(handoffId, reasons, summary, cwd, summary);
+	}
 
 	const processLine = (line: string) => {
 		const trimmed = line.trim();
@@ -311,6 +447,19 @@ async function runRoleChild(
 			if (message.errorMessage) errorMessage = message.errorMessage;
 			for (const part of message.content ?? []) {
 				if (part.type === "text") finalText = part.text;
+			}
+			if (message.stopReason === "error") {
+				publishImmediateFailure(
+					message.stopReason,
+					false,
+					"provider request ended with error",
+				);
+			} else if (message.stopReason === "length") {
+				publishImmediateFailure(
+					message.stopReason,
+					false,
+					"provider response reached the output limit",
+				);
 			}
 		}
 	};
@@ -349,6 +498,13 @@ async function runRoleChild(
 		});
 		proc.stderr.on("data", (data) => {
 			stderr.text += data.toString();
+			if (stderr.text.includes(STREAM_IDLE_ABORT_MARKER)) {
+				publishImmediateFailure(
+					stopReason,
+					true,
+					"stream idle watchdog aborted the provider request",
+				);
+			}
 		});
 		proc.on("close", (code) => {
 			if (buffer.trim()) processLine(buffer);
@@ -372,9 +528,10 @@ async function runRoleChild(
 			agent: role,
 			success: false,
 			content: `Task for role "${role}" was aborted by cancellation.`,
-			exitCode,
-			stopReason,
-			stderr: stderr.text,
+				exitCode,
+				stopReason,
+				errorMessage,
+				stderr: stderr.text,
 			aborted: true,
 		};
 	}
@@ -384,19 +541,21 @@ async function runRoleChild(
 			agent: role,
 			success: false,
 			content: `Role "${role}" exited with nonzero code ${exitCode}.${tail ? `\n${tail}` : ""}`,
-			exitCode,
-			stopReason,
-			stderr: stderr.text,
+				exitCode,
+				stopReason,
+				errorMessage,
+				stderr: stderr.text,
 		};
 	}
 	if (stopReason === "error" || stopReason === "aborted" || stopReason === "length") {
 		return {
 			agent: role,
 			success: false,
-			content: `Role "${role}" stopped with reason "${stopReason}"${errorMessage ? `: ${errorMessage}` : ""}`,
-			exitCode,
-			stopReason,
-			stderr: stderr.text,
+				content: `Role "${role}" stopped with reason "${stopReason}"${errorMessage ? `: ${errorMessage}` : ""}`,
+				exitCode,
+				stopReason,
+				errorMessage,
+				stderr: stderr.text,
 		};
 	}
 
@@ -413,6 +572,22 @@ async function runRoleChild(
 const TaskParams = Type.Object({
 	agent: Type.String({ description: "Codeflow role name; resolved to agents/<role>.md by filename" }),
 	prompt: Type.String({ description: "Task prompt handed to the role" }),
+	goal_id: Type.Optional(Type.String({ description: "Goal contract id" })),
+	lane: Type.Optional(Type.String({ description: "Goal lane: test, code, or verify" })),
+});
+
+const GoalParams = Type.Object({
+	id: Type.String({ description: "Stable goal id, for example movement-r1" }),
+	goal: Type.String({ description: "One observable goal pursued by this goal's agent group" }),
+	test_scope: Type.Optional(Type.Array(Type.String(), {
+		description: "Optional extra test paths; always rooted under tests/biz/<id>/",
+	})),
+	code_scope: Type.Optional(Type.Array(Type.String(), {
+		description: "Product and unit-test paths this goal's coder may write",
+	})),
+	definition_of_done: Type.Optional(Type.Array(Type.String(), {
+		description: "Human-readable completion conditions; join status comes from handoffs",
+	})),
 });
 
 const TaskGroupParams = Type.Object({
@@ -420,6 +595,8 @@ const TaskGroupParams = Type.Object({
 		Type.Object({
 			agent: Type.String({ description: "Codeflow role name" }),
 			prompt: Type.String({ description: "Task prompt for the role" }),
+			goal_id: Type.Optional(Type.String()),
+			lane: Type.Optional(Type.String()),
 		}),
 	),
 	max_concurrency: Type.Optional(
@@ -434,6 +611,44 @@ export default function (pi: ExtensionAPI) {
 	const role = process.env.CODEFLOW_AGENT_ROLE;
 	const depth = Number(process.env.CODEFLOW_AGENT_DEPTH ?? "0");
 	if (!roleMayDelegate(role, depth)) return;
+
+	pi.registerTool({
+		name: "goal",
+		label: "Goal",
+		description:
+			"Create an immutable goal contract. The goal has no state machine; " +
+			"progress is derived by joining its test/code/verify handoffs.",
+		parameters: GoalParams,
+
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult> {
+			const paths = currentRun();
+			if (!paths) {
+				return {
+					content: [{ type: "text", text: "goal contracts require a Codeflow run" }],
+					isError: true,
+				};
+			}
+			try {
+				const previousCwd = process.cwd();
+				process.chdir(ctx.cwd);
+				try {
+					const result = defineGoal(paths, {
+						id: params.id,
+						goal: params.goal,
+						testScope: params.test_scope,
+						codeScope: params.code_scope,
+						definitionOfDone: params.definition_of_done,
+					});
+					return { content: [{ type: "text", text: JSON.stringify(result) }] };
+				} finally {
+					process.chdir(previousCwd);
+				}
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { content: [{ type: "text", text: message }], isError: true };
+			}
+		},
+	});
 
 	pi.registerTool({
 		name: "task",
@@ -452,13 +667,28 @@ export default function (pi: ExtensionAPI) {
 				isError: true,
 			});
 
-			const handoff = openHandoff(agent, params.prompt, ctx.cwd);
+			let goal: GoalTaskRef | null = null;
+			try {
+				goal = resolveGoalTask(agent, params.goal_id, params.lane);
+				if (goal) assertGoalLaneAvailable(goal);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return fail(message);
+			}
+			details.goalId = goal?.goalId;
+			details.lane = goal?.lane;
+			details.sessionId = goal?.sessionId;
+
+			const paths = currentRun();
+			const handoff = openHandoff(agent, params.prompt, ctx.cwd, goal ?? undefined);
 			const result = await runRoleChild(
 				agent,
 				params.prompt,
 				signal,
 				ctx.cwd,
 				handoff?.handoffId,
+				goal && paths ? { id: goal.sessionId, dir: paths.piSessions } : undefined,
+				goal ?? undefined,
 			);
 			details.agent = result.agent;
 			details.exitCode = result.exitCode;
@@ -529,13 +759,30 @@ export default function (pi: ExtensionAPI) {
 						};
 						continue;
 					}
-					const handoff = openHandoff(task.agent.trim(), task.prompt, ctx.cwd);
+					const agent = task.agent.trim();
+					let goal: GoalTaskRef | null = null;
+					try {
+						goal = resolveGoalTask(agent, task.goal_id, task.lane);
+						if (goal) assertGoalLaneAvailable(goal);
+					} catch (error) {
+						results[index] = {
+							agent,
+							success: false,
+							content: error instanceof Error ? error.message : String(error),
+							exitCode: 1,
+						};
+						continue;
+					}
+					const paths = currentRun();
+					const handoff = openHandoff(agent, task.prompt, ctx.cwd, goal ?? undefined);
 					const result = await runRoleChild(
-						task.agent,
+						agent,
 						task.prompt,
 						signal,
 						ctx.cwd,
 						handoff?.handoffId,
+						goal && paths ? { id: goal.sessionId, dir: paths.piSessions } : undefined,
+						goal ?? undefined,
 					);
 					if (!handoff) {
 						results[index] = {

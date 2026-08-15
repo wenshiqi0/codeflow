@@ -285,6 +285,47 @@ describe("P10: sub streams from the watermark", () => {
 	});
 });
 
+describe("P10b: goals are derived joins", () => {
+	test("codeflow goals reports lane handoffs without goal state", () => {
+		const dir = makeRunsDir();
+		const runDir = path.join(dir, "run-goal");
+		const goalDir = path.join(runDir, "goals", "movement-r1");
+		const handoffDir = path.join(runDir, "handoffs", "h00001-test-writer");
+		fs.mkdirSync(goalDir, { recursive: true });
+		fs.mkdirSync(handoffDir, { recursive: true });
+		fs.writeFileSync(path.join(goalDir, "contract.json"), JSON.stringify({
+			schema_version: 1,
+			id: "movement-r1",
+			goal: "Deterministic movement",
+			definition_of_done: ["Business tests pass"],
+			created_at: "2026-01-01T00:00:00Z",
+			lanes: {
+				test: { role: "test-writer", write_roots: ["tests/biz/movement-r1"] },
+				code: { role: "coder", write_roots: ["src/game/physics.ts"] },
+				verify: { role: "test-runner", write_roots: [] },
+			},
+		}));
+		fs.writeFileSync(path.join(handoffDir, "state.json"), JSON.stringify({
+			handoff_id: "h00001-test-writer",
+			role: "test-writer",
+			status: "done",
+			result: "PASS",
+			goal_id: "movement-r1",
+			lane: "test",
+		}));
+
+		const env = { ...baseEnv(), CODEFLOW_RUNS_DIR: dir };
+		const result = outer(["goals", "run-goal"], env);
+		expect(result.exitCode).toBe(0);
+		const [goal] = JSON.parse(result.stdout);
+		expect(goal.goal_id).toBe("movement-r1");
+		expect(goal.join.satisfied).toBe(false);
+		expect(goal.lanes.test.latest_handoff.result).toBe("PASS");
+		expect(goal.lanes.code.latest_handoff).toBeNull();
+		expect("status" in goal).toBe(false);
+	});
+});
+
 describe("P11: ls table", () => {
 	test("one JSON row per run, classified by liveness", () => {
 		const { dir } = buildRunsDir();

@@ -17,12 +17,13 @@ The requested outcome (one observable result) plus repository evidence already g
 
 A structured artifact with exactly these sections (omit a section only when it is genuinely empty):
 
+- Business contract: the business test under `tests/biz/<goal-id>/` that observes the product behavior, plus the exact command whose initial failure is expected. This test is owned by `test-writer`; directory policy makes it immutable to coder.
+- Developer batch plan: the first cohesive implementation increment, its expected product area, and a size reference of about one to two working days. State explicitly that unit tests are coder-owned and coder decides the exact unit-test decomposition; do not ask test-writer to prewrite them.
 - Goal: one observable outcome. This line is also the registry title, so keep it under 80 characters.
 - Scope: the files or components that may change, as paths. The CLI intersects these across active handoffs and warns on overlap, which is the guard rail for parallel work — vague prose here disables it.
 - Out of scope: what must not change.
 - Acceptance: numbered criteria.
 - Constraints: compatibility, security, non-goals, environment traps.
-- Initial test target: the file or module tests land in first.
 - Evidence collected: commands already executed and their results. Reference `.codeflow/runs/evidence/` paths instead of pasting logs.
 - Open questions: unresolved facts that can affect implementation; request that the implementer state the choice made.
 
@@ -37,6 +38,8 @@ Run this check before handing off; a handoff can be internally consistent and st
 1. Does any acceptance criterion contradict an existing architectural boundary? (Example: a Phase B handoff required both `bootstrap.sh` and `install.sh` to build `web/dist`. That was wrong — `install.sh` only copies the per-project `.codeflow/` runtime — and it timed out five installer tests. One wrong criterion wasted a delegation.)
 2. Does any constraint contradict another constraint in this handoff?
 3. Is every claim under Evidence collected actually verified by a command you ran, not assumed?
+4. Can the named business acceptance test observe the product behavior without prescribing implementation? If not, revise the requirement contract before sending it.
+5. Is the developer batch a cohesive multi-test increment rather than a default single-test handoff, while remaining below the one-to-two-working-day reference? If not, split or merge the batch plan before sending it.
 
 If any answer is no, fix the handoff before sending.
 

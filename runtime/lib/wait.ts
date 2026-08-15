@@ -5,9 +5,10 @@
  * cost the observer nothing. The caller passes the highest sequence it has
  * seen and gets back everything newer, so reconnecting never replays.
  *
- * Only file *names* are parsed. The name carries sequence, subject, kind, and
- * status, so the observer never opens an event body — which is what keeps the
- * metadata plane genuinely cheap and keeps run artifacts out of its context.
+ * File names carry sequence, subject, kind, and status. For a terminal event
+ * the observer also reads exactly two whitelisted body fields: the closed
+ * `reasons` enum and the bounded one-line `summary`. It never reads refs,
+ * provider errors, diagnostics, or model prose.
  *
  * A directory scan is the authority; the filesystem watch is only a hint about
  * when to scan. That ordering matters: `fs.watch` semantics differ across
@@ -19,6 +20,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DEFAULT_RUNS_DIR } from "./paths";
+import { EVENT_REASONS, eventSummary } from "./events";
 
 const EVENT_NAME =
 	/^(?<seq>\d{5})--(?<subject>[a-z0-9-]+)--(?<kind>[a-z_]+)--(?<status>[A-Z_]+)\.json$/;
@@ -32,6 +34,8 @@ export interface ObservedEvent {
 	kind: string;
 	status: string;
 	file: string;
+	reasons?: string[];
+	summary: string;
 }
 
 export interface ScanResult {
@@ -40,7 +44,7 @@ export interface ScanResult {
 }
 
 /**
- * Read matching events from file names only.
+ * Read matching events from file names plus the whitelisted event contract.
  *
  * The watermark is the largest sequence *seen*, not the largest returned, so
  * filtered kinds still advance it and a later call is not forced to re-examine
@@ -68,13 +72,35 @@ export function scan(directory: string, since: number, kinds: string[]): ScanRes
 		waterMark = Math.max(waterMark, seq);
 		if (seq <= since) continue;
 		if (kinds.length > 0 && !kinds.includes(match.groups.kind)) continue;
-		events.push({
+		const observed: ObservedEvent = {
 			seq,
 			subject: match.groups.subject,
 			kind: match.groups.kind,
 			status: match.groups.status,
 			file: name,
-		});
+			summary: eventSummary(`${match.groups.kind} ${match.groups.status}`),
+		};
+		try {
+			const body = JSON.parse(fs.readFileSync(path.join(directory, name), "utf8")) as {
+				reasons?: unknown;
+				summary?: unknown;
+			};
+			if (typeof body.summary === "string" && body.summary.trim()) {
+				observed.summary = eventSummary(body.summary);
+			}
+			if (
+				Array.isArray(body.reasons) &&
+				body.reasons.every((reason) =>
+					(EVENT_REASONS as readonly string[]).includes(String(reason)),
+				)
+			) {
+				observed.reasons = body.reasons.map((reason) => String(reason));
+			}
+		} catch {
+			// An old or malformed body cannot erase the authoritative filename
+			// metadata. The default enum-derived summary remains.
+		}
+		events.push(observed);
 	}
 
 	events.sort((left, right) => left.seq - right.seq);

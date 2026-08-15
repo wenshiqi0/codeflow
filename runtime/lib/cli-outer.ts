@@ -15,6 +15,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { handoffHistory, type HandoffState } from "./handoff";
+import { goalViews } from "./goals";
 import { probeAll } from "./liveness";
 import { DEFAULT_RUNS_DIR, RunPaths } from "./paths";
 import { scan, wait } from "./wait";
@@ -197,10 +198,10 @@ function stop(runsDir: string, runId: string | undefined): number {
 	}
 
 	try {
-		const group = runner.pgid ?? runner.child_pid;
-		if (group !== undefined) process.kill(-group, "SIGTERM");
+		const target = runner.pgid ?? runner.child_pid;
+		if (target !== undefined) process.kill(-target, "SIGTERM");
 		else process.kill(runner.pid, "SIGTERM");
-		if (runner.pid !== group) process.kill(runner.pid, "SIGTERM");
+		if (runner.pid !== target) process.kill(runner.pid, "SIGTERM");
 	} catch (error) {
 		throw new OuterError(`could not signal pid ${runner.pid}: ${(error as Error).message}`);
 	}
@@ -279,6 +280,16 @@ async function sub(runsDir: string, argv: string[]): Promise<number> {
 		timeoutSeconds: args.timeout,
 	});
 	console.log(JSON.stringify(result, null, 2));
+	return 0;
+}
+
+function goals(runsDir: string, argv: string[]): number {
+	const [runId] = argv;
+	if (!runId) throw new OuterError("goals requires a run id");
+	if (runId.startsWith("--")) throw new OuterError(`unknown option: ${runId}`);
+	const paths = new RunPaths(runsDir, runId);
+	if (!fs.existsSync(paths.runDir)) throw new OuterError(`no such run: ${runId}`);
+	console.log(JSON.stringify(goalViews(paths), null, 2));
 	return 0;
 }
 
@@ -404,6 +415,8 @@ export async function main(argv: string[]): Promise<number> {
 				return ls(runsDir);
 			case "sub":
 				return await sub(runsDir, rest);
+			case "goals":
+				return goals(runsDir, rest);
 			case "stop":
 				return stop(runsDir, rest[0]);
 

@@ -96,8 +96,11 @@ for required in \
   "$RUNTIME_DIR/lib/wait.ts" \
   "$RUNTIME_DIR/lib/cli-run.ts" \
   "$RUNTIME_DIR/lib/cli-handoff.ts" \
+  "$RUNTIME_DIR/lib/goals.ts" \
   "$RUNTIME_DIR/extensions/codeflow-task/index.ts" \
   "$RUNTIME_DIR/extensions/codeflow-context/index.ts" \
+  "$RUNTIME_DIR/extensions/directory-policy/index.ts" \
+  "$RUNTIME_DIR/extensions/directory-policy/policy.ts" \
   "$RUNTIME_DIR/extensions/agent-watchdog/index.ts"; do
   if [[ -f "$required" ]]; then
     ok "${required#"$RUNTIME_DIR"/}"

@@ -179,17 +179,40 @@ describe("argv construction", () => {
 		const argv = buildArgv(resolvedCoder(), "two words", []);
 		expect(argv[argv.indexOf("-p") + 1]).toBe("two words");
 	});
+
+	test("an explicit session id and directory are passed to pi", () => {
+		const argv = buildArgv(resolvedCoder(), "continue work", [], {
+			id: "run-1-goal-1-code",
+			dir: "/tmp/codeflow-sessions",
+		});
+		expect(argv[argv.indexOf("--session-id") + 1]).toBe("run-1-goal-1-code");
+		expect(argv[argv.indexOf("--session-dir") + 1]).toBe("/tmp/codeflow-sessions");
+	});
+
+	test("role policy fields are validated", () => {
+		writeAgent("invalid-lane", "model: a/m\ngoal_lane: product");
+		expect(() => resolveRole(dir, "invalid-lane")).toThrow(RoleError);
+
+		writeAgent("invalid-write", "model: a/m\nwrite_policy: allow:");
+		expect(() => resolveRole(dir, "invalid-write")).toThrow(RoleError);
+
+		writeAgent("invalid-bash", "model: a/m\nbash_policy: shell");
+		expect(() => resolveRole(dir, "invalid-bash")).toThrow(RoleError);
+	});
 });
 
 describe("allowed keys", () => {
-	test("exactly five keys are permitted", () => {
+	test("role policy keys are explicit and validated", () => {
 		// Every extra knob is behaviour not explained by the prompt.
 		expect([...ALLOWED_KEYS].sort()).toEqual([
+			"bash_policy",
 			"delegates",
 			"description",
+			"goal_lane",
 			"model",
 			"needs_project_rules",
 			"tools",
+			"write_policy",
 		]);
 	});
 });

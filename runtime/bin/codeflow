@@ -28,6 +28,7 @@ usage: codeflow <command> [options]
   exec "<requirement>"              start a run and follow it
   ls                                list runs: id, status, duration, requirement
   sub <run-id> [--since <seq>]      subscribe to a run's event stream
+  goals <run-id>                   show derived goal joins
   memo <run-id> "<text>"            append to a run's requirement
   audit <run-id> [--force]          gated audit of a blocked or stale run
   stop <run-id>                     terminate a running run
@@ -59,7 +60,7 @@ case "${1:-}" in
   debug)
     exec bun "$LIB_DIR/cli-run.ts" "$@"
     ;;
-  ls|sub|stop|memo|audit)
+  ls|sub|goals|stop|memo|audit)
     exec bun "$LIB_DIR/cli-outer.ts" "$@"
     ;;
 esac

@@ -20,13 +20,18 @@ test surface with it.
 | `seq/` | `lib/seq.ts` | Cross-process uniqueness of event sequence numbers |
 | `facts/` | `lib/facts.ts` | The ledger: verifiable claims, append-only corrections |
 | `handoff/` | `lib/handoff.ts` | State machine, receipt validation, event emission |
+| `goals/` | `lib/goals.ts` | Immutable goal contracts and derived goal joins |
+| `cli-run/` | `lib/cli-run.ts` | The depth-0 root handoff that makes exec terminable |
 | `roles/` | `lib/roles.ts` | Frontmatter to pi invocation, including defaults |
+| `role-protocol/` | Agent and skill prompts | Two-layer tests, separated test trees, and unit checkpoints |
 | `test-patch/` | `lib/test-patch.ts` | Test-only enforcement and the post-RED lock |
 | `source-safety/` | `lib/source-safety.ts` | Control-byte rejection |
 | `wait/` | `lib/wait.ts` | Blocking observation, watermark, no replay |
+| `events/` | `lib/events.ts` | Closed event enums and bounded one-line summaries |
 | `liveness/` | `lib/liveness.ts` | Multi-signal probing; never DEAD from one signal |
 | `context/` | `extensions/codeflow-context/context.ts` | Rule levels and fact injection |
 | `handoff-gate/` | `extensions/codeflow-task/handoff-gate.ts` | Blocked-reason classification |
+| `directory-policy/` | `extensions/directory-policy/policy.ts` | Role-configurable write and bash boundaries |
 | `agent-watchdog/` | `extensions/agent-watchdog/index.ts` | Stream-idle abort |
 
 ## What these tests are for

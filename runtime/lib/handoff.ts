@@ -79,6 +79,8 @@ const RECEIPT_FIELD_TYPES: Record<string, "string" | "number" | "boolean" | "arr
 const GOAL_PATTERN = /^\s*(?:[-*]\s*)?(?:#+\s*)?Goal\s*:\s*(.+?)\s*$/i;
 const GOAL_HEADING = /^\s*#+\s*Goal\s*$/i;
 const SCOPE_PATTERN = /^\s*(?:[-*]\s*)?(?:#+\s*)?Scope\s*:\s*(.+?)\s*$/i;
+const GOAL_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+const GOAL_LANE_PATTERN = /^(?:test|code|verify)$/;
 
 /** A mechanical rejection: illegal transition, bad schema, missing fact. */
 export class CliError extends Error {}
@@ -92,6 +94,8 @@ export interface HandoffState {
 	status: "open" | "running" | "done" | "blocked";
 	goal: string;
 	scope: string[];
+	goal_id?: string;
+	lane?: "test" | "code" | "verify";
 	lineage: {
 		parent_handoff_id: string | null;
 		parent_run_id: string | null;
@@ -395,6 +399,8 @@ export interface OpenOptions {
 	splitScope?: string | null;
 	title?: string | null;
 	scope?: string[];
+	goalId?: string;
+	lane?: "test" | "code" | "verify";
 }
 
 export interface OpenResult {
@@ -408,6 +414,8 @@ export interface OpenResult {
 	state: string;
 	receipt: string;
 	scope: string[];
+	goal_id?: string;
+	lane?: "test" | "code" | "verify";
 	scope_conflicts: string[];
 	warning?: string;
 }
@@ -423,6 +431,15 @@ export function openHandoff(paths: RunPaths, options: OpenOptions): OpenResult {
 	const goal = parseGoal(options.body);
 	const scope = options.scope?.length ? options.scope : parseScope(options.body);
 	const depth = options.depth ?? (options.parentId ? 1 : 0);
+	if (options.goalId && !GOAL_ID_PATTERN.test(options.goalId)) {
+		throw new CliError(`invalid goal id: ${options.goalId}`);
+	}
+	if (options.lane && !GOAL_LANE_PATTERN.test(options.lane)) {
+		throw new CliError(`invalid goal lane: ${options.lane}`);
+	}
+	if (Boolean(options.goalId) !== Boolean(options.lane)) {
+		throw new CliError("goalId and lane must be provided together");
+	}
 
 	// Two active handoffs editing the same file produce a diff nobody
 	// authored. Record the overlap rather than refusing: serializing is a
@@ -453,6 +470,8 @@ export function openHandoff(paths: RunPaths, options: OpenOptions): OpenResult {
 		status: "open",
 		goal,
 		scope,
+		...(options.goalId ? { goal_id: options.goalId } : {}),
+		...(options.lane ? { lane: options.lane } : {}),
 		lineage: {
 			parent_handoff_id: options.parentId ?? null,
 			parent_run_id: options.parentRunId ?? (options.parentId ? paths.runId : null),
@@ -478,6 +497,8 @@ export function openHandoff(paths: RunPaths, options: OpenOptions): OpenResult {
 		role: options.role,
 		depth,
 		ref: `handoffs/${handoffId}/state.json`,
+		...(options.goalId ? { goal_id: options.goalId } : {}),
+		...(options.lane ? { lane: options.lane } : {}),
 	});
 
 	const result: OpenResult = {
@@ -490,8 +511,10 @@ export function openHandoff(paths: RunPaths, options: OpenOptions): OpenResult {
 		handoff_md: path.join(directory, "handoff.md"),
 		state: paths.statePath(handoffId),
 		receipt: paths.receiptPath(handoffId),
-		scope,
-		scope_conflicts: conflicts,
+	scope,
+	...(options.goalId ? { goal_id: options.goalId } : {}),
+	...(options.lane ? { lane: options.lane } : {}),
+	scope_conflicts: conflicts,
 	};
 	if (conflicts.length > 0) {
 		result.warning =
@@ -587,7 +610,13 @@ export function finishHandoff(paths: RunPaths, options: FinishOptions): FinishRe
 
 	const artifacts: string[] = [];
 	for (const entry of options.artifacts ?? []) {
-		if (!fs.existsSync(entry)) {
+		try {
+			const artifact = fs.statSync(entry);
+			if (!artifact.isFile() || artifact.size === 0) {
+				throw new CliError(`declared artifact is not a non-empty file: ${entry}`);
+			}
+		} catch (error) {
+			if (error instanceof CliError) throw error;
 			throw new CliError(`declared artifact does not exist: ${entry}`);
 		}
 		artifacts.push(entry);
@@ -663,7 +692,10 @@ export function finishHandoff(paths: RunPaths, options: FinishOptions): FinishRe
 	const payload: Record<string, unknown> = {
 		ref: `handoffs/${handoffId}/state.json`,
 		role: state.role,
+		summary: options.summary,
 	};
+	if (state.goal_id) payload.goal_id = state.goal_id;
+	if (state.lane) payload.lane = state.lane;
 	if (receipt !== null) payload.receipt_ref = `handoffs/${handoffId}/receipt.json`;
 	if (options.status === "BLOCKED") payload.reasons = [...reasons];
 	emitHandoffEvent(paths, handoffId, "handoff_finished", options.status, payload);
@@ -676,10 +708,11 @@ export function finishHandoff(paths: RunPaths, options: FinishOptions): FinishRe
 	// "delegated by a handoff-less root". runnerExited below sets the
 	// precedent for gating run-level events on depth 0.
 	if ((state.depth ?? 0) === 0 && !state.lineage?.parent_handoff_id) {
-		emitRunEvent(paths, "run_finished", options.status, {
-			ref: `handoffs/${handoffId}/state.json`,
-			handoff_id: handoffId,
-		});
+			emitRunEvent(paths, "run_finished", options.status, {
+				ref: `handoffs/${handoffId}/state.json`,
+				handoff_id: handoffId,
+				summary: options.summary,
+			});
 	}
 
 	return {
@@ -756,7 +789,7 @@ export function runStart(
  * Record the depth-0 agent process once it exists.
  *
  * `runner.pid` is the supervisor that must reap the agent; `child_pid` is the
- * agent whose process group carries the agent's descendants. Keeping both lets
+ * agent whose process goal carries the agent's descendants. Keeping both lets
  * observation distinguish "supervisor is alive" from "the execute-loop tree can
  * still be signalled", and gives `stop` a target that does not depend on the
  * supervisor remaining alive to forward a signal.
@@ -772,6 +805,45 @@ export function runnerChildStarted(
 	runner.pgid = pgid;
 	writeJsonAtomic(file, runner);
 	return runner;
+}
+
+/**
+ * A depth-0 exit is the last mechanical opportunity to close handoffs that
+ * still claim to be active. This never invents success: an unfinished handoff
+ * becomes BLOCKED with a missing artifact, after which the outer loop sees a
+ * terminal business event before `runner_exited`.
+ */
+function closeAbandonedHandoffs(paths: RunPaths): void {
+	if (!fs.existsSync(paths.active)) return;
+	const active = fs
+		.readdirSync(paths.active)
+		.map((handoffId) => {
+			try {
+				const state = readJson<HandoffState>(paths.statePath(handoffId));
+				return { handoffId, state };
+			} catch {
+				return null;
+			}
+		})
+		.filter((entry): entry is { handoffId: string; state: HandoffState } => entry !== null)
+		// Children close before the root so run_finished is the final business
+		// terminal event rather than being followed by a stale child closure.
+		.sort((left, right) => (right.state.depth ?? 0) - (left.state.depth ?? 0));
+
+	for (const { handoffId, state } of active) {
+		try {
+			if (state.status !== "open" && state.status !== "running") continue;
+			finishHandoff(paths, {
+				handoffId,
+				status: "BLOCKED",
+				summary: "runner exited without finishing this handoff",
+				blockedReasons: ["DELEGATION_ARTIFACT_MISSING"],
+				detail: "The depth-0 runner exited while this handoff was still active.",
+			});
+		} catch {
+			// Terminal or malformed state must not prevent the runner-exit event.
+		}
+	}
 }
 
 /**
@@ -798,6 +870,8 @@ export function runnerExited(
 		exited_at: nowIso(),
 	};
 	writeJsonAtomic(path.join(paths.liveness, `${pid}--${slug(role)}--${depth}.json`), record);
+
+	if (depth === 0) closeAbandonedHandoffs(paths);
 
 	let event: DeliveredEvent | null = null;
 	if (depth === 0) {

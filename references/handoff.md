@@ -19,6 +19,8 @@ open -> running -> done(PASS|FAIL)
 
 Terminal states are immutable. Re-finishing a terminal handoff is rejected as an illegal transition rather than overwriting the record.
 
+`codeflow exec` opens a depth-0 root handoff for its planner. If the depth-0 runner exits while that handoff is still active, the mechanical layer closes every still-active handoff as `BLOCKED` with `DELEGATION_ARTIFACT_MISSING`, emits the terminal business event, and only then emits `runner_exited`. A prose final message is never promoted to success.
+
 ## Commands
 
 ```bash
@@ -54,7 +56,7 @@ Validated fields:
 
 Multiple commands go in a `receipts` array with the overall status at top level. Overall `PASS` requires every entry to pass.
 
-`--artifact` verifies a path exists on disk at finish time, so a delegator never has to take a role's word for it.
+`--artifact` verifies a non-empty file exists on disk at finish time, so a delegator never has to take a role's word for it.
 
 ## Blocked reasons
 
@@ -72,13 +74,15 @@ Several may apply at once; pass `--blocked-reason` more than once. Any of these 
 
 ## Events
 
-Delivered by writing to `tmp/` then renaming into `events/`, so a reader never sees a partial file. **The filename is the metadata:**
+Delivered by writing to `tmp/` then renaming into `events/`, so a reader never sees a partial file. **The filename is the primary metadata:**
 
 ```text
 <seq>--<subject>--<kind>--<status>.json
 ```
 
 Kinds: `run_started`, `run_finished`, `handoff_opened`, `handoff_finished`, `artifact_written`, `runner_exited`.
+
+The event body is also a mechanical contract. `kind`, `status`, and every value in `reasons` must come from closed enums. `summary` is normalized to one bounded line. If it is absent, or the handoff ends in an error/truncation, the summary is built from the original log's first and last 100 characters, flattened to one line with obvious credentials redacted. Besides that bounded summary, identifiers, and pointers, no payload fields are allowed. `codeflow sub` exposes only filename metadata plus `reasons` and `summary`. A terminal provider signal is published as `handoff_finished BLOCKED` as soon as the delegation layer observes it, without waiting for the child process to drain and close.
 
 Sequence numbers are allocated under an exclusive lock, so `--since` is a reliable watermark.
 

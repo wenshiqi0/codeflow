@@ -8,8 +8,8 @@ description: Convert a software change request into an executable, test-first pl
 1. Read repository instructions and inspect the affected code and tests.
 2. Restate the requested outcome in observable terms. Separate confirmed facts from assumptions.
 3. Define scope, non-goals, compatibility constraints, and failure risks.
-4. Write acceptance criteria that a test or deterministic check can prove.
-5. Identify the smallest useful test slice and the likely implementation area without prescribing unnecessary code details.
+4. Write business acceptance criteria that a test or deterministic check can prove from an externally meaningful input and observable result.
+5. Decompose the work into goals with disjoint code scope. For each goal, identify the likely implementation area and developer batches without prescribing internal unit tests; unit tests are coder-owned, usually cover several related behaviors, and are written immediately before implementation.
 6. Produce the handoff below. Do not edit product or test code.
 7. Record the locators you established in your receipt's `facts` array. Exploration is most of planning's cost, and every locator you record is a search a later role does not repeat.
 
@@ -23,4 +23,4 @@ Facts are locations and conventions, not conclusions. "Route registration lives 
 
 ## Handoff
 
-Author the delegation handoff with the `write-handoff` skill, which defines the goal/scope/acceptance/constraints/evidence/open-questions structure and the mandatory self-check. Keep evidence to commands already executed; do not narrate the exploration process.
+Author the delegation handoff with the `write-handoff` skill, which defines the business contract, Developer batch plan, goal/scope/constraints/evidence/open-questions structure and the mandatory self-check. Keep evidence to commands already executed; do not narrate the exploration process.

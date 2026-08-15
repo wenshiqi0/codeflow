@@ -386,6 +386,20 @@ describe("finish", () => {
 		).toThrow(CliError);
 	});
 
+	test("a declared artifact must be a non-empty file", () => {
+		const result = open("coder", 1);
+		fs.writeFileSync("unit-checkpoint.json", "");
+		expect(() =>
+			finishHandoff(paths, {
+				handoffId: result.handoff_id,
+				status: "PASS",
+				summary: "done",
+				receipt: receiptFile("r.json", { status: "PASS" }),
+				artifacts: ["unit-checkpoint.json"],
+			}),
+		).toThrow(CliError);
+	});
+
 	test("an existing artifact emits its own event", () => {
 		const result = open();
 		fs.writeFileSync("tests.patch", "diff\n");
@@ -768,6 +782,35 @@ describe("run lifecycle", () => {
 		// Nobody else is left to report that the execute loop stopped.
 		expect(runnerExited(paths, 4242, "planner", 0).event).not.toBeNull();
 		expect(eventNames().some((name) => name.includes("runner_exited"))).toBe(true);
+	});
+
+	test("a depth-0 exit mechanically closes an abandoned root handoff", () => {
+		const root = open();
+		const child = open("coder", 1);
+		runnerExited(paths, 4242, "planner", 0);
+		const state = readJson<any>(root.state);
+		const childState = readJson<any>(child.state);
+		const names = eventNames();
+
+		expect(state.status).toBe("blocked");
+		expect(state.blocked.reasons).toContain("DELEGATION_ARTIFACT_MISSING");
+		expect(childState.status).toBe("blocked");
+		const childFinishedAt = names.findIndex((name) => name.includes("h00002-coder--handoff_finished--BLOCKED"));
+		const finishedAt = names.findIndex((name) => name.includes("run_finished--BLOCKED"));
+		const exitedAt = names.findIndex((name) => name.includes("runner_exited--EXITED"));
+		expect(childFinishedAt).toBeGreaterThanOrEqual(0);
+		expect(finishedAt).toBeGreaterThanOrEqual(0);
+		expect(finishedAt).toBeGreaterThan(childFinishedAt);
+		expect(exitedAt).toBeGreaterThan(finishedAt);
+	});
+
+	test("a depth-0 exit does not duplicate a root terminal event", () => {
+		const root = open();
+		finishHandoff(paths, { handoffId: root.handoff_id, status: "PASS", summary: "done" });
+		const before = eventNames().filter((name) => name.includes("run_finished")).length;
+		runnerExited(paths, 4242, "planner", 0);
+		const after = eventNames().filter((name) => name.includes("run_finished")).length;
+		expect(after).toBe(before);
 	});
 
 	test("a depth-1 exit is recorded but not published", () => {
