@@ -19,7 +19,7 @@ import {
 	resolveRole,
 	RoleError,
 } from "../../runtime/lib/roles";
-import { newRunId } from "../../runtime/lib/cli-run";
+import { newRunId } from "../../runtime/cli/run";
 
 let dir: string;
 
@@ -111,13 +111,35 @@ describe("resolution", () => {
 	});
 
 	test("a tool allowlist is split and trimmed", () => {
-		writeAgent("test-runner", "model: m/m\ntools: read, bash , skill");
-		expect(resolveRole(dir, "test-runner")!.tools).toEqual(["read", "bash", "skill"]);
+		writeAgent("verify", "model: m/m\ntools: read, bash , skill");
+		expect(resolveRole(dir, "verify")!.tools).toEqual(["read", "bash", "skill"]);
 	});
 
 	test("no allowlist means no restriction", () => {
 		writeAgent("planner", "model: m/m");
 		expect(resolveRole(dir, "planner")!.tools).toEqual([]);
+	});
+
+	test("worker roles use Pi defaults while delegation remains explicit", () => {
+		const productionDir = path.resolve(import.meta.dir, "../../runtime/agents");
+		const expected = new Map([
+			["architect", undefined],
+			["coder", undefined],
+			["planner", "read,write,bash,goal,task,task_group"],
+			["supervisor", "read,write,bash"],
+			["verify", undefined],
+			["tester", undefined],
+			["title-compressor", "read"],
+			["zipper", undefined],
+		]);
+
+		for (const role of listRoles(productionDir)) {
+			expect(expected.has(role)).toBeTrue();
+			expect(readFrontmatter(productionDir, role)?.tools).toBe(expected.get(role));
+		}
+		expect(listRoles(productionDir).sort()).toEqual([...expected.keys()].sort());
+		expect(fs.existsSync(path.join(productionDir, "command.md"))).toBeFalse();
+		expect(fs.existsSync(path.join(productionDir, "initializer.md"))).toBeFalse();
 	});
 
 	test("delegation requires the exact string true", () => {
@@ -170,8 +192,8 @@ describe("argv construction", () => {
 	});
 
 	test("joins an allowlist into one flag", () => {
-		writeAgent("test-runner", "model: m/m\ntools: read,bash");
-		const argv = buildArgv(resolveRole(dir, "test-runner")!, "run", []);
+		writeAgent("verify", "model: m/m\ntools: read,bash");
+		const argv = buildArgv(resolveRole(dir, "verify")!, "run", []);
 		expect(argv[argv.indexOf("--tools") + 1]).toBe("read,bash");
 	});
 
@@ -192,28 +214,20 @@ describe("argv construction", () => {
 	test("role policy fields are validated", () => {
 		writeAgent("invalid-lane", "model: a/m\ngoal_lane: product");
 		expect(() => resolveRole(dir, "invalid-lane")).toThrow(RoleError);
-
-		writeAgent("invalid-write", "model: a/m\nwrite_policy: allow:");
-		expect(() => resolveRole(dir, "invalid-write")).toThrow(RoleError);
-
-		writeAgent("invalid-bash", "model: a/m\nbash_policy: shell");
-		expect(() => resolveRole(dir, "invalid-bash")).toThrow(RoleError);
 	});
 });
 
 describe("allowed keys", () => {
 	test("role policy keys are explicit and validated", () => {
 		// Every extra knob is behaviour not explained by the prompt.
-		expect([...ALLOWED_KEYS].sort()).toEqual([
-			"bash_policy",
-			"delegates",
-			"description",
-			"goal_lane",
-			"model",
-			"needs_project_rules",
-			"tools",
-			"write_policy",
-		]);
+			expect([...ALLOWED_KEYS].sort()).toEqual([
+				"delegates",
+				"description",
+				"goal_lane",
+				"model",
+				"needs_project_rules",
+				"tools",
+			]);
 	});
 });
 

@@ -140,11 +140,11 @@ describe("MISSING_HANDOFF_FINISH_SUMMARY", () => {
 describe("delegationPointer", () => {
 	test("carries only pointers, in a fixed key order", () => {
 		const pointer = delegationPointer(
-			"h00002-test-runner",
+			"h00002-verify",
 			"FAIL",
 			[],
-			".codeflow/runs/code/r/handoffs/h00002-test-runner/receipt.json",
-			".codeflow/runs/code/r/handoffs/h00002-test-runner/state.json",
+			".codeflow/runs/code/r/handoffs/h00002-verify/receipt.json",
+			".codeflow/runs/code/r/handoffs/h00002-verify/state.json",
 		);
 		expect(Object.keys(pointer)).toEqual([
 			"handoff_id",

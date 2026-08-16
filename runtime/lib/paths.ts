@@ -14,6 +14,8 @@
  *     ├── tmp/                     staging; rename into events/ delivers
  *     ├── liveness/                watchdog heartbeats
  *     ├── facts.jsonl              this run's shared fact ledger
+ *     ├── usage.jsonl              one row per attributed model call
+ *     ├── usage.json               aggregate report written at run exit
  *     └── runner.json              depth-0 pid and startup info
  * ```
  */
@@ -63,6 +65,12 @@ export class RunPaths {
 	}
 	get evidence(): string {
 		return path.join(this.runsRoot, "evidence", this.runId);
+	}
+	get usageLedger(): string {
+		return path.join(this.runDir, "usage.jsonl");
+	}
+	get usageSummary(): string {
+		return path.join(this.runDir, "usage.json");
 	}
 	get eventSeq(): string {
 		return path.join(this.runDir, ".events.seq");

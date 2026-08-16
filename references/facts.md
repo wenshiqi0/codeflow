@@ -61,7 +61,7 @@ Roles never read `facts.jsonl`. The context extension renders the surviving view
 
 ```text
 f1: route registration entry — src/router.ts:42 [planner]
-f3: test framework — vitest [test-writer]
+f3: test framework — vitest [tester]
 ```
 
 Injection rather than file access keeps one rule intact: run artifacts are not agent input. It also means the ledger is visible in the transcript, so a human can see exactly what a role was told before it acted.

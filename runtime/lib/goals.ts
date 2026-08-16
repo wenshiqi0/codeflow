@@ -18,7 +18,6 @@ export class GoalError extends Error {}
 
 export interface GoalLaneContract {
 	role: string;
-	write_roots: string[];
 }
 
 export interface GoalContract {
@@ -33,39 +32,7 @@ export interface GoalContract {
 export interface DefineGoalOptions {
 	id: string;
 	goal: string;
-	testScope?: string[];
-	codeScope?: string[];
 	definitionOfDone?: string[];
-}
-
-function repoRelative(value: string, label: string): string {
-	if (!value || path.isAbsolute(value)) {
-		throw new GoalError(`${label} must be a non-empty repository-relative path`);
-	}
-	const normalized = path.normalize(value).split(path.sep).join("/");
-	if (
-		normalized === "." ||
-		normalized.startsWith("../") ||
-		normalized.includes("/../") ||
-		normalized === ".."
-	) {
-		throw new GoalError(`${label} must stay inside the repository: ${value}`);
-	}
-	return normalized.replace(/\/+$/, "");
-}
-
-function scopeList(values: string[] | undefined, label: string): string[] {
-	return (values ?? []).map((value) => repoRelative(value, label));
-}
-
-function evidenceLaneRoot(paths: RunPaths, goalId: string, lane: GoalLane): string {
-	return path.posix.join(
-		".codeflow/runs/evidence",
-		slug(paths.runId),
-		"goals",
-		slug(goalId),
-		lane,
-	);
 }
 
 function uniqueSorted(values: string[]): string[] {
@@ -83,27 +50,6 @@ export function defineGoal(
 	const goal = options.goal?.trim();
 	if (!goal) throw new GoalError("goal must be a non-empty string");
 
-	const testScope = scopeList(options.testScope, "test scope");
-	const codeScope = scopeList(options.codeScope, "code scope");
-	const testRoot = `tests/biz/${goalId}`;
-	for (const entry of testScope) {
-		if (entry !== testRoot && !entry.startsWith(`${testRoot}/`)) {
-			throw new GoalError(`test scope must stay under ${testRoot}/: ${entry}`);
-		}
-	}
-	for (const entry of codeScope) {
-		if (
-			entry.startsWith(".codeflow/") ||
-			entry.startsWith("tests/biz/") ||
-			entry.startsWith("tests/unit/") ||
-			entry.startsWith("tests/fixtures/")
-		) {
-			throw new GoalError(
-				`code scope may contain product paths only; test and run roots are derived: ${entry}`,
-			);
-		}
-	}
-
 	const contract: GoalContract = {
 		schema_version: 1,
 		id: goalId,
@@ -111,23 +57,9 @@ export function defineGoal(
 		definition_of_done: uniqueSorted((options.definitionOfDone ?? []).map((entry) => entry.trim()).filter(Boolean)),
 		created_at: new Date().toISOString(),
 		lanes: {
-			test: {
-				role: "test-writer",
-				write_roots: uniqueSorted([testRoot, evidenceLaneRoot(paths, goalId, "test")]),
-			},
-			code: {
-				role: "coder",
-				write_roots: uniqueSorted([
-					...codeScope,
-					`tests/unit/${goalId}`,
-					`tests/fixtures/${goalId}`,
-					evidenceLaneRoot(paths, goalId, "code"),
-				]),
-			},
-			verify: {
-				role: "test-runner",
-				write_roots: [evidenceLaneRoot(paths, goalId, "verify")],
-			},
+			test: { role: "tester" },
+			code: { role: "coder" },
+			verify: { role: "verify" },
 		},
 	};
 

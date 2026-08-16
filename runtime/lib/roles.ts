@@ -22,8 +22,6 @@ export const ALLOWED_KEYS = new Set([
 	"delegates",
 	"needs_project_rules",
 	"goal_lane",
-	"write_policy",
-	"bash_policy",
 ]);
 
 export interface Frontmatter {
@@ -33,8 +31,6 @@ export interface Frontmatter {
 	delegates?: string;
 	needs_project_rules?: string;
 	goal_lane?: string;
-	write_policy?: string;
-	bash_policy?: string;
 }
 
 export interface ResolvedRole {
@@ -45,8 +41,6 @@ export interface ResolvedRole {
 	tools: string[];
 	delegates: boolean;
 	goalLane?: string;
-	writePolicy?: string;
-	bashPolicy?: string;
 }
 
 export class RoleError extends Error {}
@@ -115,20 +109,6 @@ export function resolveRole(agentsDir: string, role: string): ResolvedRole | nul
 			`agent ${role}: goal_lane must be test, code, or verify`,
 		);
 	}
-	if (
-		frontmatter.write_policy &&
-		!/^(?:(?:allow|deny):[A-Za-z0-9_.\-/]+|none)$/.test(frontmatter.write_policy)
-	) {
-		throw new RoleError(
-			`agent ${role}: write_policy must be 'allow:<root>', 'deny:<root>', or 'none'`,
-		);
-	}
-	if (
-		frontmatter.bash_policy &&
-		!/^(?:codeflow-only|read-only|guarded-work|unrestricted)$/.test(frontmatter.bash_policy)
-	) {
-		throw new RoleError(`agent ${role}: invalid bash_policy`);
-	}
 
 	return {
 		role,
@@ -142,8 +122,6 @@ export function resolveRole(agentsDir: string, role: string): ResolvedRole | nul
 		// Strict equality: a role delegates only when it says so exactly.
 		delegates: frontmatter.delegates === "true",
 		goalLane: frontmatter.goal_lane,
-		writePolicy: frontmatter.write_policy,
-		bashPolicy: frontmatter.bash_policy,
 	};
 }
 

@@ -67,21 +67,43 @@ else
   warn "no $CODEFLOW_HOME/.env (fine if keys are exported in your shell)"
 fi
 
-# Report which roles a missing key takes out, so the impact is concrete rather
-# than an abstract "key missing".
-check_key() {
-  local name="$1" roles="$2"
-  if [[ -n "${!name:-}" ]]; then
-    ok "$name set"
-  else
-    bad "$name missing — blocks: $roles"
-  fi
+# Derive credential impact from models.json plus the current role bindings.
+# Doctor never owns a second copy of the roster.
+KEY_ROLES="$(bun -e '
+const fs = require("node:fs");
+const path = require("node:path");
+const runtime = process.argv[1];
+const providers = JSON.parse(fs.readFileSync(path.join(runtime, "models.json"), "utf8")).providers;
+const agents = path.join(runtime, "agents");
+const impact = new Map();
+for (const file of fs.readdirSync(agents).filter((name) => name.endsWith(".md")).sort()) {
+  const text = fs.readFileSync(path.join(agents, file), "utf8");
+  const match = /^model:\s*([^#\n]+)/m.exec(text);
+  if (!match) continue;
+  const binding = match[1].trim();
+  const separator = binding.indexOf("/");
+  const provider = binding.slice(0, separator);
+  const envName = providers[provider]?.apiKey?.match(/\$([A-Z0-9_]+)/)?.[1];
+  if (!envName) {
+    console.error(`role ${file} has no configured credential: ${binding}`);
+    process.exit(1);
+  }
+  impact.set(envName, [...(impact.get(envName) ?? []), file.replace(/\.md$/, "")]);
 }
-
-check_key ZHIPU_API_KEY    "planner"
-check_key KIMI_API_KEY     "coder, test-writer"
-check_key MIMO_API_KEY     "test-runner, command, supervisor, title-compressor"
-check_key DEEPSEEK_API_KEY "(unused by default bindings)"
+for (const [key, roles] of impact) console.log(`${key}\t${roles.join(", ")}`);
+' "$RUNTIME_DIR" 2>/dev/null)"
+if [[ -z "$KEY_ROLES" ]]; then
+  bad "could not derive credential usage from models.json and runtime/agents"
+else
+  while IFS=$'\t' read -r key roles; do
+    [[ -z "$key" ]] && continue
+    if [[ -n "${!key:-}" ]]; then
+      ok "$key set"
+    else
+      bad "$key missing — blocks: $roles"
+    fi
+  done <<< "$KEY_ROLES"
+fi
 
 # --- runtime integrity ----------------------------------------------------
 
@@ -90,17 +112,22 @@ section "Runtime"
 for required in \
   "$RUNTIME_DIR/models.json" \
   "$RUNTIME_DIR/AGENTS.md" \
-  "$RUNTIME_DIR/lib/handoff.ts" \
+  "$RUNTIME_DIR/lib/handoff/index.ts" \
   "$RUNTIME_DIR/lib/facts.ts" \
   "$RUNTIME_DIR/lib/seq.ts" \
   "$RUNTIME_DIR/lib/wait.ts" \
-  "$RUNTIME_DIR/lib/cli-run.ts" \
-  "$RUNTIME_DIR/lib/cli-handoff.ts" \
   "$RUNTIME_DIR/lib/goals.ts" \
+  "$RUNTIME_DIR/cli/run.ts" \
+  "$RUNTIME_DIR/cli/handoff.ts" \
   "$RUNTIME_DIR/extensions/codeflow-task/index.ts" \
+  "$RUNTIME_DIR/extensions/codeflow-task/registry.ts" \
+  "$RUNTIME_DIR/extensions/codeflow-task/role-launcher.ts" \
+  "$RUNTIME_DIR/extensions/codeflow-task/shared.ts" \
+  "$RUNTIME_DIR/extensions/host-guard/index.ts" \
+  "$RUNTIME_DIR/extensions/host-guard/policy.ts" \
   "$RUNTIME_DIR/extensions/codeflow-context/index.ts" \
-  "$RUNTIME_DIR/extensions/directory-policy/index.ts" \
-  "$RUNTIME_DIR/extensions/directory-policy/policy.ts" \
+  "$RUNTIME_DIR/extensions/usage-ledger/index.ts" \
+  "$RUNTIME_DIR/extensions/bash-compressor/index.ts" \
   "$RUNTIME_DIR/extensions/agent-watchdog/index.ts"; do
   if [[ -f "$required" ]]; then
     ok "${required#"$RUNTIME_DIR"/}"
@@ -109,9 +136,17 @@ for required in \
   fi
 done
 
+# Undefined imports/references in runtime TypeScript are exactly the class of
+# regression that tests can miss when a split module is only partially exercised.
+if [[ -f "$ROOT_DIR/tsconfig.json" ]] && bun "$ROOT_DIR/node_modules/.bin/tsc" -p "$ROOT_DIR/tsconfig.json" >/dev/null 2>&1; then
+  ok "runtime TypeScript typecheck"
+else
+  bad "runtime TypeScript typecheck failed (bun run typecheck)"
+fi
+
 # Every role must resolve to a provider that exists in models.json. A typo here
 # fails at model-call time, which is the most expensive place to learn it.
-ROLES="$(bun "$RUNTIME_DIR/lib/cli-run.ts" debug agent 2>/dev/null)"
+ROLES="$(bun "$RUNTIME_DIR/cli/run.ts" debug agent 2>/dev/null)"
 if [[ -z "$ROLES" ]]; then
   bad "no agent roles found"
 else
@@ -120,7 +155,7 @@ else
   while IFS= read -r role; do
     [[ -z "$role" ]] && continue
     ROLE_COUNT=$((ROLE_COUNT + 1))
-    if ! bun "$RUNTIME_DIR/lib/cli-run.ts" delegate --role "$role" --print "probe" >/dev/null 2>&1; then
+    if ! bun "$RUNTIME_DIR/cli/run.ts" delegate --role "$role" --print "probe" >/dev/null 2>&1; then
       bad "role $role does not resolve (check its model: line against models.json)"
       ROLE_BAD=$((ROLE_BAD + 1))
     fi

@@ -181,18 +181,18 @@ describe("open", () => {
 
 describe("scope conflicts", () => {
 	test("overlapping active scope is reported", () => {
-		open("test-writer", 1);
+		open("tester", 1);
 		const second = openHandoff(paths, {
 			role: "coder",
 			depth: 1,
 			body: "Goal: x\nScope: src/router.ts\n",
 		});
 		expect(second.scope_conflicts).toEqual(["src/router.ts"]);
-		expect(second.warning).toContain("h00001-test-writer");
+		expect(second.warning).toContain("h00001-tester");
 	});
 
 	test("a conflict is recorded but never blocks the open", () => {
-		open("test-writer", 1);
+		open("tester", 1);
 		const second = openHandoff(paths, {
 			role: "coder",
 			depth: 1,
@@ -203,7 +203,7 @@ describe("scope conflicts", () => {
 	});
 
 	test("disjoint scope produces no conflict", () => {
-		open("test-writer", 1);
+		open("tester", 1);
 		const second = openHandoff(paths, {
 			role: "coder",
 			depth: 1,
@@ -213,7 +213,7 @@ describe("scope conflicts", () => {
 	});
 
 	test("a finished handoff no longer holds its scope", () => {
-		const first = open("test-writer", 1);
+		const first = open("tester", 1);
 		finishHandoff(paths, {
 			handoffId: first.handoff_id,
 			status: "PASS",
@@ -454,7 +454,7 @@ describe("finish", () => {
 				expect(readJson<any>(result.state).lineage.parent_handoff_id).toBe(null);
 				return result;
 			};
-			const passed = openDelegation("test-writer");
+			const passed = openDelegation("tester");
 			const failed = openDelegation("coder");
 			const blocked = openDelegation("verifier");
 
@@ -553,14 +553,38 @@ describe("receipt validation", () => {
 		expect(finishWith({ status: "FAIL" })).toThrow(CliError);
 	});
 
-	test("test-runner must supply command and exit_code", () => {
-		expect(finishWith({ status: "PASS" }, "test-runner")).toThrow(CliError);
+	test("verify must supply command and exit_code", () => {
+		expect(finishWith({ status: "PASS" }, "verify")).toThrow(CliError);
 	});
 
-	test("test-runner with full evidence is accepted", () => {
+	test("verify with full evidence is accepted", () => {
 		expect(
-			finishWith({ status: "PASS", command: "bun test", exit_code: 0 }, "test-runner"),
+			finishWith({ status: "PASS", command: "bun test", exit_code: 0 }, "verify"),
 		).not.toThrow();
+	});
+
+	test("verify failure classes are closed", () => {
+		expect(
+			finishWith(
+				{ status: "PASS", command: "bun test", exit_code: 0, failure_class: "RED" },
+				"verify",
+			),
+		).toThrow(CliError);
+	});
+
+	test("expected RED requires its evidence flags to agree", () => {
+		expect(
+			finishWith(
+				{
+					status: "PASS",
+					command: "bun test",
+					exit_code: 0,
+					failure_class: "EXPECTED_FAIL",
+					expected_red: false,
+				},
+				"verify",
+			),
+		).toThrow(CliError);
 	});
 
 	test("a mistyped field is rejected", () => {
@@ -585,7 +609,7 @@ describe("receipt validation", () => {
 	});
 
 	test("a long excerpt spills to evidence and keeps a reference", () => {
-		const result = open("test-runner", 1);
+		const result = open("verify", 1);
 		finishHandoff(paths, {
 			handoffId: result.handoff_id,
 			status: "FAIL",
@@ -666,7 +690,7 @@ describe("facts recorded through receipts", () => {
 	});
 
 	test("facts are attributed to the finishing role", () => {
-		const result = open("test-writer", 1);
+		const result = open("tester", 1);
 		finishHandoff(paths, {
 			handoffId: result.handoff_id,
 			status: "PASS",
@@ -676,7 +700,7 @@ describe("facts recorded through receipts", () => {
 				facts: [{ claim: "vitest", value: "vitest" }],
 			}),
 		});
-		expect(materialize(path.join(paths.runDir, LEDGER_NAME))[0].role).toBe("test-writer");
+		expect(materialize(path.join(paths.runDir, LEDGER_NAME))[0].role).toBe("tester");
 	});
 
 	test("a BLOCKED finish without a receipt records nothing", () => {
@@ -847,7 +871,7 @@ describe("agents list", () => {
 	});
 
 	test("rows sort by depth then role", () => {
-		const child = openHandoff(paths, { role: "test-writer", depth: 1, body: "Goal: x\n" });
+		const child = openHandoff(paths, { role: "tester", depth: 1, body: "Goal: x\n" });
 		open("planner", 0);
 		expect(agentsList(paths).map((row) => row.depth)).toEqual([0, 1]);
 	});

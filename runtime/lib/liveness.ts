@@ -91,7 +91,7 @@ export function passedSignals(signals: Signals): string[] {
 	return passed;
 }
 
-export function heartbeatAge(record: Record<string, unknown>, now = Date.now()): number | null {
+export function heartbeatAge(record: LivenessRecord, now = Date.now()): number | null {
 	const stamp = (record.heartbeat_at ?? record.started_at) as string | undefined;
 	if (!stamp) return null;
 	const parsed = Date.parse(stamp);

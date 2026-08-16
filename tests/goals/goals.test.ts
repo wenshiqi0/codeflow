@@ -31,14 +31,13 @@ function defineMovementGoal() {
 	return defineGoal(paths, {
 		id: "movement-r1",
 		goal: "Deterministic player movement",
-		codeScope: ["src/game/physics.ts"],
 		definitionOfDone: ["Movement business tests pass"],
 	});
 }
 
 function openLaneHandoff(lane: "test" | "code" | "verify") {
 	return openHandoff(paths, {
-		role: lane === "test" ? "test-writer" : lane === "code" ? "coder" : "test-runner",
+		role: lane === "test" ? "tester" : lane === "code" ? "coder" : "verify",
 		body: `Goal: complete ${lane}\n`,
 		depth: 1,
 		goalId: "movement-r1",
@@ -89,14 +88,14 @@ describe("agent goals", () => {
 		).toThrow("already exists with different content");
 	});
 
-	test("derives test and evidence roots instead of trusting arbitrary scopes", () => {
-		expect(() =>
-			defineGoal(paths, {
-				id: "bad-scope-r1",
-				goal: "Bad scope",
-				codeScope: ["tests/biz/other.test.ts"],
-			}),
-		).toThrow("code scope may contain product paths only");
+	test("records lane ownership without mechanical write roots", () => {
+		defineMovementGoal();
+		const contract = readJson<Record<string, any>>(paths.goalContractPath("movement-r1"));
+		expect(contract.lanes).toEqual({
+			test: { role: "tester" },
+			code: { role: "coder" },
+			verify: { role: "verify" },
+		});
 	});
 
 	test("derives join satisfaction from handoffs", () => {

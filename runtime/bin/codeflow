@@ -18,7 +18,7 @@
 set -euo pipefail
 
 RUNTIME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LIB_DIR="$RUNTIME_DIR/lib"
+CLI_DIR="$RUNTIME_DIR/cli"
 CODEFLOW_HOME="${CODEFLOW_HOME:-$HOME/.codeflow}"
 
 usage() {
@@ -29,6 +29,7 @@ usage: codeflow <command> [options]
   ls                                list runs: id, status, duration, requirement
   sub <run-id> [--since <seq>]      subscribe to a run's event stream
   goals <run-id>                   show derived goal joins
+  usage <run-id>                   show per-turn and total model usage
   memo <run-id> "<text>"            append to a run's requirement
   audit <run-id> [--force]          gated audit of a blocked or stale run
   stop <run-id>                     terminate a running run
@@ -55,13 +56,13 @@ case "${1:-}" in
     exit 0
     ;;
   --version)
-    exec bun "$LIB_DIR/cli-run.ts" --version
+    exec bun "$CLI_DIR/run.ts" --version
     ;;
   debug)
-    exec bun "$LIB_DIR/cli-run.ts" "$@"
+    exec bun "$CLI_DIR/run.ts" "$@"
     ;;
-  ls|sub|goals|stop|memo|audit)
-    exec bun "$LIB_DIR/cli-outer.ts" "$@"
+  ls|sub|goals|usage|stop|memo|audit)
+    exec bun "$CLI_DIR/outer.ts" "$@"
     ;;
 esac
 
@@ -86,7 +87,7 @@ fi
 case "${1:-}" in
   exec)
     shift
-    exec bun "$LIB_DIR/cli-run.ts" exec "$@"
+    exec bun "$CLI_DIR/run.ts" exec "$@"
     ;;
   *)
     if [[ -n "${1:-}" ]]; then

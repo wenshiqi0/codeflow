@@ -72,7 +72,7 @@ describe("scanning", () => {
 	});
 
 	test("reads only whitelisted reasons and one-line summary from a terminal body", () => {
-		writeEvent(2, "h00002-test-writer", "handoff_finished", "BLOCKED", {
+		writeEvent(2, "h00002-tester", "handoff_finished", "BLOCKED", {
 			reasons: ["PROVIDER_FAILURE", "DELEGATION_ARTIFACT_MISSING"],
 			summary: "provider request ended with error",
 			ref: "handoffs/h00002/state.json",

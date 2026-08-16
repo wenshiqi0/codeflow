@@ -4,7 +4,7 @@ Worker-only shared contract. Planner guidance (role roster, sequence) is in `age
 
 ## Handoff contract
 
-Coordination happens in handoffs: one unit of work from a delegator to a receiver, who maintains its state until terminal. Author the body with `write-handoff`; never hand off vague requests.
+Coordination happens in handoffs: one unit of work from a delegator to a receiver, who maintains its state until terminal. Author the body using `$PI_CODING_AGENT_DIR/../references/capabilities/handoff.md`; never hand off vague requests.
 
 State changes and queries are programmatic; requirement expression goes through models. `code-agent handoff open/start/finish/status/list` owns every transition (`open` -> `running` -> `done(PASS|FAIL)` or `blocked(reason)`), sequences, receipt validation, and events. Models write handoff bodies, receipt narratives, and diagnoses. Never hand-write `state.json`, event files, `active/` sentinels, or liveness records; never claim liveness in prose. Scope conflicts persist as `scope_conflicts` in `state.json`.
 

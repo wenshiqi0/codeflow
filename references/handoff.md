@@ -44,13 +44,13 @@ Validated fields:
 | Field | Type | Notes |
 | --- | --- | --- |
 | `status` | enum | Required. Must match `--status`, or the finish is rejected |
-| `command` | string | Required for `test-runner` |
-| `exit_code` | int | Required for `test-runner` |
+| `command` | string | Required for `verify` |
+| `exit_code` | int | Required for `verify` |
 | `failed_checks` | array | Failing test names or gates |
 | `error_excerpt` | string | Spilled to `evidence/` past 2000 chars and replaced with a ref |
 | `reproduction` | string | Minimum command to reproduce |
 | `diagnosis` | string | Marked as inference, not fact |
-| `next_owner` | string | `test-writer`, `coder`, `planner`, or `environment` |
+| `next_owner` | string | `tester`, `coder`, `planner`, or `environment` |
 | `expected_red` | bool | Intended test-first failure; does not turn `FAIL` into `PASS` |
 | `facts` | array | Shared facts for later roles — see `facts.md` |
 

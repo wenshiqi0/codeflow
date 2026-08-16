@@ -1,6 +1,6 @@
 ---
 name: codeflow
-description: Explicitly invoked Codeflow test-first multi-agent workflow. Use only when the user asks for Codeflow by name or explicitly asks to observe, diagnose, or resume an existing Codeflow run; never auto-select it for an ordinary coding task.
+description: Explicitly invoked Codeflow capability-oriented multi-agent workflow. Use only when the user asks for Codeflow by name or explicitly asks to observe, diagnose, or resume an existing Codeflow run; never auto-select it for an ordinary coding task.
 ---
 
 # Codeflow
@@ -13,12 +13,14 @@ Codeflow is opt-in. Start or resume a run only after the user explicitly asks fo
 
 ## Your vocabulary
 
-Six commands, all about a run as a whole:
+Eight commands, all about a run as a whole:
 
 ```bash
 codeflow exec "<requirement>"          # start a run
 codeflow ls                            # id, status, duration, requirement
 codeflow sub <run-id> [--since <seq>]  # subscribe to the event stream
+codeflow goals <run-id>               # show derived goal joins
+codeflow usage <run-id>               # show per-turn and total model usage
 codeflow memo <run-id> "<text>"        # append to the requirement
 codeflow audit <run-id> [--force]      # gated look at a blocked, stale, dead, or missing run
 codeflow stop <run-id>                 # terminate a run
@@ -32,7 +34,7 @@ The mechanical verbs — `handoff`, `facts`, `check`, `roster`, `delegate` — b
 codeflow exec "<requirement>"
 ```
 
-This prints `run_id=... run_dir=... handoff_id=...` on stderr, then blocks until the run ends. The planner analyzes the product requirement, consults `architect` when infrastructure or direction is at stake, and decomposes the work into immutable goals. Each goal has an agent group with continuous test/code/verify lane sessions. Test-writer directly writes business tests under `tests/biz/<goal-id>/`; verify proves business RED; coder writes related unit tests and implementation in cohesive batches while directory policy prevents edits to business tests; verify proves unit, business, and regression gates; test-writer reviews the final diff. Goal progress is a derived join, not goal state.
+This prints `run_id=... run_dir=... handoff_id=...` on stderr, then blocks until the run ends. At exit it also prints the `usage.json` path and a per-model token/cost summary. The planner analyzes uncertainty, creates immutable goals, and composes specialist capabilities: `architect` for direction and reversibility, `tester` for cases and executable business tests, `coder` for technical surface, developer tests, implementation, diagnosis, and evolution, and `verify` for independent execution evidence. Each goal has persistent test/code/verify lane sessions, but no fixed workflow is prescribed; progress is a derived join, not goal state.
 
 Write the requirement as a requirement, not a plan. "Add a timeout option to the health check endpoint, default 5s" is right. Naming files to edit or tests to write pre-empts the roles whose job that is.
 
@@ -104,6 +106,11 @@ Report the reason and what it implies. Do not restart the whole run to work arou
 
 - `references/handoff.md` — handoff states, receipt schema, event and scope semantics
 - `references/goals.md` — immutable goal contracts, agent groups, and derived joins
-- `references/directory-policy.md` — role-configurable filesystem and bash boundaries
+- `references/patterns.md` — industry-recognized engineering lenses and their applicability
+- `references/capabilities/` — internal role capability prompts loaded only inside Codeflow
+- `references/testing.md` — case design and executable business-test capability
+- `references/engineering-style.md` — implementation style and test separation preference
+- `references/architecture.md` — architecture decision lenses and defaults
+- `references/usage.md` — per-turn and total model usage for benchmarks
 - `references/facts.md` — the shared fact ledger, and why you do not read it
 - `references/roles.md` — the roster, model bindings, and delegation rules

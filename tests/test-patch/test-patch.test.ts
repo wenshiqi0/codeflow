@@ -19,7 +19,7 @@ import {
 	rustTestRanges,
 	validatePatch,
 	verifyPatch,
-} from "../../runtime/lib/test-patch";
+} from "../../runtime/quality/test-patch";
 
 let dir: string;
 let cwd: string;
@@ -134,7 +134,7 @@ describe("rust test regions", () => {
 
 describe("patch location", () => {
 	test("a patch outside the run directory is rejected", () => {
-		// Otherwise any file on disk could be applied as if test-writer made it.
+		// Otherwise any file on disk could be applied as if tester made it.
 		fs.writeFileSync("stray.patch", "diff --git a/tests/a.ts b/tests/a.ts\n");
 		expect(() => validatePatch(dir, "stray.patch")).toThrow(PatchError);
 	});

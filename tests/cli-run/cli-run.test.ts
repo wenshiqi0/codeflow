@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import { openRootHandoffForRun } from "../../runtime/lib/cli-run";
+import { openRootHandoffForRun } from "../../runtime/cli/run";
 import { RunPaths, readJson } from "../../runtime/lib/paths";
 
 describe("run root handoff", () => {

@@ -14,7 +14,9 @@
 set -euo pipefail
 
 RUNTIME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CLI_DIR="$RUNTIME_DIR/cli"
 LIB_DIR="$RUNTIME_DIR/lib"
+QUALITY_DIR="$RUNTIME_DIR/quality"
 
 if [[ -z "${CODEFLOW_RUN_ID:-}" ]]; then
   echo "code-agent: error: CODEFLOW_RUN_ID is not set; code-agent runs only inside a codeflow run" >&2
@@ -46,15 +48,15 @@ EOF
 
 case "${1:-}" in
   handoff|facts)
-    exec bun "$LIB_DIR/cli-handoff.ts" "$@"
+    exec bun "$CLI_DIR/handoff.ts" "$@"
     ;;
   roster)
     shift
-    exec bun "$LIB_DIR/cli-handoff.ts" agents list "$@"
+    exec bun "$CLI_DIR/handoff.ts" agents list "$@"
     ;;
   delegate)
     shift
-    exec bun "$LIB_DIR/cli-run.ts" delegate "$@"
+    exec bun "$CLI_DIR/run.ts" delegate "$@"
     ;;
   # `check`/`apply`/`verify` group the two mechanical pre-commit gates under one
   # verb, so a role has a single entry point to remember.
@@ -66,7 +68,7 @@ case "${1:-}" in
         ;;
       patch)
         shift 2
-        exec bun "$LIB_DIR/test-patch.ts" check "$@"
+        exec bun "$QUALITY_DIR/test-patch.ts" check "$@"
         ;;
       *)
         echo "code-agent: error: check requires source or patch" >&2
@@ -81,7 +83,7 @@ case "${1:-}" in
       exit 1
     fi
     shift 2
-    exec bun "$LIB_DIR/test-patch.ts" "$action" "$@"
+    exec bun "$QUALITY_DIR/test-patch.ts" "$action" "$@"
     ;;
   -h|--help)
     usage
