@@ -1,16 +1,4 @@
-# Run artifacts, if codeflow is ever run against this repository itself
 .codeflow/
-
-# Credentials never belong in the repository; keys come from the environment
-.env
-
-__pycache__/
-*.pyc
+/target/
 node_modules/
-.DS_Store
-bun.lock
-
-# pi writes sessions and credentials under PI_CODING_AGENT_DIR (= runtime/)
 runtime/sessions/
-runtime/auth.json
-runtime/models-store.json

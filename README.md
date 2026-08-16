@@ -1,6 +1,6 @@
 # Codeflow
 
-Codeflow 是一个 test-first 多 Agent 编码工作流，以**单个 skill** 的形式分发。
+Codeflow 是一个 capability-oriented 多 Agent 编码工作流，以**单个 skill** 的形式分发。
 
 本仓库就是这个 skill 本身：仓库根即 skill 根，clone 到宿主的 skill 目录即可使用。
 
@@ -14,7 +14,13 @@ Codeflow 把编码工作分成两层，两层之间只通过元数据通信：
         │
         ▼
 内环（pi agents，各自绑定不同模型）
-  planner → test-writer → test-runner(RED) → coder → test-runner(GREEN) → review
+  planner
+    ├─ architect: direction / reversibility / fitness functions
+    ├─ tester: business cases / executable acceptance / review
+    ├─ coder: technical surface / developer tests / implementation
+    └─ verify: independent execution evidence
+
+  goal contract + test/code/verify sessions + derived join
 ```
 
 - **内环**沿用 pi agents 机制与 handoff 语义：每个角色是一个独立进程，由 frontmatter 绑定自己的 provider/model，通过 handoff 移交工作单元。
@@ -24,7 +30,7 @@ Codeflow 把编码工作分成两层，两层之间只通过元数据通信：
 
 | 二进制 | 受众 | 命令 |
 |---|---|---|
-| `codeflow` | 人 / 外环 Agent | `exec` `ls` `sub` `memo` `audit` `stop` |
+| `codeflow` | 人 / 外环 Agent | `exec` `ls` `sub` `goals` `usage` `memo` `audit` `stop` |
 | `code-agent` | 角色进程 | `delegate` `handoff` `facts` `check` `roster` |
 
 边界由进程环境强制，而不是靠文档纪律：`code-agent` 不装在用户 PATH 上（只有 `codeflow` 拉起的子进程能看到它），且 `CODEFLOW_RUN_ID` 未设置时直接拒绝执行。外环 Agent 想手工驱动交接状态机时会得到 command not found，而不是一个半更新的 `state.json`。
@@ -36,17 +42,82 @@ Codeflow 把编码工作分成两层，两层之间只通过元数据通信：
 ```text
 SKILL.md              # 外环协议：如何发起、如何观察、何时停机
 scripts/              # doctor 等运维脚本
-references/           # 渐进披露：handoff 契约、事实台账、角色与模型绑定
+references/           # 渐进披露：角色、模式、架构、测试与运行契约
+                      # capabilities/ 是内部 role 能力提示，不暴露成宿主 skill
+                      # usage.md 定义 benchmark 可读取的模型用量报告
 tests/                # 每个模块一个目录，各自可独立运行
 runtime/              # 内环运行时
 ├── agents/           #   角色定义，frontmatter 是模型绑定的唯一事实源
-├── lib/              #   状态机、事实台账、序号分配、CLI（TypeScript）
-├── extensions/       #   pi 扩展（委派、上下文、活性）
+├── cli/              #   CLI adapter：参数解析、命令路由、输出格式
+├── lib/              #   状态机、goal、事件、事实台账、usage 等核心机制
+├── quality/          #   可选机械质量工具
+├── extensions/       #   pi 扩展（委派、上下文、压缩、用量、活性）
 ├── bin/              #   codeflow（外环）+ code-agent（内环）+ pi 定位器
 └── models.json       #   provider 注册表
 ```
 
-`lib/` 里的模块既是 CLI 实现，也被扩展直接 import——同一份逻辑只有一个实现，不存在跨语言副本漂移。
+`lib/` 只放核心机制，`cli/` 负责命令适配，`extensions/` 负责 Pi event/tool 适配；扩展通过 `lib/` 复用同一份状态与观测逻辑。
+
+## 分层约束
+
+Codeflow 的目录不是按“文件类型”随手分层，而是按**变更原因和运行边界**分层。新增文件时先问它属于哪个能力边界，再决定位置。
+
+| 层 | 负责 | 不负责 | 典型内容 |
+|---|---|---|---|
+| 根 `SKILL.md` | 宿主外环协议 | 内环状态机与角色语义 | 如何 `exec`、`sub`、识别 stop signal、何时 audit |
+| `scripts/` | 人工运行的环境预检和运维脚本 | 角色编排、模型提示、状态迁移 | `doctor.sh` |
+| `references/` | 模型渐进读取的语义知识 | 可执行代码 | 角色、模式、架构、测试、工程风格、usage 契约 |
+| `references/capabilities/` | Codeflow 内部 role 能力提示 | 宿主可发现 skill | planning / testing / implementation / verification / handoff |
+| `runtime/agents/` | role 身份、模型绑定、能力描述 | CLI 参数和状态实现 | planner、architect、coder、tester、verify 及支持角色 |
+| `runtime/bin/` | thin entrypoint、进程和环境边界 | 业务逻辑 | `codeflow`、`code-agent`、`pi` shim |
+| `runtime/cli/` | CLI adapter | 状态规则本身 | argv 解析、命令路由、exit code、输出格式 |
+| `runtime/lib/` | 可复用核心机制 | prompt 语义和 CLI 参数格式 | handoff、goal、events、facts、usage、roles、观测 |
+| `runtime/quality/` | 可选机械质量工具 | 必经业务流程 | test-patch 等辅助 gate |
+| `runtime/extensions/` | Pi event/tool adapter | 第二套核心状态规则 | task、context、usage、compressor、watchdog |
+| `tests/` | 合同测试与回归证明 | 运行时代码 | 一个模块一个目录，mirror 被测边界 |
+
+### 依赖方向
+
+```text
+runtime/bin
+  -> runtime/cli
+      -> runtime/lib
+      -> runtime/quality
+
+runtime/extensions
+  -> runtime/lib
+  -> references/capabilities  # 仅通过 role prompt 或 extension 注入间接使用
+```
+
+允许：
+
+- CLI adapter 调用 `lib` 的公开 API；
+- extension adapter 调用 `lib`，避免复制状态规则；
+- `quality/` 保持独立，由 CLI 或 supervisor 显式调用；
+- role prompt 读取 `references/` 与 `references/capabilities/`。
+
+避免：
+
+- `lib/` 反向 import `cli/`、`extensions/` 或 `agents/`；
+- extension 自己发明第二套 handoff / goal / event 规则；
+- `scripts/` 复制角色、模型或凭证映射；
+- `runtime/` 内出现任何嵌套 `SKILL.md`，避免内部能力泄漏成宿主全局 skill；
+- CLI adapter 承担状态 invariant；
+- role prompt 描述文件系统权限或实现 CLI 状态机。
+
+### 文件归属规则
+
+1. **人会直接运行的环境检查** 放 `scripts/`。
+2. **模型要读的知识** 放 `references/`；内部 role 专用知识放 `references/capabilities/`。
+3. **role 身份与模型绑定** 放 `runtime/agents/*.md`。
+4. **新命令或参数解析** 放 `runtime/cli/`。
+5. **状态、事件、goal、facts、usage、观测的核心规则** 放 `runtime/lib/`。
+6. **Pi 事件或工具接入** 放 `runtime/extensions/`。
+7. **可选质量 gate** 放 `runtime/quality/`。
+8. **入口壳、PATH 注入、进程边界** 放 `runtime/bin/`。
+9. **防止结构回退的合同** 放 `tests/architecture/`。
+
+`scripts/doctor.sh` 不维护第二份角色清单；它从 `runtime/models.json` 和 `runtime/agents/*.md` 推导凭证影响。角色或模型改名后 doctor 不需要手工同步。
 
 运行时全局单份，不按项目安装。目标项目里只多出 `.codeflow/runs/`（gitignored），无需修改根 `AGENTS.md`——skill 本身就是入口。
 
@@ -54,6 +125,7 @@ runtime/              # 内环运行时
 
 ```bash
 bun test                # 全部
+bun run typecheck       # runtime TypeScript 未定义引用/类型检查
 bun test tests/handoff  # 单个模块
 ```
 

@@ -19,14 +19,23 @@ test surface with it.
 | --- | --- | --- |
 | `seq/` | `lib/seq.ts` | Cross-process uniqueness of event sequence numbers |
 | `facts/` | `lib/facts.ts` | The ledger: verifiable claims, append-only corrections |
-| `handoff/` | `lib/handoff.ts` | State machine, receipt validation, event emission |
+| `handoff/` | `lib/handoff/index.ts` | State machine, receipt validation, event emission |
+| `goals/` | `lib/goals.ts` | Immutable goal contracts and derived goal joins |
+| `cli-run/` | `cli/run.ts` | The depth-0 root handoff that makes exec terminable |
 | `roles/` | `lib/roles.ts` | Frontmatter to pi invocation, including defaults |
-| `test-patch/` | `lib/test-patch.ts` | Test-only enforcement and the post-RED lock |
+| `architecture/` | Repository layer boundaries | Internal capabilities, CLI/core/quality separation, and task extension structure |
+| `role-protocol/` | Agent and reference prompts | Capability roster, industry patterns, role ownership, and mechanical closure |
+| `test-patch/` | `quality/test-patch.ts` | Test-only enforcement and the post-RED lock |
 | `source-safety/` | `lib/source-safety.ts` | Control-byte rejection |
 | `wait/` | `lib/wait.ts` | Blocking observation, watermark, no replay |
+| `events/` | `lib/events.ts` | Closed event enums and bounded one-line summaries |
+| `usage/` | `lib/usage.ts` + `extensions/usage-ledger/index.ts` | Per-turn model usage and run totals for benchmarks |
 | `liveness/` | `lib/liveness.ts` | Multi-signal probing; never DEAD from one signal |
 | `context/` | `extensions/codeflow-context/context.ts` | Rule levels and fact injection |
 | `handoff-gate/` | `extensions/codeflow-task/handoff-gate.ts` | Blocked-reason classification |
+| `task-registry/` | `extensions/codeflow-task/registry.ts` | Successful task reconciliation and child-result integration |
+| `host-guard/` | `extensions/host-guard` | Runtime read-only boundary for root and delegated roles |
+| `bash-compressor/` | `extensions/bash-compressor/compressor.ts` | Threshold policy and safe fallback for semantic bash summaries |
 | `agent-watchdog/` | `extensions/agent-watchdog/index.ts` | Stream-idle abort |
 
 ## What these tests are for

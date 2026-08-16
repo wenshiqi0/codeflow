@@ -6,9 +6,14 @@
   "description": "Test-first multi-agent coding workflow, packaged as a single skill",
   "scripts": {
     "test": "bun test",
+    "typecheck": "tsc -p tsconfig.json",
     "doctor": "./scripts/doctor.sh"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@earendil-works/pi-agent-core": "^0.84.2",
+    "@earendil-works/pi-coding-agent": "^0.84.2",
+    "@types/bun": "latest",
+    "typebox": "^1.3.14",
+    "typescript": "^7.0.2"
   }
 }

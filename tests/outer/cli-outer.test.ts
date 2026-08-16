@@ -158,7 +158,7 @@ describe("P3: outer help", () => {
 	test("--help lists the outer vocabulary", () => {
 		const result = outer(["--help"]);
 		expect(result.exitCode).toBe(0);
-		for (const word of ["exec", "ls", "sub", "stop", "memo", "audit"]) {
+		for (const word of ["exec", "ls", "sub", "stop", "memo", "audit", "usage"]) {
 			expect(result.stdout).toContain(word);
 		}
 	});
@@ -201,6 +201,42 @@ describe("P5: memo exists but refuses; audit is gated", () => {
 		const result = outer(["audit", "no-such-run", "--bogus"], env);
 		expect(result.exitCode).not.toBe(0);
 		expect(result.stderr).toMatch(/unknown option|bogus/i);
+	});
+
+	test("usage reports per-round and per-model totals from the live ledger", () => {
+		const runsDir = makeRunsDir();
+		const runDir = path.join(runsDir, "run-usage");
+		fs.mkdirSync(runDir, { recursive: true });
+		const record = {
+			schema_version: 1,
+			at: "2026-01-01T00:00:00Z",
+			run_id: "run-usage",
+			role: "coder",
+			depth: 1,
+			handoff_id: "h1",
+			goal_id: "g1",
+			lane: "code",
+			turn: 1,
+			provider: "p",
+			model: "m",
+			response_model: "m",
+			usage: {
+				input: 1,
+				output: 2,
+				cache_read: 3,
+				cache_write: 4,
+				reasoning: 5,
+				total_tokens: 10,
+				cost: { input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 },
+			},
+		};
+		fs.writeFileSync(path.join(runDir, "usage.jsonl"), `${JSON.stringify(record)}\n`);
+		const result = outer(["usage", "run-usage"], { ...baseEnv(), CODEFLOW_RUNS_DIR: runsDir });
+		expect(result.exitCode).toBe(0);
+		const report = JSON.parse(result.stdout);
+		expect(report.records).toHaveLength(1);
+		expect(report.models[0]).toMatchObject({ model: "p/m", calls: 1, total_tokens: 10 });
+		expect(report.total).toMatchObject({ calls: 1, total_tokens: 10 });
 	});
 });
 
@@ -282,6 +318,47 @@ describe("P10: sub streams from the watermark", () => {
 			kind: "handoff_opened",
 			status: "OPENED",
 		});
+	});
+});
+
+describe("P10b: goals are derived joins", () => {
+	test("codeflow goals reports lane handoffs without goal state", () => {
+		const dir = makeRunsDir();
+		const runDir = path.join(dir, "run-goal");
+		const goalDir = path.join(runDir, "goals", "movement-r1");
+		const handoffDir = path.join(runDir, "handoffs", "h00001-tester");
+		fs.mkdirSync(goalDir, { recursive: true });
+		fs.mkdirSync(handoffDir, { recursive: true });
+		fs.writeFileSync(path.join(goalDir, "contract.json"), JSON.stringify({
+			schema_version: 1,
+			id: "movement-r1",
+			goal: "Deterministic movement",
+			definition_of_done: ["Business tests pass"],
+				created_at: "2026-01-01T00:00:00Z",
+				lanes: {
+					test: { role: "tester" },
+					code: { role: "coder" },
+					verify: { role: "verify" },
+				},
+		}));
+		fs.writeFileSync(path.join(handoffDir, "state.json"), JSON.stringify({
+			handoff_id: "h00001-tester",
+			role: "tester",
+			status: "done",
+			result: "PASS",
+			goal_id: "movement-r1",
+			lane: "test",
+		}));
+
+		const env = { ...baseEnv(), CODEFLOW_RUNS_DIR: dir };
+		const result = outer(["goals", "run-goal"], env);
+		expect(result.exitCode).toBe(0);
+		const [goal] = JSON.parse(result.stdout);
+		expect(goal.goal_id).toBe("movement-r1");
+		expect(goal.join.satisfied).toBe(false);
+		expect(goal.lanes.test.latest_handoff.result).toBe("PASS");
+		expect(goal.lanes.code.latest_handoff).toBeNull();
+		expect("status" in goal).toBe(false);
 	});
 });
 

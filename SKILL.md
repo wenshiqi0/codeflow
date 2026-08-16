@@ -1,6 +1,6 @@
 ---
 name: codeflow
-description: Explicitly invoked Codeflow test-first multi-agent workflow. Use only when the user asks for Codeflow by name or explicitly asks to observe, diagnose, or resume an existing Codeflow run; never auto-select it for an ordinary coding task.
+description: Explicitly invoked Codeflow capability-oriented multi-agent workflow. Use only when the user asks for Codeflow by name or explicitly asks to observe, diagnose, or resume an existing Codeflow run; never auto-select it for an ordinary coding task.
 ---
 
 # Codeflow
@@ -13,12 +13,14 @@ Codeflow is opt-in. Start or resume a run only after the user explicitly asks fo
 
 ## Your vocabulary
 
-Six commands, all about a run as a whole:
+Eight commands, all about a run as a whole:
 
 ```bash
 codeflow exec "<requirement>"          # start a run
 codeflow ls                            # id, status, duration, requirement
 codeflow sub <run-id> [--since <seq>]  # subscribe to the event stream
+codeflow goals <run-id>               # show derived goal joins
+codeflow usage <run-id>               # show per-turn and total model usage
 codeflow memo <run-id> "<text>"        # append to the requirement
 codeflow audit <run-id> [--force]      # gated look at a blocked, stale, dead, or missing run
 codeflow stop <run-id>                 # terminate a run
@@ -32,7 +34,7 @@ The mechanical verbs — `handoff`, `facts`, `check`, `roster`, `delegate` — b
 codeflow exec "<requirement>"
 ```
 
-This prints `run_id=... run_dir=... handoff_id=...` on stderr, then blocks until the run ends. The planner analyzes the requirement, then delegates: `test-writer` writes failing tests, `test-runner` proves RED, `coder` implements, `test-runner` proves GREEN, `test-writer` reviews the diff.
+This prints `run_id=... run_dir=... handoff_id=...` on stderr, then blocks until the run ends. At exit it also prints the `usage.json` path and a per-model token/cost summary. The planner analyzes uncertainty, creates immutable goals, and composes specialist capabilities: `architect` for direction and reversibility, `tester` for cases and executable business tests, `coder` for technical surface, developer tests, implementation, diagnosis, and evolution, and `verify` for independent execution evidence. Each goal has persistent test/code/verify lane sessions, but no fixed workflow is prescribed; progress is a derived join, not goal state.
 
 Write the requirement as a requirement, not a plan. "Add a timeout option to the health check endpoint, default 5s" is right. Naming files to edit or tests to write pre-empts the roles whose job that is.
 
@@ -46,9 +48,9 @@ Never poll. One blocking call:
 codeflow sub <run-id> --since <seq> [--kind <k>,...] [--timeout 600]
 ```
 
-It suspends until events arrive or the timeout expires, then returns `{"run_id", "seq", "events"}`. Pass the returned `seq` back as `--since`; reconnecting never replays. Every field comes from the event filename — `<seq>--<subject>--<kind>--<status>.json` — so reading a body is the exception.
+It suspends until events arrive or the timeout expires, then returns `{"run_id", "seq", "events"}`. Pass the returned `seq` back as `--since`; reconnecting never replays. Sequence, subject, kind, and status come from `<seq>--<subject>--<kind>--<status>.json`; `sub` additionally reads only the event body's whitelisted closed `reasons` enum and bounded one-line `summary`. If a summary is absent or a terminal error/truncation occurs, the summary uses the original log's first and last 100 characters, flattened to one line with obvious credentials redacted.
 
-Kinds: `run_started`, `run_finished`, `handoff_opened`, `handoff_finished`, `artifact_written`, `runner_exited`.
+Kinds: `run_started`, `run_finished`, `handoff_opened`, `handoff_finished`, `artifact_written`, `runner_exited`. Event bodies use closed `kind/status/reason` enums plus one bounded summary line; provider prose is never delivered. A provider failure is delivered as `handoff_finished BLOCKED` as soon as the delegation layer observes the terminal signal, rather than waiting for the child process to close.
 
 The run id is required. `codeflow ls` is how you find it, including for runs you did not start.
 
@@ -92,7 +94,7 @@ What crosses runs is the planner's final report. When a follow-up run needs an e
 
 `blocked.reason` is a closed enum, and each reason implies a different response:
 
-- `DELEGATION_ARTIFACT_MISSING` — a role finished without its mandatory artifact. Check `state.summary`: work that was actually completed but never recorded needs only the finish step re-run.
+- `DELEGATION_ARTIFACT_MISSING` — a role finished without its mandatory artifact. Check only the expected artifact and receipt paths for existence and non-emptiness; do not treat prose as a substitute receipt.
 - `OUTPUT_TRUNCATED` — a response hit the length limit. The work needs splitting, not retrying.
 - `CONTEXT_BUDGET_EXCEEDED` — a role's context did not fit. Split the requirement and start a new run.
 - `PROVIDER_FAILURE` — timeout, auth, quota, or transport. An environment problem; verify credentials with `scripts/doctor.sh` before restarting.
@@ -103,5 +105,12 @@ Report the reason and what it implies. Do not restart the whole run to work arou
 ## Reference
 
 - `references/handoff.md` — handoff states, receipt schema, event and scope semantics
+- `references/goals.md` — immutable goal contracts, agent groups, and derived joins
+- `references/patterns.md` — industry-recognized engineering lenses and their applicability
+- `references/capabilities/` — internal role capability prompts loaded only inside Codeflow
+- `references/testing.md` — case design and executable business-test capability
+- `references/engineering-style.md` — implementation style and test separation preference
+- `references/architecture.md` — architecture decision lenses and defaults
+- `references/usage.md` — per-turn and total model usage for benchmarks
 - `references/facts.md` — the shared fact ledger, and why you do not read it
 - `references/roles.md` — the roster, model bindings, and delegation rules

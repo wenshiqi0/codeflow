@@ -181,18 +181,18 @@ describe("open", () => {
 
 describe("scope conflicts", () => {
 	test("overlapping active scope is reported", () => {
-		open("test-writer", 1);
+		open("tester", 1);
 		const second = openHandoff(paths, {
 			role: "coder",
 			depth: 1,
 			body: "Goal: x\nScope: src/router.ts\n",
 		});
 		expect(second.scope_conflicts).toEqual(["src/router.ts"]);
-		expect(second.warning).toContain("h00001-test-writer");
+		expect(second.warning).toContain("h00001-tester");
 	});
 
 	test("a conflict is recorded but never blocks the open", () => {
-		open("test-writer", 1);
+		open("tester", 1);
 		const second = openHandoff(paths, {
 			role: "coder",
 			depth: 1,
@@ -203,7 +203,7 @@ describe("scope conflicts", () => {
 	});
 
 	test("disjoint scope produces no conflict", () => {
-		open("test-writer", 1);
+		open("tester", 1);
 		const second = openHandoff(paths, {
 			role: "coder",
 			depth: 1,
@@ -213,7 +213,7 @@ describe("scope conflicts", () => {
 	});
 
 	test("a finished handoff no longer holds its scope", () => {
-		const first = open("test-writer", 1);
+		const first = open("tester", 1);
 		finishHandoff(paths, {
 			handoffId: first.handoff_id,
 			status: "PASS",
@@ -386,6 +386,20 @@ describe("finish", () => {
 		).toThrow(CliError);
 	});
 
+	test("a declared artifact must be a non-empty file", () => {
+		const result = open("coder", 1);
+		fs.writeFileSync("unit-checkpoint.json", "");
+		expect(() =>
+			finishHandoff(paths, {
+				handoffId: result.handoff_id,
+				status: "PASS",
+				summary: "done",
+				receipt: receiptFile("r.json", { status: "PASS" }),
+				artifacts: ["unit-checkpoint.json"],
+			}),
+		).toThrow(CliError);
+	});
+
 	test("an existing artifact emits its own event", () => {
 		const result = open();
 		fs.writeFileSync("tests.patch", "diff\n");
@@ -440,7 +454,7 @@ describe("finish", () => {
 				expect(readJson<any>(result.state).lineage.parent_handoff_id).toBe(null);
 				return result;
 			};
-			const passed = openDelegation("test-writer");
+			const passed = openDelegation("tester");
 			const failed = openDelegation("coder");
 			const blocked = openDelegation("verifier");
 
@@ -539,14 +553,38 @@ describe("receipt validation", () => {
 		expect(finishWith({ status: "FAIL" })).toThrow(CliError);
 	});
 
-	test("test-runner must supply command and exit_code", () => {
-		expect(finishWith({ status: "PASS" }, "test-runner")).toThrow(CliError);
+	test("verify must supply command and exit_code", () => {
+		expect(finishWith({ status: "PASS" }, "verify")).toThrow(CliError);
 	});
 
-	test("test-runner with full evidence is accepted", () => {
+	test("verify with full evidence is accepted", () => {
 		expect(
-			finishWith({ status: "PASS", command: "bun test", exit_code: 0 }, "test-runner"),
+			finishWith({ status: "PASS", command: "bun test", exit_code: 0 }, "verify"),
 		).not.toThrow();
+	});
+
+	test("verify failure classes are closed", () => {
+		expect(
+			finishWith(
+				{ status: "PASS", command: "bun test", exit_code: 0, failure_class: "RED" },
+				"verify",
+			),
+		).toThrow(CliError);
+	});
+
+	test("expected RED requires its evidence flags to agree", () => {
+		expect(
+			finishWith(
+				{
+					status: "PASS",
+					command: "bun test",
+					exit_code: 0,
+					failure_class: "EXPECTED_FAIL",
+					expected_red: false,
+				},
+				"verify",
+			),
+		).toThrow(CliError);
 	});
 
 	test("a mistyped field is rejected", () => {
@@ -571,7 +609,7 @@ describe("receipt validation", () => {
 	});
 
 	test("a long excerpt spills to evidence and keeps a reference", () => {
-		const result = open("test-runner", 1);
+		const result = open("verify", 1);
 		finishHandoff(paths, {
 			handoffId: result.handoff_id,
 			status: "FAIL",
@@ -652,7 +690,7 @@ describe("facts recorded through receipts", () => {
 	});
 
 	test("facts are attributed to the finishing role", () => {
-		const result = open("test-writer", 1);
+		const result = open("tester", 1);
 		finishHandoff(paths, {
 			handoffId: result.handoff_id,
 			status: "PASS",
@@ -662,7 +700,7 @@ describe("facts recorded through receipts", () => {
 				facts: [{ claim: "vitest", value: "vitest" }],
 			}),
 		});
-		expect(materialize(path.join(paths.runDir, LEDGER_NAME))[0].role).toBe("test-writer");
+		expect(materialize(path.join(paths.runDir, LEDGER_NAME))[0].role).toBe("tester");
 	});
 
 	test("a BLOCKED finish without a receipt records nothing", () => {
@@ -770,6 +808,35 @@ describe("run lifecycle", () => {
 		expect(eventNames().some((name) => name.includes("runner_exited"))).toBe(true);
 	});
 
+	test("a depth-0 exit mechanically closes an abandoned root handoff", () => {
+		const root = open();
+		const child = open("coder", 1);
+		runnerExited(paths, 4242, "planner", 0);
+		const state = readJson<any>(root.state);
+		const childState = readJson<any>(child.state);
+		const names = eventNames();
+
+		expect(state.status).toBe("blocked");
+		expect(state.blocked.reasons).toContain("DELEGATION_ARTIFACT_MISSING");
+		expect(childState.status).toBe("blocked");
+		const childFinishedAt = names.findIndex((name) => name.includes("h00002-coder--handoff_finished--BLOCKED"));
+		const finishedAt = names.findIndex((name) => name.includes("run_finished--BLOCKED"));
+		const exitedAt = names.findIndex((name) => name.includes("runner_exited--EXITED"));
+		expect(childFinishedAt).toBeGreaterThanOrEqual(0);
+		expect(finishedAt).toBeGreaterThanOrEqual(0);
+		expect(finishedAt).toBeGreaterThan(childFinishedAt);
+		expect(exitedAt).toBeGreaterThan(finishedAt);
+	});
+
+	test("a depth-0 exit does not duplicate a root terminal event", () => {
+		const root = open();
+		finishHandoff(paths, { handoffId: root.handoff_id, status: "PASS", summary: "done" });
+		const before = eventNames().filter((name) => name.includes("run_finished")).length;
+		runnerExited(paths, 4242, "planner", 0);
+		const after = eventNames().filter((name) => name.includes("run_finished")).length;
+		expect(after).toBe(before);
+	});
+
 	test("a depth-1 exit is recorded but not published", () => {
 		// The parent delegation already observed it; publishing would be noise
 		// the outer loop could mistake for a stop signal.
@@ -804,7 +871,7 @@ describe("agents list", () => {
 	});
 
 	test("rows sort by depth then role", () => {
-		const child = openHandoff(paths, { role: "test-writer", depth: 1, body: "Goal: x\n" });
+		const child = openHandoff(paths, { role: "tester", depth: 1, body: "Goal: x\n" });
 		open("planner", 0);
 		expect(agentsList(paths).map((row) => row.depth)).toEqual([0, 1]);
 	});

@@ -14,6 +14,12 @@ export const BLOCKED_PROVIDER_FAILURE = "PROVIDER_FAILURE";
 export const BLOCKED_USER_CANCELLED = "USER_CANCELLED";
 
 /**
+ * A fixed summary prevents a delegator from treating a child's unvalidated
+ * final prose as success evidence. Prose may appear only in blocked.detail.
+ */
+export const MISSING_HANDOFF_FINISH_SUMMARY = "delegated role exited without calling handoff finish";
+
+/**
  * Single producer/consumer contract: the agent-watchdog's stderr abort line
  * begins with this prefix, and reconcileHandoff matches on it to recognise
  * a stream-idle abort. Both sides import this one string so they cannot
@@ -54,6 +60,25 @@ export function blockedReasons(outcome: ChildOutcome): string[] {
 		}
 	}
 	if (!outcome.receiptPresent) reasons.push(BLOCKED_DELEGATION_ARTIFACT_MISSING);
+	return reasons;
+}
+
+/**
+ * Reasons that can be identified from a terminal provider stream signal before
+ * the child process has fully closed. They are delivered immediately so the
+ * outer loop observes state, never provider prose.
+ */
+export function immediateFailureReasons(
+	outcome: Pick<ChildOutcome, "stopReason" | "watchdogAborted" | "receiptPresent">,
+): string[] {
+	const reasons: string[] = [];
+	if (outcome.stopReason === "error" || outcome.watchdogAborted) {
+		reasons.push(BLOCKED_PROVIDER_FAILURE);
+	}
+	if (outcome.stopReason === "length") reasons.push(BLOCKED_OUTPUT_TRUNCATED);
+	if (reasons.length > 0 && !outcome.receiptPresent) {
+		reasons.push(BLOCKED_DELEGATION_ARTIFACT_MISSING);
+	}
 	return reasons;
 }
 

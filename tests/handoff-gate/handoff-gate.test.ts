@@ -3,6 +3,7 @@ import * as handoffGate from "../../runtime/extensions/codeflow-task/handoff-gat
 import {
 	blockedReasons,
 	delegationPointer,
+	immediateFailureReasons,
 	isClean,
 	type ChildOutcome,
 } from "../../runtime/extensions/codeflow-task/handoff-gate";
@@ -88,6 +89,32 @@ describe("blockedReasons", () => {
 	});
 });
 
+describe("immediateFailureReasons", () => {
+	test("provider stop errors are available before process close", () => {
+		expect(
+			immediateFailureReasons({ stopReason: "error", watchdogAborted: false, receiptPresent: false }),
+		).toEqual(["PROVIDER_FAILURE", "DELEGATION_ARTIFACT_MISSING"]);
+	});
+
+	test("output truncation is available before process close", () => {
+		expect(
+			immediateFailureReasons({ stopReason: "length", watchdogAborted: false, receiptPresent: true }),
+		).toEqual(["OUTPUT_TRUNCATED"]);
+	});
+
+	test("a stream-idle watchdog marker is an immediate provider failure", () => {
+		expect(
+			immediateFailureReasons({ stopReason: undefined, watchdogAborted: true, receiptPresent: false }),
+		).toEqual(["PROVIDER_FAILURE", "DELEGATION_ARTIFACT_MISSING"]);
+	});
+
+	test("ordinary streaming messages do not create a failure event", () => {
+		expect(
+			immediateFailureReasons({ stopReason: undefined, watchdogAborted: false, receiptPresent: false }),
+		).toEqual([]);
+	});
+});
+
 describe("STREAM_IDLE_ABORT_MARKER", () => {
 	test("is exported as the single producer/consumer contract", () => {
 		// The watchdog writes this prefix on its abort line and the gate
@@ -101,14 +128,23 @@ describe("STREAM_IDLE_ABORT_MARKER", () => {
 	});
 });
 
+describe("MISSING_HANDOFF_FINISH_SUMMARY", () => {
+	test("is fixed so blocked prose cannot masquerade as success", () => {
+		// Namespace access keeps a missing export a test failure here rather
+		// than a module-load error that hides the rest of this file.
+		const summary = (handoffGate as any).MISSING_HANDOFF_FINISH_SUMMARY;
+		expect(summary).toBe("delegated role exited without calling handoff finish");
+	});
+});
+
 describe("delegationPointer", () => {
 	test("carries only pointers, in a fixed key order", () => {
 		const pointer = delegationPointer(
-			"h00002-test-runner",
+			"h00002-verify",
 			"FAIL",
 			[],
-			".codeflow/runs/code/r/handoffs/h00002-test-runner/receipt.json",
-			".codeflow/runs/code/r/handoffs/h00002-test-runner/state.json",
+			".codeflow/runs/code/r/handoffs/h00002-verify/receipt.json",
+			".codeflow/runs/code/r/handoffs/h00002-verify/state.json",
 		);
 		expect(Object.keys(pointer)).toEqual([
 			"handoff_id",

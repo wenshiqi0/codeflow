@@ -3,7 +3,7 @@
  *
  * The outer loop's correctness rests on three properties here: a reconnect
  * never replays, a timeout with no events is normal rather than a failure, and
- * only file names are ever read.
+ * only filename metadata and the whitelisted event enum/summary are read.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -15,10 +15,16 @@ import { scan, wait, watchDir } from "../../runtime/lib/wait";
 let dir: string;
 let events: string;
 
-function writeEvent(seq: number, subject: string, kind: string, status: string): void {
+function writeEvent(
+	seq: number,
+	subject: string,
+	kind: string,
+	status: string,
+	body: Record<string, unknown> = {},
+): void {
 	fs.writeFileSync(
 		path.join(events, `${String(seq).padStart(5, "0")}--${subject}--${kind}--${status}.json`),
-		"{}\n",
+		JSON.stringify(body) + "\n",
 	);
 }
 
@@ -61,7 +67,24 @@ describe("scanning", () => {
 			kind: "handoff_opened",
 			status: "OPEN",
 			file: "00001--h00001-planner--handoff_opened--OPEN.json",
+			summary: "handoff_opened OPEN",
 		});
+	});
+
+	test("reads only whitelisted reasons and one-line summary from a terminal body", () => {
+		writeEvent(2, "h00002-tester", "handoff_finished", "BLOCKED", {
+			reasons: ["PROVIDER_FAILURE", "DELEGATION_ARTIFACT_MISSING"],
+			summary: "provider request ended with error",
+			ref: "handoffs/h00002/state.json",
+			error: "monthly quota exhausted",
+			prose: "long diagnostic narrative",
+		});
+		const [event] = scan(events, 0, []).events;
+		expect(event.reasons).toEqual(["PROVIDER_FAILURE", "DELEGATION_ARTIFACT_MISSING"]);
+		expect(event.summary).toBe("provider request ended with error");
+		expect(Object.keys(event)).not.toContain("ref");
+		expect(Object.keys(event)).not.toContain("error");
+		expect(Object.keys(event)).not.toContain("prose");
 	});
 
 	test("returns events in sequence order", () => {

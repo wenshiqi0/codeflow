@@ -269,8 +269,8 @@ describe("reading", () => {
 	});
 
 	test("render names the author so a reader can judge the fact", () => {
-		append([{ claim: "route entry", value: "x" }], "test-writer");
-		expect(render(ledger)).toContain("test-writer");
+		append([{ claim: "route entry", value: "x" }], "tester");
+		expect(render(ledger)).toContain("tester");
 	});
 
 	test("render omits a line number when there is none", () => {

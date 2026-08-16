@@ -50,7 +50,7 @@ const HEARTBEAT_SECONDS = "60";
  * provider fetch — turning an infinite hang into a recoverable turn failure.
  *
  * The default is derived from two existing bounds, not guessed:
- * DEFAULT_STALE_SECONDS = 600 in runtime/lib/handoff.ts is the age at which
+ * DEFAULT_STALE_SECONDS = 600 in runtime/lib/handoff/index.ts is the age at which
  * the state layer first calls a silent handoff "stale" (its own docs treat
  * ten minutes of quiet reasoning as normal), plus the previous 300s of
  * abort patience on top. An idle abort firing before the age annotation

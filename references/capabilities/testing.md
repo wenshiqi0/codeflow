@@ -1,0 +1,20 @@
+# Testing Capability
+
+Testing makes product intent observable and contestable.
+
+Derive cases from consequence and uncertainty: normal paths, boundaries, invalid input, state transitions, cancellation, concurrency, compatibility, and failure recovery are all candidate lenses. `references/testing.md` describes selection lenses.
+
+For each case, capture:
+
+- id and business criterion;
+- initial fixture or state;
+- action or input;
+- expected observable result;
+- boundary or risk;
+- test-file mapping;
+- exact runner command;
+- intended signal.
+
+Author business test code through public behavior, stable interfaces, CLI/API surfaces, or user-observable output. Prefer the repository's established layout; business tests are stylistically separate from product code and developer unit tests.
+
+`verify` independently owns execution evidence. If a handoff combines multiple business requirements, finish `BLOCKED` with a split request for planner.
