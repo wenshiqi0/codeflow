@@ -10,7 +10,6 @@ set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME_DIR="$ROOT_DIR/runtime"
-CODEFLOW_HOME="${CODEFLOW_HOME:-$HOME/.codeflow}"
 
 PASS=0
 FAIL=0
@@ -57,15 +56,8 @@ fi
 
 section "Credentials"
 
-if [[ -f "$CODEFLOW_HOME/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$CODEFLOW_HOME/.env"
-  set +a
-  ok "loaded $CODEFLOW_HOME/.env"
-else
-  warn "no $CODEFLOW_HOME/.env (fine if keys are exported in your shell)"
-fi
+# Credential presence is checked from the caller environment. The optional
+# .env file remains a runtime launcher concern and is not reported here.
 
 # Derive credential impact from models.json plus the current role bindings.
 # Doctor never owns a second copy of the roster.
