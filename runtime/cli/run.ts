@@ -26,6 +26,7 @@ import { renderUsageSummary, writeUsageSummary } from "../lib/usage";
 const RUNTIME_DIR = path.resolve(import.meta.dir, "..");
 const AGENTS_DIR = path.join(RUNTIME_DIR, "agents");
 const VERSION = "0.1.0";
+const ROOT_OUTPUT_DIAGNOSTIC_LIMIT = 8_000;
 const EXTENSIONS = [
 	path.join(RUNTIME_DIR, "extensions", "codeflow-task", "index.ts"),
 	path.join(RUNTIME_DIR, "extensions", "host-guard", "index.ts"),
@@ -69,6 +70,55 @@ export function openRootHandoffForRun(
 function fail(message: string, command = "exec"): number {
 	console.error(`codeflow ${command}: error: ${message}`);
 	return 1;
+}
+
+interface RootOutputObservation {
+	stopReason?: string;
+	errorMessage?: string;
+	stdoutTail: string;
+	stderrTail: string;
+}
+
+function appendTail(current: string, chunk: string): string {
+	const next = current + chunk;
+	return next.length > ROOT_OUTPUT_DIAGNOSTIC_LIMIT
+		? next.slice(next.length - ROOT_OUTPUT_DIAGNOSTIC_LIMIT)
+		: next;
+}
+
+function observeRootJsonLine(line: string, observation: RootOutputObservation): void {
+	let event: any;
+	try {
+		event = JSON.parse(line);
+	} catch {
+		return;
+	}
+	if (event.type !== "message_end" || event.message?.role !== "assistant") return;
+	if (event.message.stopReason) observation.stopReason = event.message.stopReason;
+	if (event.message.errorMessage) observation.errorMessage = event.message.errorMessage;
+}
+
+async function drainRootStream(
+	stream: unknown,
+	onLine: (line: string) => void,
+	onChunk: (chunk: string) => void,
+): Promise<void> {
+	if (!stream || typeof (stream as ReadableStream).getReader !== "function") return;
+	const reader = (stream as ReadableStream<Uint8Array>).getReader();
+	const decoder = new TextDecoder();
+	let buffer = "";
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		const text = decoder.decode(value, { stream: true });
+		if (text) onChunk(text);
+		buffer += text;
+		const lines = buffer.split("\n");
+		buffer = lines.pop() ?? "";
+		for (const line of lines) if (line.trim()) onLine(line);
+	}
+	buffer += decoder.decode();
+	if (buffer.trim()) onLine(buffer);
 }
 
 interface ParsedRun {
@@ -161,13 +211,12 @@ export async function run(argv: string[], entry: "exec" | "delegate" = "delegate
 		console.log(
 			JSON.stringify({
 				role: args.role,
-				env: {
+					env: {
 					CODEFLOW_AGENT_ROLE: args.role,
 					CODEFLOW_AGENT_DEPTH: freshRun ? "0" : "1",
-					CODEFLOW_RUN_ID: runId,
-					...(handoffId ? { CODEFLOW_HANDOFF_ID: handoffId } : {}),
-					PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR ?? RUNTIME_DIR,
-				},
+						CODEFLOW_RUN_ID: runId,
+						...(handoffId ? { CODEFLOW_HANDOFF_ID: handoffId } : {}),
+					},
 				argv: buildArgv(resolved, args.prompt, EXTENSIONS),
 			}),
 		);
@@ -225,20 +274,22 @@ export async function run(argv: string[], entry: "exec" | "delegate" = "delegate
 	}
 
 	fs.mkdirSync(paths.piSessions, { recursive: true });
+	const captureRootOutput = entry === "exec" && freshRun;
+	const rootObservation: RootOutputObservation = { stdoutTail: "", stderrTail: "" };
 	child = Bun.spawn(
 		buildArgv(resolved, args.prompt, EXTENSIONS, {
 			id: `${runId}-planner`,
 			dir: paths.piSessions,
 		}),
 		{
-			stdin: "inherit",
-			stdout: "inherit",
-			stderr: "inherit",
+				stdin: captureRootOutput ? "ignore" : "inherit",
+				stdout: captureRootOutput ? "pipe" : "inherit",
+				stderr: captureRootOutput ? "pipe" : "inherit",
 			detached: freshRun,
 			env: {
 				...process.env,
-				PATH: `${path.join(RUNTIME_DIR, "bin")}:${process.env.PATH ?? ""}`,
-				PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR ?? RUNTIME_DIR,
+					PATH: `${path.join(RUNTIME_DIR, "bin")}:${process.env.PATH ?? ""}`,
+					PI_CODING_AGENT_DIR: RUNTIME_DIR,
 				CODEFLOW_AGENT_ROLE: args.role,
 				CODEFLOW_AGENT_DEPTH: freshRun ? "0" : "1",
 				CODEFLOW_RUN_ID: runId,
@@ -247,9 +298,39 @@ export async function run(argv: string[], entry: "exec" | "delegate" = "delegate
 		},
 	);
 	if (freshRun && child.pid !== undefined) runnerChildStarted(paths, child.pid);
+	const rootOutputDrained = captureRootOutput
+		? Promise.all([
+				drainRootStream(
+					child.stdout,
+					(line) => observeRootJsonLine(line, rootObservation),
+					(chunk) => {
+						rootObservation.stdoutTail = appendTail(rootObservation.stdoutTail, chunk);
+					},
+				),
+				drainRootStream(
+					child.stderr,
+					() => undefined,
+					(chunk) => {
+						rootObservation.stderrTail = appendTail(rootObservation.stderrTail, chunk);
+					},
+				),
+			])
+		: undefined;
 
 	const code = await child.exited;
+	if (rootOutputDrained) await rootOutputDrained;
 	if (escalation) clearTimeout(escalation);
+	if (captureRootOutput && (code !== 0 || rootObservation.stopReason === "error")) {
+		const tail = (
+			rootObservation.errorMessage ??
+			(rootObservation.stderrTail || rootObservation.stdoutTail)
+		)
+			.trim()
+			.slice(-2_000);
+		console.error(
+			`codeflow exec: planner exited with code ${code}${tail ? `; diagnostic tail:\n${tail}` : ""}`,
+		);
+	}
 
 	// The watchdog may have missed the exit; recording it here is what lets an
 	// outer loop distinguish "finished" from "died without finishing".

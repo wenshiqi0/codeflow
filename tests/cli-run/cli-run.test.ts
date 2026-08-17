@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { openRootHandoffForRun } from "../../runtime/cli/run";
 import { RunPaths, readJson } from "../../runtime/lib/paths";
 
@@ -19,5 +20,19 @@ describe("run root handoff", () => {
 		} finally {
 			fs.rmSync(paths.runDir, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("exec output boundary", () => {
+	test("the depth-0 Pi stream is piped and drained, not inherited", () => {
+		const source = fs.readFileSync(
+			path.resolve(import.meta.dir, "../../runtime/cli/run.ts"),
+			"utf8",
+		);
+		expect(source).toContain('stdout: captureRootOutput ? "pipe" : "inherit"');
+		expect(source).toContain('stderr: captureRootOutput ? "pipe" : "inherit"');
+		expect(source).toContain("const rootOutputDrained = captureRootOutput");
+		expect(source).toContain("ROOT_OUTPUT_DIAGNOSTIC_LIMIT");
+		expect(source).toContain("planner exited with code");
 	});
 });

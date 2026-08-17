@@ -86,7 +86,7 @@ runtime/bin
 
 runtime/extensions
   -> runtime/lib
-  -> references/capabilities  # 仅通过 role prompt 或 extension 注入间接使用
+  -> references              # context extension 解析显式 import 指令
 ```
 
 允许：
@@ -94,7 +94,7 @@ runtime/extensions
 - CLI adapter 调用 `lib` 的公开 API；
 - extension adapter 调用 `lib`，避免复制状态规则；
 - `quality/` 保持独立，由 CLI 或 supervisor 显式调用；
-- role prompt 读取 `references/` 与 `references/capabilities/`。
+- role prompt 用 `codeflow:import` 声明 `references/` 依赖，由 context extension 在会话开始前注入。
 
 避免：
 
@@ -108,7 +108,7 @@ runtime/extensions
 ### 文件归属规则
 
 1. **人会直接运行的环境检查** 放 `scripts/`。
-2. **模型要读的知识** 放 `references/`；内部 role 专用知识放 `references/capabilities/`。
+2. **模型要读的知识** 放 `references/`；内部 role 专用知识放 `references/capabilities/`，并通过 `codeflow:import` 显式注入。
 3. **role 身份与模型绑定** 放 `runtime/agents/*.md`。
 4. **新命令或参数解析** 放 `runtime/cli/`。
 5. **状态、事件、goal、facts、usage、观测的核心规则** 放 `runtime/lib/`。
@@ -135,7 +135,9 @@ bun test tests/handoff  # 单个模块
 
 多 Agent 隔离带来一个真实代价：每个角色都从零开始探索，plan 阶段已经查清的事实，coder 会再 grep 一遍。
 
-Codeflow 用 **run 内的共享事实缓存**解决这个问题：角色确认过的事实（文件位置、接口签名、既有约定）记入当前 run 的共识区，后续角色直接读取而不是重新搜索。这是执行期的短期上下文，不是跨项目知识库——不依赖外部记忆后端。
+Codeflow 分两层处理这个问题：角色用 `codeflow:import` 声明确定需要的语义知识，context extension 在会话开始前注入并记录哈希；角色确认过的事实（文件位置、接口签名、既有约定）记入当前 run 的共识区，后续角色直接读取而不是重新搜索。后者是执行期的短期上下文，不是跨项目知识库——不依赖外部记忆后端。
+
+产品运行中的角色不探索 Codeflow 自身。运行时位置是 Pi 配置的私有细节，在工具环境可用前移除；显式引用或读取 Codeflow checkout 会被 host guard 拦截，工具输出中的残留运行时路径也会被红线处理。
 
 ## 安装
 

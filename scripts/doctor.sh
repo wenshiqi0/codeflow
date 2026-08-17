@@ -118,6 +118,7 @@ for required in \
   "$RUNTIME_DIR/extensions/host-guard/index.ts" \
   "$RUNTIME_DIR/extensions/host-guard/policy.ts" \
   "$RUNTIME_DIR/extensions/codeflow-context/index.ts" \
+  "$RUNTIME_DIR/extensions/codeflow-context/imports.ts" \
   "$RUNTIME_DIR/extensions/usage-ledger/index.ts" \
   "$RUNTIME_DIR/extensions/bash-compressor/index.ts" \
   "$RUNTIME_DIR/extensions/agent-watchdog/index.ts"; do

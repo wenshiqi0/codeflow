@@ -3,7 +3,7 @@
  *
  * Pi is launched with --no-context-files, so nothing is loaded implicitly.
  * This module builds the visible XML block injected at the start of every
- * turn. Two things go in it:
+ * turn. Three things go in it:
  *
  *   - the rule layers a role is entitled to (see ContextLevel), and
  *   - the run's shared fact ledger, so an isolated role starts from what
@@ -14,6 +14,7 @@
  */
 
 import { createHash } from "node:crypto";
+import type { ContextImport } from "./imports";
 
 /**
  * How much of the rule stack a role sees.
@@ -33,6 +34,7 @@ export interface ContextInput {
 	level: ContextLevel;
 	projectRules: string;
 	sharedRules: string;
+	imports?: ContextImport[];
 	facts: string;
 	generatedAt: string;
 }
@@ -87,6 +89,31 @@ export function buildContext(input: ContextInput): ContextBlock {
 			hash: sha256(input.sharedRules),
 		});
 		sections.push(`  <shared_rules>\n${escapeXml(input.sharedRules)}\n  </shared_rules>`);
+	}
+
+	const imports = input.imports ?? [];
+	if (imports.length > 0) {
+		const documents = imports
+			.map(
+				(imported) =>
+					`    <document ref="${escapeXml(imported.ref)}">\n` +
+					`${escapeXml(imported.content)}\n` +
+					`    </document>`,
+			)
+			.join("\n");
+		for (const imported of imports) {
+			sources.push({
+				kind: "context_import",
+				ref: imported.ref,
+				hash: sha256(imported.content),
+			});
+		}
+		sections.push(
+			`  <context_imports>\n` +
+				`    These declared reference documents are already part of the starting context.\n` +
+				`${documents}\n` +
+				`  </context_imports>`,
+		);
 	}
 
 	// The fact ledger is injected for every role regardless of rule level.

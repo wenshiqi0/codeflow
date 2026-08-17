@@ -1,8 +1,11 @@
 # Testing Capability
 
+<!-- codeflow:import path="references/testing.md" -->
+<!-- codeflow:import path="references/patterns.md" -->
+
 Testing makes product intent observable and contestable.
 
-Derive cases from consequence and uncertainty: normal paths, boundaries, invalid input, state transitions, cancellation, concurrency, compatibility, and failure recovery are all candidate lenses. `references/testing.md` describes selection lenses.
+Derive cases from consequence and uncertainty: normal paths, boundaries, invalid input, state transitions, cancellation, concurrency, compatibility, and failure recovery are all candidate lenses. The imported testing reference describes selection lenses.
 
 For each case, capture:
 

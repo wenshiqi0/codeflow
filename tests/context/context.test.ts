@@ -104,6 +104,26 @@ describe("buildContext shared facts", () => {
 	});
 });
 
+describe("buildContext imports", () => {
+	test("declared documents are visible and auditable", () => {
+		const { xml, sources } = buildContext({
+			...base,
+			level: "none",
+			imports: [{ ref: "references/patterns.md", content: "# Patterns\n\nUse feedback loops." }],
+		});
+		expect(xml).toContain("<context_imports>");
+		expect(xml).toContain('ref="references/patterns.md"');
+		expect(xml).toContain("Use feedback loops.");
+		expect(sources).toEqual([
+			{
+				kind: "context_import",
+				ref: "references/patterns.md",
+				hash: sha256("# Patterns\n\nUse feedback loops."),
+			},
+		]);
+	});
+});
+
 describe("XML safety", () => {
 	test("angle brackets in rules cannot break out of the block", () => {
 		const { xml } = buildContext({

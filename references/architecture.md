@@ -1,5 +1,7 @@
 # Architecture capability
 
+<!-- codeflow:import path="references/patterns.md" -->
+
 Architecture work reduces directional uncertainty and irreversible cost.
 
 ## Decision lenses

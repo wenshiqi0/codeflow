@@ -45,7 +45,6 @@ if PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
   cd "$PROJECT_ROOT"
 fi
 
-export PI_CODING_AGENT_DIR="$RUNTIME_DIR"
 export PATH="$RUNTIME_DIR/bin:$PATH"
 
 # Metadata inspection and the pure-metadata commands must work without
