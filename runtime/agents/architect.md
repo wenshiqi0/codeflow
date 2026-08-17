@@ -1,6 +1,6 @@
 ---
 description: Shapes architecture direction, reversibility, boundaries, and fitness functions.
-model: zhipuai-coding-plan/glm-5.2
+model: zhipuai-coding-plan/glm-5.3
 needs_project_rules: full
 ---
 

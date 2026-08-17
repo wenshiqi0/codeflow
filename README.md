@@ -143,14 +143,23 @@ Codeflow 分两层处理这个问题：角色用 `codeflow:import` 声明确定�
 
 要求：macOS 或 Linux、Git、Bun 1.3+。运行时全部是 TypeScript，由 Bun 直接执行，没有构建步骤，也不需要第二个运行时。
 
+仓库根就是 skill 根。正常使用时直接把仓库 clone 到宿主的全局 skills 目录：
+
+| 宿主 | 常规全局 skills 目录 |
+|---|---|
+| Codex | `$HOME/.codex/skills` |
+| OpenCode | `$HOME/.config/opencode/skills` |
+| Claude Code | `$HOME/.claude/skills` |
+
+以 Codex 为例：
+
 ```bash
-git clone git@github.com:wenshiqi0/codeflow.git
-cd codeflow
-mkdir -p "$HOME/.codex/skills"
-ln -s "$PWD" "$HOME/.codex/skills/codeflow"
+skills_dir="$HOME/.codex/skills"
+mkdir -p "$skills_dir"
+git clone git@github.com:wenshiqi0/codeflow.git "$skills_dir/codeflow"
 ```
 
-安装使用符号链接而不是复制仓库：之后在这个 checkout 里 `git pull`，全局 skill 立即使用同一份最新代码，不会出现两份运行时漂移。
+其他宿主替换 `skills_dir` 为上表中的对应目录即可；若宿主还支持项目级 skills 目录，也可以按其约定放置。
 
 密钥统一从全局环境获取，仓库内不含任何凭据。在 shell 配置或全局 env 文件中提供：
 
@@ -166,7 +175,3 @@ DEEPSEEK_API_KEY=...
 ```bash
 ./scripts/doctor.sh
 ```
-
-## 与 Teamflow 的关系
-
-Codeflow 承接 [teamflow](https://github.com/wenshiqi0/teamflow) 的执行流程——pi agents 协同与 handoff 语义原样保留。差别在交付形态：teamflow 是按项目安装的运行时，codeflow 是一个 skill，运行时全局单份，外环协议住在宿主的 skill 命名空间里而不是各项目的根 `AGENTS.md`。

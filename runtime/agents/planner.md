@@ -1,6 +1,6 @@
 ---
 description: Shapes requirements into goals and composes specialist capabilities around observable outcomes.
-model: zhipuai-coding-plan/glm-5.2
+model: zhipuai-coding-plan/glm-5.3
 tools: read,write,bash,goal,task,task_group
 delegates: true
 ---
