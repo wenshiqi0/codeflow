@@ -20,6 +20,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ExtensionAPI, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { buildContext, resolveLevel, type ContextLevel } from "./context";
+import { loadContextImports, stripImportDirectives } from "./imports";
 import { ledgerPath, render } from "../../lib/facts";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
 
@@ -75,15 +76,20 @@ function renderFacts(runId: string | undefined, runsDir: string): string {
 
 export default function (pi: ExtensionAPI) {
 	pi.on("before_agent_start", (event) => {
+		// Pi has loaded its isolated model/auth configuration by this point.
+		// Remove the private locator before any model-facing tool can inherit it.
+		delete process.env.PI_CODING_AGENT_DIR;
 		const cwd = event.systemPromptOptions?.cwd || process.cwd();
 		const role = process.env.CODEFLOW_AGENT_ROLE;
 		const level = roleLevel(role);
 		const runsDir = process.env.CODEFLOW_RUNS_DIR || ".codeflow/runs/code";
+		const imports = loadContextImports(event.systemPrompt, RUNTIME_DIR);
 
 		const { xml, sources } = buildContext({
 			level,
 			projectRules: level === "full" ? readIfPresent(path.join(cwd, "AGENTS.md")) : "",
 			sharedRules: level === "none" ? "" : readIfPresent(path.join(RUNTIME_DIR, "AGENTS.md")),
+			imports,
 			facts: renderFacts(process.env.CODEFLOW_RUN_ID, runsDir),
 			generatedAt: new Date().toISOString(),
 		});
@@ -95,6 +101,7 @@ export default function (pi: ExtensionAPI) {
 				display: true,
 				details: { role: role ?? "unknown", level, sources },
 			},
+			systemPrompt: stripImportDirectives(event.systemPrompt),
 		};
 	});
 

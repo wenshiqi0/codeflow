@@ -183,6 +183,7 @@ export async function runRoleChild(
 
 	const childEnv: Record<string, string | undefined> = {
 		...process.env,
+		PI_CODING_AGENT_DIR: RUNTIME_DIR,
 		CODEFLOW_AGENT_ROLE: role,
 		CODEFLOW_AGENT_DEPTH: "1",
 	};

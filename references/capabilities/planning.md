@@ -1,8 +1,10 @@
 # Planning Capability
 
+<!-- codeflow:import path="references/patterns.md" -->
+
 Planning reduces requirement uncertainty before specialists spend implementation effort.
 
-Read repository instructions and the smallest relevant project slice. Separate confirmed facts, assumptions, risks, compatibility constraints, and non-goals. Use `references/patterns.md` to identify which feedback loop currently matters most.
+Read repository instructions and the smallest relevant project slice. Separate confirmed facts, assumptions, risks, compatibility constraints, and non-goals. Use the imported engineering patterns to identify which feedback loop currently matters most.
 
 A useful plan names:
 

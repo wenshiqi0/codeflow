@@ -25,6 +25,7 @@ import {
 } from "../lib/handoff";
 import { materialize, render } from "../lib/facts";
 import { ledgerPath } from "../lib/facts";
+import { goalViews } from "../lib/goals";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../lib/paths";
 
 interface Args {
@@ -125,6 +126,27 @@ function requireFlag(args: Args, name: string): string {
 	return value;
 }
 
+/**
+ * A root PASS is a claim that every immutable goal contract is satisfied.
+ * The derived join, rather than the planner's prose receipt, owns that fact.
+ */
+export function assertRootPassGoalJoins(paths: RunPaths, handoffId: string): void {
+	const state = handoffStatus(paths, handoffId);
+	if (Array.isArray(state)) throw new CliError(`handoff not found: ${handoffId}`);
+	if ((state.depth ?? 0) !== 0 || state.lineage.parent_handoff_id) return;
+
+	const unsatisfied = goalViews(paths).flatMap((view) =>
+		view.join.satisfied
+			? []
+			: view.join.unsatisfied.map((entry) => `${view.goal_id}: ${entry}`),
+	);
+	if (unsatisfied.length > 0) {
+		throw new CliError(
+			`root PASS requires every goal join to be satisfied: ${unsatisfied.join("; ")}`,
+		);
+	}
+}
+
 async function runHandoff(command: string, args: Args): Promise<number> {
 	const paths = resolvePaths(args);
 
@@ -160,9 +182,11 @@ async function runHandoff(command: string, args: Args): Promise<number> {
 					`--status must be one of ${TERMINAL_STATUSES.join(", ")}, got ${status}`,
 				);
 			}
+			const handoffId = resolveHandoffId(args);
+			if (status === "PASS") assertRootPassGoalJoins(paths, handoffId);
 			emit(
 				finishHandoff(paths, {
-					handoffId: resolveHandoffId(args),
+					handoffId,
 					status: status as TerminalStatus,
 					summary: requireFlag(args, "summary"),
 					receipt: one(args, "receipt") ?? null,

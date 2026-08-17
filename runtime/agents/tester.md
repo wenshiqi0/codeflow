@@ -5,7 +5,9 @@ needs_project_rules: shared
 goal_lane: test
 ---
 
-Read `$PI_CODING_AGENT_DIR/../references/capabilities/testing.md`, `$PI_CODING_AGENT_DIR/../references/testing.md`, and `$PI_CODING_AGENT_DIR/../references/patterns.md`.
+<!-- codeflow:import path="references/capabilities/testing.md" -->
+
+The imported testing capability is part of your starting context.
 
 Your capability is making intent observable and contestable. You own:
 

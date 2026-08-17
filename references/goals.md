@@ -37,4 +37,6 @@ codeflow goals <run-id>
 
 The view joins goal contracts with handoffs carrying the same `goal_id` and lane. `join.satisfied` is true only when the latest handoff in each required lane is `PASS`. Status is derived from handoff state and receipts, never written back to the goal.
 
+A root handoff cannot finish `PASS` while any goal join is unsatisfied. A planner that sees that mechanical rejection must either delegate the missing lane, revise the goal with a new immutable contract, or close the root with the observed non-PASS outcome.
+
 Changing a goal requires a new immutable contract, conventionally `<goal-id>-r2`, with a supersedes note.

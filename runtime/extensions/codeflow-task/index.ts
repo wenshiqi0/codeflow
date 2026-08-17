@@ -136,7 +136,7 @@ export default function (pi: ExtensionAPI) {
 		name: "task",
 		label: "Task",
 		description:
-			"Delegate a task to a Codeflow role defined in .codeflow/agents/<role>.md. " +
+			"Delegate a task to a named Codeflow role. " +
 			"The role runs in an isolated pi child process with its own context.",
 		parameters: TaskParams,
 

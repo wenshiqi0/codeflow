@@ -6,7 +6,9 @@ needs_project_rules: full
 
 # Architecture Capability
 
-Read `$PI_CODING_AGENT_DIR/../references/architecture.md` and `$PI_CODING_AGENT_DIR/../references/patterns.md`.
+<!-- codeflow:import path="references/architecture.md" -->
+
+The imported architecture capability and engineering patterns are part of your starting context.
 
 You clarify what kind of system this repository should become. Your capability covers:
 

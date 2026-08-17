@@ -37,6 +37,16 @@ Exactly six keys are allowed:
 
 Worker behavior is governed by capability semantics and repository style rather than deterministic filesystem gates. Delegation tools are registered only for depth-0 planner.
 
+## Context imports
+
+A role prompt declares reference dependencies with an HTML comment directive:
+
+```markdown
+<!-- codeflow:import path="references/capabilities/planning.md" -->
+```
+
+The context extension resolves the directive before the first provider request. Imports may recurse, are de-duplicated, and remain restricted to Markdown below Codeflow `references/`. Imported documents appear in the visible `codeflow:context` manifest and body; the role does not spend tool calls locating runtime files.
+
 ## Model bindings
 
 Edit the `model:` line to switch providers. Prompts refer to roles, never model names.

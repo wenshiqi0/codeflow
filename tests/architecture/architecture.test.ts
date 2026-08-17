@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { loadContextImports } from "../../runtime/extensions/codeflow-context/imports";
 
 const repo = path.resolve(import.meta.dir, "../..");
 
@@ -13,6 +14,32 @@ function exists(relative: string): boolean {
 }
 
 describe("runtime architecture boundaries", () => {
+	test("role references are injected through the context import graph", () => {
+		const agents = path.join(repo, "runtime/agents");
+		for (const name of fs.readdirSync(agents).filter((file) => file.endsWith(".md")).sort()) {
+			const prompt = fs.readFileSync(path.join(agents, name), "utf8");
+			loadContextImports(prompt, path.join(repo, "runtime"));
+		}
+		for (const relative of ["runtime/AGENTS.md", ...fs.readdirSync(agents).map((file) => `runtime/agents/${file}`)]) {
+			expect(read(relative)).not.toContain("$PI_CODING_AGENT_DIR/../references");
+		}
+	});
+
+	test("model-facing prompts do not expose the private runtime directory", () => {
+		const modelFacing = [
+			"runtime/AGENTS.md",
+			...fs.readdirSync(path.join(repo, "runtime/agents")).map((file) => `runtime/agents/${file}`),
+		];
+		for (const relative of modelFacing) {
+			const prompt = read(relative);
+			expect(prompt).not.toContain("PI_CODING_AGENT_DIR");
+			expect(prompt).not.toContain(".codeflow/agents");
+			expect(prompt).not.toContain("Current working directory:");
+		}
+		expect(read("runtime/bin/codeflow")).not.toContain("export PI_CODING_AGENT_DIR");
+		expect(read("runtime/bin/code-agent")).not.toContain("export PI_CODING_AGENT_DIR");
+	});
+
 	test("internal capability prompts are references rather than discoverable skills", () => {
 		expect(exists("runtime/skills")).toBe(false);
 		const capabilities = [
