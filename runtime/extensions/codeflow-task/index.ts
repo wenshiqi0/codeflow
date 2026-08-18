@@ -20,6 +20,7 @@ import {
 import { roleMayDelegate, runRoleChild, type TaskDetails } from "./role-launcher";
 
 const MAX_CONCURRENCY = 8;
+export const MAX_TASK_PROMPT_CHARS = 4_000;
 
 type ToolResult<T> = AgentToolResult<T | undefined>;
 
@@ -50,8 +51,12 @@ export function taskResolutionFailure(error: unknown): never {
 }
 
 const TaskParams = Type.Object({
-	agent: Type.String({ description: "Codeflow role name; resolved to agents/<role>.md by filename" }),
-	prompt: Type.String({ description: "Task prompt handed to the role" }),
+	agent: Type.String({ description: "Codeflow role name; resolved from runtime/roles.json" }),
+	prompt: Type.String({
+		minLength: 1,
+		maxLength: MAX_TASK_PROMPT_CHARS,
+		description: "Concise outcome handoff for the role; maximum 4000 characters",
+	}),
 	goal_id: Type.Optional(Type.String({
 		description: "Goal contract id; use only with tester/coder/verify and omit for architect",
 	})),
@@ -72,7 +77,11 @@ const TaskGroupParams = Type.Object({
 	tasks: Type.Array(
 		Type.Object({
 			agent: Type.String({ description: "Codeflow role name" }),
-			prompt: Type.String({ description: "Task prompt for the role" }),
+			prompt: Type.String({
+				minLength: 1,
+				maxLength: MAX_TASK_PROMPT_CHARS,
+				description: "Concise outcome handoff for the role; maximum 4000 characters",
+			}),
 			goal_id: Type.Optional(Type.String({
 				description: "Goal contract id; omit for architect",
 			})),
@@ -86,10 +95,19 @@ const TaskGroupParams = Type.Object({
 	),
 });
 
+export function assertTaskPrompt(prompt: string): void {
+	if (prompt.trim() === "") throw new TaskContractError("task prompt must not be empty");
+	if (prompt.length > MAX_TASK_PROMPT_CHARS) {
+		throw new TaskContractError(
+			`task prompt exceeds ${MAX_TASK_PROMPT_CHARS} characters; keep outcomes and constraints, and leave specialist discovery to the receiving role`,
+		);
+	}
+}
+
 export default function (pi: ExtensionAPI) {
 	// Delegation is an explicit role permission and is available only at depth
 	// 0. Children always run at depth 1, so they can never re-register tools
-	// even if their role frontmatter also contains `delegates: true`.
+	// even if their registry entry also contains `delegates: true`.
 	const role = process.env.CODEFLOW_AGENT_ROLE;
 	const depth = Number(process.env.CODEFLOW_AGENT_DEPTH ?? "0");
 	if (!roleMayDelegate(role, depth)) return;
@@ -139,6 +157,7 @@ export default function (pi: ExtensionAPI) {
 
 			let goal: GoalTaskRef | null = null;
 			try {
+				assertTaskPrompt(params.prompt);
 				goal = resolveGoalTask(agent, params.goal_id, params.lane);
 				if (goal) assertGoalLaneAvailable(goal);
 			} catch (error) {
@@ -229,6 +248,7 @@ export default function (pi: ExtensionAPI) {
 					const agent = task.agent.trim();
 					let goal: GoalTaskRef | null = null;
 					try {
+						assertTaskPrompt(task.prompt);
 						goal = resolveGoalTask(agent, task.goal_id, task.lane);
 						if (goal) assertGoalLaneAvailable(goal);
 					} catch (error) {

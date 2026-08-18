@@ -9,7 +9,7 @@ const base = {
 };
 
 describe("resolveLevel", () => {
-	test("defaults to full when frontmatter is absent", () => {
+	test("defaults to full when a registry entry is absent", () => {
 		expect(resolveLevel(null)).toBe("full");
 	});
 
@@ -19,10 +19,6 @@ describe("resolveLevel", () => {
 
 	test("false means no rule injection", () => {
 		expect(resolveLevel({ needs_project_rules: false })).toBe("none");
-	});
-
-	test('the string "false" is treated as false, since frontmatter is untyped', () => {
-		expect(resolveLevel({ needs_project_rules: "false" })).toBe("none");
 	});
 
 	test("shared means only the shared contract", () => {
@@ -109,16 +105,16 @@ describe("buildContext imports", () => {
 		const { xml, sources } = buildContext({
 			...base,
 			level: "none",
-			imports: [{ ref: "references/patterns.md", content: "# Patterns\n\nUse feedback loops." }],
+			imports: [{ ref: "references/capabilities/planning.md", content: "# Planner\n\nCoordinate outcomes." }],
 		});
 		expect(xml).toContain("<context_imports>");
-		expect(xml).toContain('ref="references/patterns.md"');
-		expect(xml).toContain("Use feedback loops.");
+		expect(xml).toContain('ref="references/capabilities/planning.md"');
+		expect(xml).toContain("Coordinate outcomes.");
 		expect(sources).toEqual([
 			{
 				kind: "context_import",
-				ref: "references/patterns.md",
-				hash: sha256("# Patterns\n\nUse feedback loops."),
+				ref: "references/capabilities/planning.md",
+				hash: sha256("# Planner\n\nCoordinate outcomes."),
 			},
 		]);
 	});

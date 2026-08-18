@@ -1,6 +1,6 @@
 # Codeflow Agent Instructions
 
-Worker-only shared contract. Planner guidance (role roster, sequence) is in `agents/planner.md`; the observe loop belongs to the outer coordinator and is not your concern.
+Worker-only shared contract. Role policy is in `roles.json`; exact role prompts are in `references/capabilities/`. The observe loop belongs to the outer coordinator.
 
 ## Runtime location
 
@@ -8,7 +8,7 @@ Worker-only shared contract. Planner guidance (role roster, sequence) is in `age
 
 ## Handoff contract
 
-Coordination happens in handoffs: one unit of work from a delegator to a receiver, who maintains its state until terminal. Planner authors the body with its imported handoff capability; never hand off vague requests.
+Coordination happens in handoffs: one unit of work from a delegator to a receiver, who maintains its state until terminal. Planner authors a concise outcome contract; vague requests are invalid.
 
 State changes and queries are programmatic; requirement expression goes through models. `code-agent handoff open/start/finish/status/list` owns every transition (`open` -> `running` -> `done(PASS|FAIL)` or `blocked(reason)`), sequences, receipt validation, and events. Models write handoff bodies, receipt narratives, and diagnoses. Never hand-write `state.json`, event files, `active/` sentinels, or liveness records; never claim liveness in prose. Scope conflicts persist as `scope_conflicts` in `state.json`.
 

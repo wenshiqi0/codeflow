@@ -25,11 +25,11 @@ import {
 	loadGoal,
 } from "../../lib/goals";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
-import { readFrontmatter } from "../../lib/roles";
+import { readRoleDefinition } from "../../lib/roles";
 import type { RoleRunResult } from "./shared";
 
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const AGENTS_DIR = path.join(RUNTIME_DIR, "agents");
+const ROLES_FILE = path.join(RUNTIME_DIR, "roles.json");
 const WATCHDOG_EXTENSION = path.join(RUNTIME_DIR, "extensions", "agent-watchdog", "index.ts");
 const CONTEXT_EXTENSION = path.join(RUNTIME_DIR, "extensions", "codeflow-context", "index.ts");
 const BASH_COMPRESSOR_EXTENSION = path.join(RUNTIME_DIR, "extensions", "bash-compressor", "index.ts");
@@ -72,7 +72,7 @@ export function resolveGoalTask(
 	lane: string | undefined,
 ): GoalTaskRef | null {
 	if (!goalId && !lane) return null;
-	const role = readFrontmatter(AGENTS_DIR, agent);
+	const role = readRoleDefinition(ROLES_FILE, agent);
 	if (role && !role.goal_lane) {
 		throw new TaskContractError(
 			`role ${agent} owns no goal lane; delegate it without goal_id or lane`,

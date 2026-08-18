@@ -3,11 +3,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import extension from "../../runtime/extensions/codeflow-context/index";
+import { resolveRole } from "../../runtime/lib/roles";
 
 const repo = path.resolve(import.meta.dir, "../..");
 
 describe("codeflow context extension", () => {
-	test("resolves role prompt imports during before_agent_start", () => {
+	test("keeps the canonical role prompt and injects only allowed context", () => {
 		const handlers = new Map<string, (event: unknown) => unknown>();
 		extension({
 			on: (type: string, handler: (event: unknown) => unknown) => {
@@ -20,7 +21,10 @@ describe("codeflow context extension", () => {
 
 		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-context-event-"));
 		try {
-			const systemPrompt = fs.readFileSync(path.join(repo, "runtime/agents/planner.md"), "utf8");
+			const systemPrompt = resolveRole(
+				path.join(repo, "runtime/roles.json"),
+				"planner",
+			)?.systemPrompt ?? "";
 			const result = handler({
 				systemPrompt,
 				systemPromptOptions: { cwd },
@@ -29,20 +33,11 @@ describe("codeflow context extension", () => {
 				message: { content: string; details: { sources: Array<{ kind: string; ref: string }> } };
 			};
 
+			expect(result.systemPrompt).toContain("# Planner Capability");
+			expect(result.systemPrompt).toContain("five read-only information calls or five minutes");
 			expect(result.systemPrompt).not.toContain("codeflow:import");
-			expect(result.systemPrompt).not.toContain("references/capabilities/planning.md");
-
-			expect(result.message.content).toContain("<context_imports>");
-			expect(result.message.content).toContain("# Planning Capability");
-			expect(result.message.content).toContain("# Engineering patterns");
-			expect(result.message.content).toContain("# Handoff Contract");
-			expect(result.message.details.sources.map((source) => source.ref)).toEqual(
-				expect.arrayContaining([
-					"references/capabilities/planning.md",
-					"references/patterns.md",
-					"references/capabilities/handoff.md",
-				]),
-			);
+			expect(result.message.content).not.toContain("<context_imports>");
+			expect(result.message.details.sources.some((source) => source.kind === "context_import")).toBeFalse();
 			expect(result.message.content).not.toContain("# codeflow");
 			expect(result.message.content).not.toContain("scripts/doctor.sh");
 		} finally {

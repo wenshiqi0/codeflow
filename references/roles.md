@@ -1,16 +1,19 @@
 # Roles
 
-Each role is a Markdown file in `runtime/agents/<role>.md`. Frontmatter binds the model and delegation metadata; the body describes capability.
+Codeflow separates machine policy from model instructions:
+
+- `runtime/roles.json` is the only role registry. It binds models, prompts, tools, project-rule context, delegation permission, internal visibility, and goal lanes.
+- `references/capabilities/*.md` contains the exact system prompt for each role. Runtime has no parallel agent Markdown layer.
 
 ## Flow roles
 
 | Role | Capability | Evidence owned elsewhere |
 | --- | --- | --- |
-| `planner` | Requirement framing, immutable goals, capability composition, root closure | Product/test authorship and independent execution belong to specialists |
-| `architect` | Direction, reversibility, boundaries, dependencies, fitness functions | Scaffold application and implementation belong to coding work |
-| `coder` | Technical surface, developer tests, implementation, diagnosis, refactoring, performance | Business assertions belong to `tester`; execution evidence belongs to `verify` |
-| `tester` | Business cases, executable business tests, assertion intent, behavioral review | Developer implementation belongs to `coder`; execution evidence belongs to `verify` |
-| `verify` | Fresh-process command execution, failure classification, independent evidence | Product/test authorship belongs to their owners |
+| `planner` | Behavior-level goals, specialist ownership, concise handoffs, root closure | Product, technical, architecture, and execution detail belong to specialists |
+| `architect` | Direction, reversibility, boundaries, dependencies, fitness functions | Implementation and goal-lane evidence belong downstream |
+| `coder` | Technical discovery, developer tests, implementation, diagnosis, evolution | Business assertions belong to `tester`; execution evidence belongs to `verify` |
+| `tester` | Product contracts/SSOT, business cases, executable business tests, assertion intent | Technical implementation belongs to `coder`; execution evidence belongs to `verify` |
+| `verify` | Fresh-process command execution, failure classification, independent evidence | Product and test authorship belong to their owners |
 
 ## Support roles
 
@@ -18,37 +21,31 @@ Each role is a Markdown file in `runtime/agents/<role>.md`. Frontmatter binds th
 | --- | --- |
 | `supervisor` | Named deterministic checks such as artifact presence, checksums, and patch gates |
 | `title-compressor` | One-line registry titles |
-| `zipper` | Internal semantic compression of oversized bash output |
+| `zipper` | Internal semantic compression of oversized Bash output |
 
-Support roles remain outside goal lanes. `zipper` is invoked by the bash-compressor extension and project work stays with flow roles.
+Support roles remain outside goal lanes. `zipper` is marked `internal` and cannot receive a project handoff.
 
-## Frontmatter
+## Registry schema
 
-Exactly six keys are allowed:
+Each entry in `runtime/roles.json` supports these fields:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `description` | yes | One-line capability |
 | `model` | yes | `<provider>/<model>` |
-| `tools` | no | Comma-separated tool allowlist; absent means Pi defaults |
-| `delegates` | no | Exact `true` grants delegation tools at depth 0 |
-| `needs_project_rules` | no | `false`, `shared`, or absent for full rules |
-| `goal_lane` | no | `test`, `code`, or `verify`; binds a worker to one lane session |
+| `prompt` | yes | Markdown below `references/` |
+| `tools` | no | Pi tool allowlist; absent means Pi defaults |
+| `delegates` | no | Exact boolean `true` grants depth-0 delegation tools |
+| `needs_project_rules` | no | `false`, `shared`, or `full` (default) |
+| `goal_lane` | no | `test`, `code`, or `verify` |
+| `internal` | no | Hides a support role from project handoffs |
 
-Worker behavior is governed by capability semantics and repository style rather than deterministic filesystem gates. Delegation tools are registered only for depth-0 planner.
+The loader rejects unknown fields, malformed bindings, prompt paths outside `references/`, and invalid lane/context values. Delegation tools remain depth-0 only.
 
-`architect` intentionally has no `goal_lane`. Architecture decisions are auxiliary handoffs: delegate them without `goal_id` or `lane`, then pass the decision to the appropriate test/code/verify owner. Only those three lanes participate in a goal join.
+`architect` intentionally has no `goal_lane`. Delegate it without `goal_id` or `lane`; its decision may guide the three fixed goal-lane owners but never substitutes for their PASS evidence.
 
-## Context imports
+## Prompt context
 
-A role prompt declares reference dependencies with an HTML comment directive:
+The configured prompt is passed directly as the Pi system prompt. The context extension injects the role's allowed project/shared rules and the run fact ledger before work starts. A prompt may still declare a bounded `codeflow:import` below `references/`, but the production prompts are self-contained so there is no duplicated role body to merge at runtime.
 
-```markdown
-<!-- codeflow:import path="references/capabilities/planning.md" -->
-```
-
-The context extension resolves the directive before the first provider request. Imports may recurse, are de-duplicated, and remain restricted to Markdown below Codeflow `references/`. Imported documents appear in the visible `codeflow:context` manifest and body; the role does not spend tool calls locating runtime files.
-
-## Model bindings
-
-Edit the `model:` line to switch providers. Prompts refer to roles, never model names.
+To switch a provider or model, edit only the role's `model` in `runtime/roles.json`. Prompt text refers to capabilities, never model names.

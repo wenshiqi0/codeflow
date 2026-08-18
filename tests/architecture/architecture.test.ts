@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadContextImports } from "../../runtime/extensions/codeflow-context/imports";
+import { listRoles, resolveRole } from "../../runtime/lib/roles";
 
 const repo = path.resolve(import.meta.dir, "../..");
 
@@ -15,14 +16,16 @@ function exists(relative: string): boolean {
 
 describe("runtime architecture boundaries", () => {
 	test("role references are injected through the context import graph", () => {
-		const agents = path.join(repo, "runtime/agents");
-		for (const name of fs.readdirSync(agents).filter((file) => file.endsWith(".md")).sort()) {
-			const prompt = fs.readFileSync(path.join(agents, name), "utf8");
+		const registry = path.join(repo, "runtime/roles.json");
+		for (const name of listRoles(registry)) {
+			const prompt = resolveRole(registry, name)?.systemPrompt ?? "";
 			loadContextImports(prompt, path.join(repo, "runtime"));
+			expect(prompt).not.toContain("$PI_CODING_AGENT_DIR/../references");
 		}
-		for (const relative of ["runtime/AGENTS.md", ...fs.readdirSync(agents).map((file) => `runtime/agents/${file}`)]) {
-			expect(read(relative)).not.toContain("$PI_CODING_AGENT_DIR/../references");
-		}
+		expect(read("runtime/AGENTS.md")).not.toContain("$PI_CODING_AGENT_DIR/../references");
+		expect(fs.existsSync(path.join(repo, "runtime/agents"))
+			? fs.readdirSync(path.join(repo, "runtime/agents")).filter((file) => file.endsWith(".md"))
+			: []).toEqual([]);
 	});
 
 	test("roles receive a direct read-only runtime locator", () => {
@@ -44,11 +47,14 @@ describe("runtime architecture boundaries", () => {
 	test("internal capability prompts are references rather than discoverable skills", () => {
 		expect(exists("runtime/skills")).toBe(false);
 		const capabilities = [
+			"architecture.md",
 			"planning.md",
 			"testing.md",
 			"implementation.md",
 			"verification.md",
-			"handoff.md",
+			"supervision.md",
+			"title-compression.md",
+			"output-compression.md",
 		];
 		for (const name of capabilities) {
 			const file = read(path.join("references/capabilities", name));
@@ -121,7 +127,7 @@ describe("runtime architecture boundaries", () => {
 		const doctor = read("scripts/doctor.sh");
 		expect(doctor).toContain("models.json");
 		expect(doctor).toContain("provider-profiles.json");
-		expect(doctor).toContain("runtime/agents");
+		expect(doctor).toContain("roles.json");
 		expect(doctor).not.toContain("test-writer");
 		expect(doctor).not.toContain("test-runner");
 		expect(doctor).not.toContain("command,");

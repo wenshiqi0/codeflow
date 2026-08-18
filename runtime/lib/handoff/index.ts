@@ -21,6 +21,7 @@ import * as path from "node:path";
 import { appendFacts, FactError, ledgerPath, type FactRecord } from "../facts";
 import { deliverEvent, MAX_SUBJECT_CHARS, type DeliveredEvent } from "../events";
 import { nowIso, readJson, RunPaths, slug, writeJsonAtomic } from "../paths";
+import { assertResumeStopped, ResumeError } from "../resume";
 import { nextSeq } from "../seq";
 
 export const SCHEMA_VERSION = 2;
@@ -814,7 +815,7 @@ export function runStart(
 	pid: number,
 	requirement = "",
 ): { run_id: string; runner: string } {
-	const runner = {
+	const runner: Record<string, unknown> = {
 		schema_version: SCHEMA_VERSION,
 		run_id: paths.runId,
 		role,
@@ -828,6 +829,64 @@ export function runStart(
 	writeJsonAtomic(file, runner);
 	emitRunEvent(paths, "run_started", "STARTED", { ref: "runner.json", role });
 	return { run_id: paths.runId, runner: file };
+}
+
+/** Start another depth-0 attempt inside an existing fully stopped run. */
+export function runResume(
+	paths: RunPaths,
+	role: string,
+	pid: number,
+): { run_id: string; runner: string; resume_count: number } {
+	const attempt = assertResumeStopped(paths);
+	const file = path.join(paths.runDir, "runner.json");
+	const previous = readJson<Record<string, unknown>>(file);
+	const resumedAt = nowIso();
+	const resumeCount =
+		typeof previous.resume_count === "number" ? previous.resume_count + 1 : 1;
+	const runner: Record<string, unknown> = {
+		...previous,
+		role,
+		pid,
+		started_at: resumedAt,
+		resumed_at: resumedAt,
+		resume_count: resumeCount,
+	};
+	delete runner.child_pid;
+	delete runner.pgid;
+
+	// The previous attempt's start sequence is immutable, so an exclusive file
+	// is an atomic, permanent claim on exactly that attempt. A second process
+	// cannot pass the lifecycle check and race this one into another root
+	// planner; a later completed attempt has a different start sequence.
+	const claims = path.join(paths.runDir, ".resume-claims");
+	const claim = path.join(claims, String(attempt.startSeq));
+	fs.mkdirSync(claims, { recursive: true });
+	try {
+		fs.writeFileSync(
+			claim,
+			JSON.stringify({
+				schema_version: SCHEMA_VERSION,
+				run_id: paths.runId,
+				start_seq: attempt.startSeq,
+				pid,
+				claimed_at: nowIso(),
+			}) + "\n",
+			{ encoding: "utf-8", flag: "wx" },
+		);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+			throw new ResumeError(`resume already claimed for the latest attempt: ${paths.runId}`);
+		}
+		throw error;
+	}
+
+	writeJsonAtomic(file, runner);
+	emitRunEvent(paths, "run_resumed", "STARTED", {
+		ref: "runner.json",
+		role,
+		summary: `run resumed (attempt ${resumeCount + 1})`,
+	});
+	return { run_id: paths.runId, runner: file, resume_count: resumeCount };
 }
 
 /**

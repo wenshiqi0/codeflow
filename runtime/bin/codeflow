@@ -6,7 +6,7 @@
 # project, under .codeflow/runs/. That is why RUNTIME_DIR is resolved relative
 # to this file while the working directory becomes the target repository root.
 #
-# This binary speaks exec/ls/sub/memo/audit/stop and nothing else. The
+# This binary speaks exec/resume/ls/sub/memo/audit/stop and nothing else. The
 # mechanical verbs a role needs (handoff, facts, check, roster, delegate) live
 # in `code-agent`, which is not on a user PATH. Two vocabularies with no overlap
 # mean the ring boundary is enforced by which binary is reachable, not by a
@@ -26,6 +26,7 @@ usage() {
 usage: codeflow <command> [options]
 
   exec "<requirement>"              start a run and follow it
+  resume <run-id>                   resume a fully stopped run with the same run id
   ls                                list runs: id, status, duration, requirement
   sub <run-id> [--since <seq>]      subscribe to a run's event stream
   goals <run-id>                   show derived goal joins
@@ -88,9 +89,10 @@ fi
 [[ -n "$INHERITED_MEROUTER_API_KEY" ]] && export MEROUTER_API_KEY="$INHERITED_MEROUTER_API_KEY"
 
 case "${1:-}" in
-  exec)
+  exec|resume)
+    COMMAND="$1"
     shift
-    exec bun "$CLI_DIR/run.ts" exec "$@"
+    exec bun "$CLI_DIR/run.ts" "$COMMAND" "$@"
     ;;
   *)
     if [[ -n "${1:-}" ]]; then

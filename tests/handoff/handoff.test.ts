@@ -21,6 +21,7 @@ import {
 	openHandoff,
 	parseGoal,
 	parseScope,
+	runResume,
 	runnerExited,
 	runStart,
 	startHandoff,
@@ -830,6 +831,29 @@ describe("run lifecycle", () => {
 	test("run events also reach the shared spool", () => {
 		runStart(paths, "planner", 1234);
 		expect(fs.readdirSync(paths.spool).some((name) => name.includes("run_started"))).toBe(true);
+	});
+
+	test("run-resume preserves the requirement and rotates root runner metadata", () => {
+		runStart(paths, "planner", 1234, "original requirement");
+		const root = open();
+		finishHandoff(paths, {
+			handoffId: root.handoff_id,
+			status: "BLOCKED",
+			summary: "external correction required",
+			blockedReasons: ["PROVIDER_FAILURE"],
+		});
+		runnerExited(paths, 1234, "planner", 0);
+		const resumed = runResume(paths, "planner", 5678);
+		const runner = readJson<Record<string, unknown>>(path.join(paths.runDir, "runner.json"));
+
+		expect(resumed).toMatchObject({ run_id: RUN_ID, resume_count: 1 });
+		expect(runner).toMatchObject({
+			run_id: RUN_ID,
+			requirement: "original requirement",
+			pid: 5678,
+			resume_count: 1,
+		});
+		expect(eventNames().some((name) => name.includes("run_resumed--STARTED"))).toBe(true);
 	});
 
 	test("a depth-0 exit is published", () => {

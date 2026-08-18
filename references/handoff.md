@@ -19,7 +19,7 @@ open -> running -> done(PASS|FAIL)
 
 Terminal states are immutable. Re-finishing a terminal handoff is rejected as an illegal transition rather than overwriting the record.
 
-`codeflow exec` opens a depth-0 root handoff for its planner. If the depth-0 runner exits while that handoff is still active, the mechanical layer closes every still-active handoff as `BLOCKED` with `DELEGATION_ARTIFACT_MISSING`, emits the terminal business event, and only then emits `runner_exited`. A prose final message is never promoted to success.
+`codeflow exec` opens a depth-0 root handoff for its planner. `codeflow resume <run-id>` preserves that run's immutable history and opens the next depth-0 planner handoff only after the latest attempt has emitted `run_finished` followed by `runner_exited`; terminal handoffs are never reopened. If the depth-0 runner exits while its handoff is still active, the mechanical layer closes every still-active handoff as `BLOCKED` with `DELEGATION_ARTIFACT_MISSING`, emits the terminal business event, and only then emits `runner_exited`. A prose final message is never promoted to success.
 
 ## Commands
 
@@ -102,7 +102,7 @@ Delivered by writing to `tmp/` then renaming into `events/`, so a reader never s
 <seq>--<subject>--<kind>--<status>.json
 ```
 
-Kinds: `run_started`, `run_finished`, `handoff_opened`, `handoff_finished`, `artifact_written`, `runner_exited`.
+Kinds: `run_started`, `run_resumed`, `run_finished`, `handoff_opened`, `handoff_finished`, `artifact_written`, `runner_exited`.
 
 The event body is also a mechanical contract. `kind`, `status`, and every value in `reasons` must come from closed enums. `summary` is normalized to one bounded line. If it is absent, or the handoff ends in an error/truncation, the summary is built from the original log's first and last 100 characters, flattened to one line with obvious credentials redacted. Besides that bounded summary, identifiers, and pointers, no payload fields are allowed. `codeflow sub` exposes only filename metadata plus `reasons` and `summary`. A terminal provider signal is published as `handoff_finished BLOCKED` as soon as the delegation layer observes it, without waiting for the child process to drain and close.
 
@@ -119,6 +119,7 @@ Sequence numbers are allocated under an exclusive lock, so `--since` is a reliab
     ├── events/                  the outer loop's only listening surface
     ├── tmp/                     staging; rename into events/ delivers
     ├── liveness/                watchdog heartbeats
+    ├── .resume-claims/          one atomic claim per resumed attempt
     ├── facts.jsonl              this run's shared fact ledger
     └── runner.json              depth-0 pid and startup info
 ```

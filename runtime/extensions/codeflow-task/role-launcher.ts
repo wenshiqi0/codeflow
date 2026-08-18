@@ -6,8 +6,13 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { eventLogExcerpt } from "../../lib/events";
+import {
+	listRoles,
+	resolveRole as resolveConfiguredRole,
+	RoleError,
+	type ResolvedRole,
+} from "../../lib/roles";
 import { immediateFailureReasons, STREAM_IDLE_ABORT_MARKER } from "./handoff-gate";
 import { finishBlocked } from "./registry";
 import type { GoalTaskRef } from "./registry";
@@ -15,7 +20,7 @@ import { currentRun, type RoleRunResult } from "./shared";
 
 // runtime/extensions/codeflow-task/role-launcher.ts -> runtime
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const AGENTS_DIR = path.join(RUNTIME_DIR, "agents");
+const ROLES_FILE = path.join(RUNTIME_DIR, "roles.json");
 const PROVIDER_PROFILES_EXTENSION = path.join(RUNTIME_DIR, "extensions", "provider-profiles", "index.ts");
 const WATCHDOG_EXTENSION = path.join(RUNTIME_DIR, "extensions", "agent-watchdog", "index.ts");
 const CONTEXT_EXTENSION = path.join(RUNTIME_DIR, "extensions", "codeflow-context", "index.ts");
@@ -23,7 +28,6 @@ const BASH_COMPRESSOR_EXTENSION = path.join(RUNTIME_DIR, "extensions", "bash-com
 const USAGE_LEDGER_EXTENSION = path.join(RUNTIME_DIR, "extensions", "usage-ledger", "index.ts");
 const HOST_GUARD_EXTENSION = path.join(RUNTIME_DIR, "extensions", "host-guard", "index.ts");
 const ROLE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
-const INTERNAL_ROLES = new Set(["zipper"]);
 
 export interface TaskDetails {
 	agent: string;
@@ -37,21 +41,10 @@ export interface TaskDetails {
 	sessionId?: string;
 }
 
-interface ResolvedRole {
-	provider: string;
-	model: string;
-	tools: string[];
-	body: string;
-}
-
 function listAvailableRoles(): string {
-	if (!fs.existsSync(AGENTS_DIR)) return "none";
-	const roles = fs
-		.readdirSync(AGENTS_DIR)
-		.filter((name) => name.endsWith(".md"))
-		.map((name) => name.slice(0, -3))
-		.filter((name) => !INTERNAL_ROLES.has(name))
-		.sort();
+	const roles = listRoles(ROLES_FILE).filter(
+		(role) => !resolveConfiguredRole(ROLES_FILE, role)?.internal,
+	);
 	return roles.length > 0 ? roles.join(", ") : "none";
 }
 
@@ -61,12 +54,12 @@ export function roleMayDelegate(role: string | undefined, depth: number): boolea
 	if (!role || depth !== 0 || !ROLE_NAME_PATTERN.test(role)) return false;
 	const cached = delegatesCache.get(role);
 	if (cached !== undefined) return cached;
-	const agentPath = path.join(AGENTS_DIR, `${role}.md`);
-	if (!fs.existsSync(agentPath)) return false;
-	const { frontmatter } = parseFrontmatter<Record<string, unknown>>(
-		fs.readFileSync(agentPath, "utf-8"),
-	);
-	const result = frontmatter.delegates === true;
+	let result = false;
+	try {
+		result = resolveConfiguredRole(ROLES_FILE, role)?.delegates === true;
+	} catch {
+		return false;
+	}
 	delegatesCache.set(role, result);
 	return result;
 }
@@ -91,42 +84,31 @@ function resolveRole(agent: string): { ok: true; role: string; resolved: Resolve
 		return {
 			ok: false,
 			role,
-			error: `Invalid role name: "${agent}". Roles are discovered by filename in .codeflow/agents/.`,
+			error: `Invalid role name: "${agent}". Roles are declared in runtime/roles.json.`,
 		};
 	}
-	if (INTERNAL_ROLES.has(role)) {
+
+	let resolved: ResolvedRole | null;
+	try {
+		resolved = resolveConfiguredRole(ROLES_FILE, role);
+	} catch (error) {
+		return {
+			ok: false,
+			role,
+			error: error instanceof RoleError ? error.message : String(error),
+		};
+	}
+	if (!resolved) {
+		return { ok: false, role, error: `Unknown role: "${role}". Available roles: ${listAvailableRoles()}.` };
+	}
+	if (resolved.internal) {
 		return {
 			ok: false,
 			role,
 			error: `Role "${role}" is internal support and cannot receive project handoffs.`,
 		};
 	}
-
-	const agentPath = path.join(AGENTS_DIR, `${role}.md`);
-	if (!fs.existsSync(agentPath)) {
-		return { ok: false, role, error: `Unknown role: "${role}". Available roles: ${listAvailableRoles()}.` };
-	}
-
-	const { frontmatter, body } = parseFrontmatter<Record<string, unknown>>(
-		fs.readFileSync(agentPath, "utf-8"),
-	);
-
-	const modelValue = String(frontmatter.model ?? "");
-	const [provider, model] = modelValue.split("/");
-	if (!provider || !model) {
-		return {
-			ok: false,
-			role,
-			error: `Role "${role}" is invalid: frontmatter model must be "<provider>/<model>", got "${modelValue}".`,
-		};
-	}
-
-	const tools = String(frontmatter.tools ?? "")
-		.split(",")
-		.map((tool) => tool.trim())
-		.filter(Boolean);
-
-	return { ok: true, role, resolved: { provider, model, tools, body } };
+	return { ok: true, role, resolved };
 }
 
 /**
@@ -158,7 +140,7 @@ export async function runRoleChild(
 		"--model",
 		resolved.model,
 		"--system-prompt",
-		resolved.body,
+		resolved.systemPrompt,
 	];
 	if (fs.existsSync(PROVIDER_PROFILES_EXTENSION)) {
 		args.push("--extension", PROVIDER_PROFILES_EXTENSION);

@@ -1,137 +1,175 @@
 /**
- * Role resolution: agent Markdown to a concrete pi invocation.
+ * Role resolution from the structured runtime registry.
  *
- * The Markdown file *is* the role. Its frontmatter binds the model and
- * permissions, its body is the system prompt. Keeping both in one file means a
- * role's behaviour is explained by one artifact rather than split between a
- * prompt and a config table that can disagree with it.
- *
- * Frontmatter parsing is deliberately shallow — top-level `key: value` only.
- * Nested structure would invite configuration that the prompt does not
- * mention, which is exactly what makes agent behaviour hard to reason about.
+ * `runtime/roles.json` owns machine policy (model, tools, lanes). Role behavior
+ * lives in one prompt below `references/capabilities/`. Keeping those concerns
+ * separate removes the old duplicate agent Markdown layer while preserving one
+ * auditable source for each kind of truth.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-/** Exactly the keys a role may declare. Anything else is rejected. */
 export const ALLOWED_KEYS = new Set([
 	"description",
 	"model",
+	"prompt",
 	"tools",
 	"delegates",
 	"needs_project_rules",
 	"goal_lane",
+	"internal",
 ]);
 
-export interface Frontmatter {
-	description?: string;
-	model?: string;
-	tools?: string;
-	delegates?: string;
-	needs_project_rules?: string;
-	goal_lane?: string;
+export interface RoleDefinition {
+	description: string;
+	model: string;
+	prompt: string;
+	tools?: string[];
+	delegates?: boolean;
+	needs_project_rules?: false | "shared" | "full";
+	goal_lane?: "test" | "code" | "verify";
+	internal?: boolean;
+}
+
+interface RoleRegistry {
+	roles: Record<string, RoleDefinition>;
 }
 
 export interface ResolvedRole {
 	role: string;
+	description: string;
 	provider: string;
 	model: string;
 	systemPrompt: string;
+	promptPath: string;
 	tools: string[];
 	delegates: boolean;
-	goalLane?: string;
+	needsProjectRules: false | "shared" | "full";
+	goalLane?: "test" | "code" | "verify";
+	internal: boolean;
 }
 
 export class RoleError extends Error {}
 
-/** Parse top-level `key: value` pairs from a Markdown frontmatter block. */
-export function parseFrontmatter(text: string): Frontmatter {
-	const fields: Record<string, string> = {};
-	let opened = false;
-	for (const line of text.split("\n")) {
-		if (line.trim() === "---") {
-			if (opened) break;
-			opened = true;
-			continue;
-		}
-		if (!opened) continue;
-		if (line.includes(":") && !/^[ \t]/.test(line)) {
-			const index = line.indexOf(":");
-			fields[line.slice(0, index).trim()] = line.slice(index + 1).trim();
-		}
-	}
-	return fields as Frontmatter;
+const ROLE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+function fail(message: string): never {
+	throw new RoleError(message);
 }
 
-export function agentFile(agentsDir: string, role: string): string {
-	return path.join(agentsDir, `${role}.md`);
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function listRoles(agentsDir: string): string[] {
+function loadRegistry(registryFile: string): RoleRegistry {
+	let parsed: unknown;
 	try {
-		return fs
-			.readdirSync(agentsDir)
-			.filter((name) => name.endsWith(".md"))
-			.map((name) => name.slice(0, -3))
-			.sort();
-	} catch {
-		return [];
+		parsed = JSON.parse(fs.readFileSync(registryFile, "utf-8"));
+	} catch (error) {
+		fail(`cannot read role registry ${registryFile}: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	if (!isRecord(parsed) || !isRecord(parsed.roles)) {
+		fail(`role registry ${registryFile} must contain a roles object`);
+	}
+
+	const roles: Record<string, RoleDefinition> = {};
+	for (const [role, value] of Object.entries(parsed.roles)) {
+		if (!ROLE_NAME_PATTERN.test(role)) fail(`invalid role name in registry: ${role}`);
+		if (!isRecord(value)) fail(`role ${role}: configuration must be an object`);
+		for (const key of Object.keys(value)) {
+			if (!ALLOWED_KEYS.has(key)) fail(`role ${role}: unknown configuration key ${key}`);
+		}
+		if (typeof value.description !== "string" || value.description.trim() === "") {
+			fail(`role ${role}: description must be a non-empty string`);
+		}
+		if (typeof value.model !== "string" || value.model.trim() === "") {
+			fail(`role ${role}: model must be a non-empty string`);
+		}
+		if (typeof value.prompt !== "string" || value.prompt.trim() === "") {
+			fail(`role ${role}: prompt must be a non-empty string`);
+		}
+		if (value.tools !== undefined && (!Array.isArray(value.tools) || value.tools.some((tool) => typeof tool !== "string" || tool.trim() === ""))) {
+			fail(`role ${role}: tools must be an array of non-empty strings`);
+		}
+		if (value.delegates !== undefined && typeof value.delegates !== "boolean") {
+			fail(`role ${role}: delegates must be boolean`);
+		}
+		if (value.internal !== undefined && typeof value.internal !== "boolean") {
+			fail(`role ${role}: internal must be boolean`);
+		}
+		if (value.needs_project_rules !== undefined && value.needs_project_rules !== false && value.needs_project_rules !== "shared" && value.needs_project_rules !== "full") {
+			fail(`role ${role}: needs_project_rules must be false, shared, or full`);
+		}
+		if (value.goal_lane !== undefined && !/^(?:test|code|verify)$/.test(String(value.goal_lane))) {
+			fail(`role ${role}: goal_lane must be test, code, or verify`);
+		}
+		roles[role] = value as unknown as RoleDefinition;
+	}
+	return { roles };
+}
+
+export function listRoles(registryFile: string): string[] {
+	try {
+		return Object.keys(loadRegistry(registryFile).roles).sort();
+	} catch (error) {
+		if (!fs.existsSync(registryFile)) return [];
+		throw error;
 	}
 }
 
-export function readFrontmatter(agentsDir: string, role: string): Frontmatter | null {
-	const file = agentFile(agentsDir, role);
-	if (!fs.existsSync(file)) return null;
-	return parseFrontmatter(fs.readFileSync(file, "utf-8"));
+export function readRoleDefinition(registryFile: string, role: string): RoleDefinition | null {
+	return loadRegistry(registryFile).roles[role] ?? null;
 }
 
-/**
- * Resolve a role to the provider, model, prompt, and tool allowlist pi needs.
- *
- * Returns null for an unknown role so the caller can report it as such rather
- * than surfacing a filesystem error.
- */
-export function resolveRole(agentsDir: string, role: string): ResolvedRole | null {
-	const frontmatter = readFrontmatter(agentsDir, role);
-	if (frontmatter === null) return null;
-
-	const binding = frontmatter.model ?? "";
-	if (!binding.includes("/")) {
-		throw new RoleError(`agent ${role}: frontmatter model must be '<provider>/<model>'`);
+function resolvePrompt(registryFile: string, role: string, ref: string): string {
+	const runtimeDir = path.dirname(registryFile);
+	const packageRoot = path.dirname(runtimeDir);
+	const referencesRoot = path.resolve(packageRoot, "references");
+	const promptPath = path.resolve(packageRoot, ref);
+	const relative = path.relative(referencesRoot, promptPath);
+	if (!promptPath.endsWith(".md") || relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
+		fail(`role ${role}: prompt must be Markdown below references/: ${ref}`);
 	}
-	const separator = binding.indexOf("/");
-	if (
-		frontmatter.goal_lane &&
-		!/^(?:test|code|verify)$/.test(frontmatter.goal_lane)
-	) {
-		throw new RoleError(
-			`agent ${role}: goal_lane must be test, code, or verify`,
-		);
+	try {
+		const realRoot = fs.realpathSync(referencesRoot);
+		const realPrompt = fs.realpathSync(promptPath);
+		const realRelative = path.relative(realRoot, realPrompt);
+		if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+			fail(`role ${role}: prompt escapes references/: ${ref}`);
+		}
+		return realPrompt;
+	} catch (error) {
+		if (error instanceof RoleError) throw error;
+		fail(`role ${role}: prompt is unreadable: ${ref}`);
 	}
+}
 
+export function resolveRole(registryFile: string, role: string): ResolvedRole | null {
+	const definition = readRoleDefinition(registryFile, role);
+	if (definition === null) return null;
+
+	const separator = definition.model.indexOf("/");
+	if (separator <= 0 || separator === definition.model.length - 1) {
+		fail(`role ${role}: model must be '<provider>/<model>'`);
+	}
+	const promptPath = resolvePrompt(registryFile, role, definition.prompt);
 	return {
 		role,
-		provider: binding.slice(0, separator),
-		model: binding.slice(separator + 1),
-		systemPrompt: agentFile(agentsDir, role),
-		tools: (frontmatter.tools ?? "")
-			.split(",")
-			.map((token) => token.trim())
-			.filter(Boolean),
-		// Strict equality: a role delegates only when it says so exactly.
-		delegates: frontmatter.delegates === "true",
-		goalLane: frontmatter.goal_lane,
+		description: definition.description,
+		provider: definition.model.slice(0, separator),
+		model: definition.model.slice(separator + 1),
+		systemPrompt: fs.readFileSync(promptPath, "utf-8"),
+		promptPath,
+		tools: (definition.tools ?? []).map((tool) => tool.trim()),
+		delegates: definition.delegates === true,
+		needsProjectRules: definition.needs_project_rules ?? "full",
+		goalLane: definition.goal_lane,
+		internal: definition.internal === true,
 	};
 }
 
-/**
- * Build the pi command line.
- *
- * Extensions load in a fixed order — delegation, context, liveness — and
- * `--no-context-files` means nothing is picked up implicitly. Whatever steers
- * a role is injected visibly by the context extension instead.
- */
+/** Build the explicit Pi invocation for a resolved role. */
 export function buildArgv(
 	resolved: ResolvedRole,
 	prompt: string,
@@ -146,15 +184,9 @@ export function buildArgv(
 		"--model", resolved.model,
 		"--system-prompt", resolved.systemPrompt,
 	];
-	for (const extension of extensions) {
-		argv.push("--extension", extension);
-	}
+	for (const extension of extensions) argv.push("--extension", extension);
 	argv.push("--no-context-files");
-	if (resolved.tools.length > 0) {
-		argv.push("--tools", resolved.tools.join(","));
-	}
-	if (session) {
-		argv.push("--session-id", session.id, "--session-dir", session.dir);
-	}
+	if (resolved.tools.length > 0) argv.push("--tools", resolved.tools.join(","));
+	if (session) argv.push("--session-id", session.id, "--session-dir", session.dir);
 	return argv;
 }

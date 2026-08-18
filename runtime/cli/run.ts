@@ -18,13 +18,21 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
-import { finishHandoff, openHandoff, runStart, runnerChildStarted, runnerExited } from "../lib/handoff";
+import {
+	finishHandoff,
+	openHandoff,
+	runResume,
+	runStart,
+	runnerChildStarted,
+	runnerExited,
+} from "../lib/handoff";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../lib/paths";
-import { buildArgv, listRoles, readFrontmatter, resolveRole, RoleError } from "../lib/roles";
+import { loadResumeSource, ResumeError, type ResumeSource } from "../lib/resume";
+import { buildArgv, listRoles, readRoleDefinition, resolveRole, RoleError } from "../lib/roles";
 import { renderUsageSummary, writeUsageSummary } from "../lib/usage";
 
 const RUNTIME_DIR = path.resolve(import.meta.dir, "..");
-const AGENTS_DIR = path.join(RUNTIME_DIR, "agents");
+const ROLES_FILE = path.join(RUNTIME_DIR, "roles.json");
 const VERSION = "0.1.0";
 const ROOT_OUTPUT_DIAGNOSTIC_LIMIT = 8_000;
 const EXTENSIONS = [
@@ -144,6 +152,10 @@ interface ParsedRun {
 	handoffFile?: string;
 }
 
+interface RunOptions {
+	resume?: ResumeSource;
+}
+
 function parseDelegate(argv: string[]): ParsedRun {
 	let role: string | undefined;
 	let handoffFile: string | undefined;
@@ -167,19 +179,19 @@ function parseDelegate(argv: string[]): ParsedRun {
 	return { role, prompt: prompt.join(" "), printOnly, handoffFile };
 }
 
-function parseExec(argv: string[]): ParsedRun | { error: string } {
+function parseRoot(argv: string[], command: "exec" | "resume"): ParsedRun | { error: string } {
 	const prompt: string[] = [];
 	for (const token of argv) {
 		if (token === "--role" || token === "--agent") {
-			return { error: `${token} is a delegate-only role option; exec always starts the planner` };
+			return { error: `${token} is a delegate-only role option; ${command} always starts the planner` };
 		}
 		if (token === "--handoff-file") {
 			return { error: `${token} is delegate-only; handoff state belongs to code-agent delegate` };
 		}
 		if (token === "--print") {
-			return { error: "--print is delegate-only; exec starts the planner and follows the run" };
+			return { error: `--print is delegate-only; ${command} starts the planner and follows the run` };
 		}
-		if (token.startsWith("--")) return { error: `unknown exec option: ${token}` };
+		if (token.startsWith("--")) return { error: `unknown ${command} option: ${token}` };
 		prompt.push(token);
 	}
 	return { role: "planner", prompt: prompt.join(" "), printOnly: false, handoffFile: undefined };
@@ -192,14 +204,18 @@ function parseExec(argv: string[]): ParsedRun | { error: string } {
  * is the planner's job, not the caller's. `delegate` takes an explicit role
  * because that is precisely the decision the planner is making.
  */
-export async function run(argv: string[], entry: "exec" | "delegate" = "delegate"): Promise<number> {
-	const parsed = entry === "exec" ? parseExec(argv) : parseDelegate(argv);
+export async function run(
+	argv: string[],
+	entry: "exec" | "resume" | "delegate" = "delegate",
+	options: RunOptions = {},
+): Promise<number> {
+	const parsed = entry === "delegate" ? parseDelegate(argv) : parseRoot(argv, entry);
 	if ("error" in parsed) return fail(parsed.error, entry);
 	const args = parsed;
 
-	if (entry === "exec") {
+	if (entry !== "delegate") {
 		if (args.prompt.trim() === "") {
-			return fail("exec requires a requirement", "exec");
+			return fail(entry === "exec" ? "exec requires a requirement" : "resume requires a prompt", entry);
 		}
 		args.role ??= "planner";
 	}
@@ -207,7 +223,7 @@ export async function run(argv: string[], entry: "exec" | "delegate" = "delegate
 
 	let resolved;
 	try {
-		resolved = resolveRole(AGENTS_DIR, args.role);
+		resolved = resolveRole(ROLES_FILE, args.role);
 	} catch (error) {
 		if (error instanceof RoleError) return fail(error.message, entry);
 		throw error;
@@ -215,8 +231,8 @@ export async function run(argv: string[], entry: "exec" | "delegate" = "delegate
 	if (resolved === null) return fail(`unknown role: ${args.role}`, entry);
 
 	const inherited = process.env.CODEFLOW_RUN_ID;
-	const freshRun = inherited === undefined;
-	const runId = inherited ?? newRunId();
+	const freshRun = options.resume !== undefined || inherited === undefined;
+	const runId = options.resume?.runId ?? inherited ?? newRunId();
 	const runsDir = resolveRunsDir(process.env.CODEFLOW_RUNS_DIR);
 	let handoffId = process.env.CODEFLOW_HANDOFF_ID;
 
@@ -257,13 +273,16 @@ export async function run(argv: string[], entry: "exec" | "delegate" = "delegate
 	// The requirement is recorded with the run so `ls` can label it without
 	// reading anything from inside the execute loop.
 	if (freshRun) {
-		runStart(paths, args.role, process.pid, args.prompt);
-		const root = openRootHandoffForRun(paths, args.role, args.prompt);
+		const requirement = options.resume?.requirement ?? args.prompt;
+		if (options.resume) runResume(paths, args.role, process.pid);
+		else runStart(paths, args.role, process.pid, requirement);
+		const root = openRootHandoffForRun(paths, args.role, requirement);
 		handoffId = root.handoff_id;
 	}
 
 	console.error(
-		`codeflow run_id=${runId} run_dir=${paths.runDir} handoff_id=${handoffId ?? "-"}`,
+		`codeflow run_id=${runId} run_dir=${paths.runDir} handoff_id=${handoffId ?? "-"}` +
+			(options.resume ? " resumed=true" : ""),
 	);
 
 	let child: Bun.Subprocess | undefined;
@@ -291,7 +310,7 @@ export async function run(argv: string[], entry: "exec" | "delegate" = "delegate
 	}
 
 	fs.mkdirSync(paths.piSessions, { recursive: true });
-	const captureRootOutput = entry === "exec" && freshRun;
+	const captureRootOutput = (entry === "exec" || entry === "resume") && freshRun;
 	const rootObservation: RootOutputObservation = { stdoutTail: "", stderrTail: "" };
 	child = Bun.spawn(
 		buildArgv(resolved, args.prompt, EXTENSIONS, {
@@ -346,7 +365,7 @@ export async function run(argv: string[], entry: "exec" | "delegate" = "delegate
 			.trim()
 			.slice(-2_000);
 		console.error(
-			`codeflow exec: planner exited with code ${code}${tail ? `; diagnostic tail:\n${tail}` : ""}`,
+			`codeflow ${entry}: planner exited with code ${code}${tail ? `; diagnostic tail:\n${tail}` : ""}`,
 		);
 	}
 
@@ -372,20 +391,43 @@ export async function run(argv: string[], entry: "exec" | "delegate" = "delegate
 	return code;
 }
 
+async function resume(argv: string[]): Promise<number> {
+	if (argv.length === 0) return fail("resume requires a run id", "resume");
+	if (argv.length > 1) return fail(`unexpected argument: ${argv[1]}`, "resume");
+	if (argv[0].startsWith("--")) return fail(`unknown option: ${argv[0]}`, "resume");
+	if (process.env.CODEFLOW_RUN_ID) {
+		return fail("resume is an outer command and cannot run inside another Codeflow run", "resume");
+	}
+
+	const runsDir = resolveRunsDir(process.env.CODEFLOW_RUNS_DIR);
+	try {
+		const source = loadResumeSource(runsDir, argv[0]);
+		const prompt =
+			`Resume Codeflow run ${source.runId} after an external correction. ` +
+			"Continue its existing immutable goals and latest lane state; preserve completed evidence and do not recreate satisfied work.\n\n" +
+			`Original requirement:\n${source.requirement}`;
+		return await run([prompt], "resume", { resume: source });
+	} catch (error) {
+		if (error instanceof ResumeError) return fail(error.message, "resume");
+		throw error;
+	}
+}
+
 function debug(argv: string[]): number {
 	const [sub, name] = argv;
 	if (sub === "agent") {
 		if (!name) {
-			for (const role of listRoles(AGENTS_DIR)) console.log(role);
+			for (const role of listRoles(ROLES_FILE)) console.log(role);
 			return 0;
 		}
-		const frontmatter = readFrontmatter(AGENTS_DIR, name);
-		if (frontmatter === null) return fail(`unknown agent: ${name}`);
+		const definition = readRoleDefinition(ROLES_FILE, name);
+		if (definition === null) return fail(`unknown agent: ${name}`);
 		console.log(`agent: ${name}`);
-		console.log(`description: ${frontmatter.description ?? ""}`);
-		console.log(`model: ${frontmatter.model ?? ""}`);
-		if (frontmatter.tools) console.log(`tools: ${frontmatter.tools}`);
-		if (frontmatter.delegates) console.log(`delegates: ${frontmatter.delegates}`);
+		console.log(`description: ${definition.description}`);
+		console.log(`model: ${definition.model}`);
+		console.log(`prompt: ${definition.prompt}`);
+		if (definition.tools) console.log(`tools: ${definition.tools.join(",")}`);
+		if (definition.delegates) console.log(`delegates: ${definition.delegates}`);
 		return 0;
 	}
 	if (sub === "skill") {
@@ -407,6 +449,8 @@ export async function main(argv: string[]): Promise<number> {
 	switch (command) {
 		case "exec":
 			return await run(rest, "exec");
+		case "resume":
+			return await resume(rest);
 		case "delegate":
 			return await run(rest, "delegate");
 		case "debug":
@@ -415,7 +459,7 @@ export async function main(argv: string[]): Promise<number> {
 			console.log(VERSION);
 			return 0;
 		default:
-			return fail("usage: <exec|delegate|debug> ...");
+			return fail("usage: <exec|resume|delegate|debug> ...");
 	}
 }
 

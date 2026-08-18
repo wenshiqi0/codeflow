@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { readRoleDefinition, resolveRole } from "../../runtime/lib/roles";
 import {
 	DEFAULT_BASH_COMPRESS_THRESHOLD_BYTES,
 	buildZipperPrompt,
@@ -109,10 +110,11 @@ describe("bash result compression policy", () => {
 	});
 
 	test("the zipper support role is present and explicitly bounded", () => {
-		const role = fs.readFileSync(path.join(runtimeDir, "agents/zipper.md"), "utf8");
-		expect(role).toContain("model: deepseek/deepseek-v4-flash");
+		const registry = path.join(runtimeDir, "roles.json");
+		expect(readRoleDefinition(registry, "zipper")?.model).toBe("deepseek/deepseek-v4-flash");
+		const role = resolveRole(registry, "zipper")?.systemPrompt ?? "";
 		expect(role).toContain("untrusted command output");
-		expect(role).toContain("write `unclear`");
+		expect(role).toContain("`unclear`");
 	});
 
 	test("the extension is loaded with an isolated twenty-second zipper child", () => {

@@ -13,10 +13,11 @@ Codeflow is opt-in. Start or resume a run only after the user explicitly asks fo
 
 ## Your vocabulary
 
-Eight commands, all about a run as a whole:
+Nine commands, all about a run as a whole:
 
 ```bash
 codeflow exec "<requirement>"          # start a run
+codeflow resume <run-id>               # resume a fully stopped run in place
 codeflow ls                            # id, status, duration, requirement
 codeflow sub <run-id> [--since <seq>]  # subscribe to the event stream
 codeflow goals <run-id>               # show derived goal joins
@@ -40,6 +41,18 @@ Write the requirement as a requirement, not a plan. "Add a timeout option to the
 
 You do not choose a role. Which roles run, and in what order, is the planner's decision.
 
+## Resuming
+
+Only after a human explicitly asks, resume a fully stopped run:
+
+```bash
+codeflow resume <run-id>
+```
+
+Resume keeps the same run id, original requirement, root planner session, goal/lane sessions, fact ledger, and evidence history. Terminal handoffs remain immutable; Codeflow opens a new depth-0 planner handoff and emits `run_resumed STARTED`. The command refuses until the latest attempt has emitted both `run_finished` and `runner_exited`, so two root planners can never share one run.
+
+Resume is appropriate after the reported external or runtime cause has been corrected. It is never an automatic retry and never changes a failure into success.
+
 ## Observing
 
 Never poll. One blocking call:
@@ -50,7 +63,7 @@ codeflow sub <run-id> --since <seq> [--kind <k>,...] [--timeout 600]
 
 It suspends until events arrive or the timeout expires, then returns `{"run_id", "seq", "events"}`. Pass the returned `seq` back as `--since`; reconnecting never replays. Sequence, subject, kind, and status come from `<seq>--<subject>--<kind>--<status>.json`; `sub` additionally reads only the event body's whitelisted closed `reasons` enum and bounded one-line `summary`. If a summary is absent or a terminal error/truncation occurs, the summary uses the original log's first and last 100 characters, flattened to one line with obvious credentials redacted.
 
-Kinds: `run_started`, `run_finished`, `handoff_opened`, `handoff_finished`, `artifact_written`, `runner_exited`. Event bodies use closed `kind/status/reason` enums plus one bounded summary line; provider prose is never delivered. A provider failure is delivered as `handoff_finished BLOCKED` as soon as the delegation layer observes the terminal signal, rather than waiting for the child process to close.
+Kinds: `run_started`, `run_resumed`, `run_finished`, `handoff_opened`, `handoff_finished`, `artifact_written`, `runner_exited`. Event bodies use closed `kind/status/reason` enums plus one bounded summary line; provider prose is never delivered. A provider failure is delivered as `handoff_finished BLOCKED` as soon as the delegation layer observes the terminal signal, rather than waiting for the child process to close.
 
 The run id is required. `codeflow ls` is how you find it, including for runs you did not start.
 
@@ -86,7 +99,7 @@ Do not reconstruct the workflow by hand. Authoring handoff files, invoking `code
 
 ## Carrying work forward
 
-Roles share confirmed facts within a run through a ledger scoped to that run. It does not survive into the next one, and you do not read it.
+Roles share confirmed facts within a run through a ledger scoped to that run. Explicit resume attempts of the same run id keep it; a new run does not. You do not read it.
 
 What crosses runs is the planner's final report. When a follow-up run needs an earlier decision, a discovered convention, or a constraint, restate it in the new requirement text. That is your job as the outer loop: you are the only thing that persists across runs.
 
@@ -100,17 +113,13 @@ What crosses runs is the planner's final report. When a follow-up run needs an e
 - `PROVIDER_FAILURE` — timeout, auth, quota, or transport. An environment problem; verify credentials with `scripts/doctor.sh` before restarting.
 - `USER_CANCELLED` — expected; report and stop.
 
-Report the reason and what it implies. Do not restart the whole run to work around one blocked handoff.
+Report the reason and what it implies. Never resume automatically; use `resume` only after a human explicitly requests it and the reported cause has been corrected.
 
 ## Reference
 
 - `references/handoff.md` — handoff states, receipt schema, event and scope semantics
 - `references/goals.md` — immutable goal contracts, agent groups, and derived joins
-- `references/patterns.md` — industry-recognized engineering lenses and their applicability
-- `references/capabilities/` — internal role capability prompts loaded only inside Codeflow
-- `references/testing.md` — case design and executable business-test capability
-- `references/engineering-style.md` — implementation style and test separation preference
-- `references/architecture.md` — architecture decision lenses and defaults
+- `references/capabilities/` — the canonical, exact role prompts loaded only inside Codeflow
 - `references/usage.md` — per-turn and total model usage for benchmarks
 - `references/facts.md` — the shared fact ledger, and why you do not read it
-- `references/roles.md` — the roster, model bindings, and delegation rules
+- `references/roles.md` — the roster, `runtime/roles.json` schema, and delegation rules

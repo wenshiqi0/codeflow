@@ -4,11 +4,11 @@
  */
 
 import { spawn } from "node:child_process";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { type ExtensionAPI, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
+import { resolveRole } from "../../lib/roles";
 import { appendUsageRecord, usageRecordFromMessage } from "../../lib/usage";
 import {
 	type BashToolResultLike,
@@ -18,7 +18,7 @@ import {
 } from "./compressor";
 
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const ZIPPER_PATH = path.join(RUNTIME_DIR, "agents", "zipper.md");
+const ROLES_FILE = path.join(RUNTIME_DIR, "roles.json");
 const PI_PATH = path.join(RUNTIME_DIR, "bin", "pi");
 const PROVIDER_PROFILES_EXTENSION = path.join(RUNTIME_DIR, "extensions", "provider-profiles", "index.ts");
 export const ZIPPER_TIMEOUT_MS = 20_000;
@@ -33,16 +33,12 @@ let zipperRole: ZipperRole | undefined;
 
 function readZipperRole(): ZipperRole {
 	if (zipperRole) return zipperRole;
-	const parsed = parseFrontmatter<Record<string, unknown>>(fs.readFileSync(ZIPPER_PATH, "utf8"));
-	const binding = String(parsed.frontmatter.model ?? "");
-	const separator = binding.indexOf("/");
-	if (separator <= 0 || separator === binding.length - 1) {
-		throw new Error(`invalid zipper model binding: ${binding}`);
-	}
+	const resolved = resolveRole(ROLES_FILE, "zipper");
+	if (!resolved) throw new Error("zipper role is missing from runtime/roles.json");
 	zipperRole = {
-		provider: binding.slice(0, separator),
-		model: binding.slice(separator + 1),
-		systemPrompt: String(parsed.body),
+		provider: resolved.provider,
+		model: resolved.model,
+		systemPrompt: resolved.systemPrompt,
 	};
 	return zipperRole;
 }

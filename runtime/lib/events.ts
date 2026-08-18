@@ -21,6 +21,7 @@ import { nowIso, slug } from "./paths";
 
 export const EVENT_KINDS = [
 	"run_started",
+	"run_resumed",
 	"run_finished",
 	"handoff_opened",
 	"handoff_finished",

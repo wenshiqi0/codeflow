@@ -13,6 +13,7 @@
  *     ├── events/                  the outer loop's only listening surface
  *     ├── tmp/                     staging; rename into events/ delivers
  *     ├── liveness/                watchdog heartbeats
+ *     ├── .resume-claims/          one atomic claim per resumed attempt
  *     ├── facts.jsonl              this run's shared fact ledger
  *     ├── usage.jsonl              one row per attributed model call
  *     ├── usage.json               aggregate report written at run exit

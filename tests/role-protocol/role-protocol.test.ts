@@ -1,156 +1,130 @@
-/**
- * Contract tests for the capability-oriented role protocol.
- */
+/** Contract tests for the capability-oriented role protocol. */
 
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { listRoles, readRoleDefinition, resolveRole } from "../../runtime/lib/roles";
 
-const runtimeDir = path.resolve(import.meta.dir, "../../runtime");
+const repo = path.resolve(import.meta.dir, "../..");
+const runtimeDir = path.join(repo, "runtime");
+const registry = path.join(runtimeDir, "roles.json");
 
 function read(relativePath: string): string {
-	return fs.readFileSync(path.join(runtimeDir, relativePath), "utf8");
+	return fs.readFileSync(path.join(repo, relativePath), "utf8");
+}
+
+function prompt(role: string): string {
+	return resolveRole(registry, role)?.systemPrompt ?? "";
 }
 
 describe("capability-oriented role protocol", () => {
-	test("flow roles and support roles form the intended roster", () => {
-		const expected = [
-			"architect.md",
-			"coder.md",
-			"planner.md",
-			"supervisor.md",
-			"tester.md",
-			"title-compressor.md",
-			"verify.md",
-			"zipper.md",
-		];
-		expect(fs.readdirSync(path.join(runtimeDir, "agents")).sort()).toEqual(expected);
-		expect(read("../references/roles.md")).toContain("## Flow roles");
-		expect(read("../references/roles.md")).toContain("## Support roles");
-	});
-
-	test("planner composes capabilities instead of prescribing a fixed sequence", () => {
-		const planner = read("agents/planner.md");
-		expect(planner).toContain("## Capability map");
-		expect(planner).toContain("`architect` clarifies direction");
-		expect(planner).toContain("`tester` converts product intent");
-		expect(planner).toContain("`coder` owns the technical surface");
-		expect(planner).toContain("`verify` creates independent execution evidence");
-		expect(planner).toContain("capabilities rather than mandatory stations");
-		expect(planner).not.toContain("## Order");
-		expect(planner).not.toContain("in this order");
-		expect(planner).not.toContain("Call `task` with `goal_id`");
-	});
-
-	test("industry patterns are described as conditional lenses", () => {
-		const patterns = read("../references/patterns.md");
-		expect(patterns).toContain("not mandatory workflow stages");
-		expect(patterns).toContain("## Test-driven development");
-		expect(patterns).toContain("Strong when the technical surface is stable enough to compile");
-		expect(patterns).toContain("Compile failure is test-authoring or setup feedback");
-		expect(patterns).toContain("## Diagnosis-first");
-		expect(patterns).toContain("## Baseline-preserving refactoring");
-		expect(patterns).toContain("## Benchmark-driven change");
-		expect(patterns).toContain("## Pattern composition");
-	});
-
-	test("tester owns case design and executable business tests", () => {
-		const tester = read("agents/tester.md");
-		const testing = read("../references/capabilities/testing.md");
-		const reference = read("../references/testing.md");
-
-		for (const text of [tester, testing, reference]) {
-			expect(text).toContain("case");
-			expect(text).toContain("observable");
+	test("one structured registry points to one canonical prompt per role", () => {
+		expect(listRoles(registry)).toEqual([
+			"architect",
+			"coder",
+			"planner",
+			"supervisor",
+			"tester",
+			"title-compressor",
+			"verify",
+			"zipper",
+		]);
+		const refs = new Set<string>();
+		for (const role of listRoles(registry)) {
+			const definition = readRoleDefinition(registry, role)!;
+			expect(definition.prompt).toStartWith("references/capabilities/");
+			expect(refs.has(definition.prompt)).toBeFalse();
+			refs.add(definition.prompt);
+			expect(prompt(role).trim()).not.toBe("");
+			expect(prompt(role)).not.toContain("codeflow:import");
 		}
-		expect(tester).toContain("business case design");
+		const legacyAgents = path.join(runtimeDir, "agents");
+		expect(fs.existsSync(legacyAgents)
+			? fs.readdirSync(legacyAgents).filter((name) => name.endsWith(".md"))
+			: []).toEqual([]);
+	});
+
+	test("planner is a bounded coordinator rather than a technical researcher", () => {
+		const planner = prompt("planner");
+		expect(planner).toContain("root coordinator");
+		expect(planner).toContain("five read-only information calls or five minutes");
+		expect(planner).toContain("Reaching the budget is a stop condition");
+		expect(planner).toContain("repository discovery, files and symbols");
+		expect(planner).toContain("SSOT");
+		expect(planner).toContain("stay at the behavior level");
+		expect(planner).toContain("Aim below 2,000 characters");
+		expect(planner).toContain("rejects task prompts above 4,000 characters");
+		expect(planner).not.toContain("## Pattern judgment");
+		expect(planner).not.toContain("references/patterns.md");
+
+		const definition = readRoleDefinition(registry, "planner")!;
+		expect(definition.model).toBe("zhipuai-coding-plan/glm-5.3");
+		expect(definition.tools).toEqual(["read", "write", "bash", "goal", "task", "task_group"]);
+		expect(definition.delegates).toBeTrue();
+	});
+
+	test("specialist ownership is precise and non-overlapping", () => {
+		const tester = prompt("tester");
+		expect(tester).toContain("authoritative product contracts and SSOT interpretation");
 		expect(tester).toContain("executable business tests");
-		expect(tester).toContain("boundary and equivalence analysis");
-		expect(testing).toContain("exact runner command");
-		expect(reference).toContain("`verify` independently owns execution evidence");
-	});
+		expect(tester).toContain("exact runner command");
 
-	test("coder treats TDD as one useful pattern rather than an identity", () => {
-		const coder = read("agents/coder.md");
-		const implementation = read("../references/capabilities/implementation.md");
-		const style = read("../references/engineering-style.md");
-
-		for (const text of [coder, implementation, style]) {
-			expect(text).toContain("TDD");
-		}
-		expect(coder).toContain("TDD is a high-leverage pattern");
-		expect(coder).toContain("scaffold-first");
+		const coder = prompt("coder");
+		expect(coder).toContain("repository discovery, files and symbols, API and wire mapping");
+		expect(coder).toContain("developer unit tests");
 		expect(coder).toContain("diagnosis-first");
 		expect(coder).toContain("benchmark-driven optimization");
-		expect(implementation).toContain("The mode may change as evidence arrives");
-		expect(style).toContain("not mechanical path rules");
-		expect(style).toContain("business tests separate from product code");
-	});
 
-	test("architecture is a direction and reversibility capability", () => {
-		const architect = read("agents/architect.md");
-		const planner = read("agents/planner.md");
-		const architecture = read("../references/architecture.md");
-		expect(architect).toContain("direction, reversibility, boundaries, and fitness functions");
-		expect(architect).not.toContain("goal_lane:");
-		expect(planner).toContain("`architect` is intentionally outside the goal lanes");
-		expect(planner).toContain("omit both `goal_id` and `lane`");
-		expect(architect).toContain("architecture decision records");
-		expect(architecture).toContain("Reversibility");
-		expect(architecture).toContain("Fitness functions");
-		expect(architecture).toContain("ignore rule for `/target/`");
-	});
-
-	test("verify owns independent execution evidence", () => {
-		const verify = read("agents/verify.md");
-		const verification = read("../references/capabilities/verification.md");
+		const verify = prompt("verify");
 		expect(verify).toContain("independent observation instrument");
-		expect(verify).toContain("`EXPECTED_FAIL`");
-		expect(verify).toContain("`RUNNER_BLOCKED`");
-		expect(verify).toContain("`POST_IMPLEMENTATION_FAIL`");
-		expect(verification).toContain("exact commands");
-		expect(verification).toContain("next owner");
 		expect(verify).toContain("code-agent evidence run");
-		expect(verify).toContain("code-agent evidence receipt");
-		expect(verify).toContain('"receipts": [');
+		expect(verify).toContain("integer `exit_code`");
+		expect(verify).toContain("`RUNNER_BLOCKED`");
 		expect(verify).toContain("Clean `PASS` entries omit `failure_class`");
 	});
 
-	test("polling tests use short injected timing before timeout escalation", () => {
-		const tester = read("agents/tester.md");
-		const testing = read("../references/capabilities/testing.md");
-		const reference = read("../references/testing.md");
-		for (const text of [tester, testing, reference]) {
-			expect(text).toContain("poll_interval");
-			expect(text).toContain("max_wait");
-			expect(text).toMatch(/30[–-]60 seconds/);
-			expect(text).toContain("single named test");
-			expect(text).toContain("state transition");
+	test("architect stays advisory and outside goal lanes", () => {
+		const architect = prompt("architect");
+		const planner = prompt("planner");
+		expect(architect).toContain("architecture advisor");
+		expect(architect).toContain("reversibility");
+		expect(architect).toContain("anti-degradation");
+		expect(readRoleDefinition(registry, "architect")?.goal_lane).toBeUndefined();
+		expect(planner).toContain("`architect` is advisory and intentionally unlaned");
+		expect(planner).toContain("omit `goal_id` and `lane`");
+	});
+
+	test("polling cases diagnose a focused path before timeout escalation", () => {
+		const tester = prompt("tester");
+		expect(tester).toContain("`poll_interval`");
+		expect(tester).toContain("`max_wait`");
+		expect(tester).toMatch(/30[–-]60 seconds/);
+		expect(tester).toContain("single named test");
+		expect(tester).toContain("protocol/state transition");
+	});
+
+	test("planner handoffs and root closure are concise mechanical contracts", () => {
+		const planner = prompt("planner");
+		for (const section of ["**Outcome:**", "**Intent:**", "**Evidence:**", "**Boundaries:**", "**Ownership:**"]) {
+			expect(planner).toContain(section);
 		}
-	});
-
-	test("handoffs carry semantic outcome and evidence contracts", () => {
-		const handoff = read("../references/capabilities/handoff.md");
-		expect(handoff).toContain("**Outcome:**");
-		expect(handoff).toContain("**Intent:**");
-		expect(handoff).toContain("**Evidence sought:**");
-		expect(handoff).toContain("Scope is orientation, not a filesystem permission");
-	});
-
-	test("planner closes the root handoff mechanically", () => {
-		const planner = read("agents/planner.md");
-		expect(planner).toContain("mandatory closure artifact");
+		expect(planner).toContain("non-empty JSON root receipt");
 		expect(planner).toContain("--artifact <closure artifact path>");
-		expect(planner).toContain("The `handoff finish` command owns terminal completion");
+		expect(planner).toContain("The CLI transition, not final prose, completes the run");
 	});
 
-	test("role prompts use positive ownership language", () => {
-		for (const name of fs.readdirSync(path.join(runtimeDir, "agents"))) {
-			if (!name.endsWith(".md")) continue;
-			const text = read(path.join("agents", name));
-			expect(text).not.toMatch(/\bNever\b/);
-			expect(text).not.toMatch(/\bDo not\b/);
-			expect(text).not.toMatch(/\bdo not\b/);
-		}
+	test("support prompts remain narrow", () => {
+		expect(prompt("supervisor")).toContain("only deterministic checks named by the handoff");
+		expect(prompt("title-compressor")).toContain("one registry title line");
+		expect(prompt("zipper")).toContain("at most 4,000 characters");
+		expect(readRoleDefinition(registry, "zipper")?.internal).toBeTrue();
+	});
+
+	test("role reference documents describe the split source of truth", () => {
+		const roles = read("references/roles.md");
+		expect(roles).toContain("`runtime/roles.json` is the only role registry");
+		expect(roles).toContain("Runtime has no parallel agent Markdown layer");
+		expect(roles).toContain("## Flow roles");
+		expect(roles).toContain("## Support roles");
 	});
 });

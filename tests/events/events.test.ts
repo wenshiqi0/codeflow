@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
 	deliverEvent,
+	EVENT_KINDS,
 	EVENT_REASONS,
 	EVENT_STATUSES,
 	eventSummary,
@@ -21,6 +22,7 @@ afterEach(() => {
 
 describe("event contract", () => {
 	test("statuses and reasons are closed enums", () => {
+		expect(EVENT_KINDS).toContain("run_resumed");
 		expect(EVENT_STATUSES).toContain("BLOCKED");
 		expect(EVENT_REASONS).toContain("PROVIDER_FAILURE");
 	});

@@ -9,7 +9,11 @@ import {
 	reconcileHandoff,
 	resolveGoalTask,
 } from "../../runtime/extensions/codeflow-task/registry";
-import { taskResolutionFailure } from "../../runtime/extensions/codeflow-task/index";
+import {
+	assertTaskPrompt,
+	MAX_TASK_PROMPT_CHARS,
+	taskResolutionFailure,
+} from "../../runtime/extensions/codeflow-task/index";
 
 let project: string;
 let paths: RunPaths;
@@ -56,6 +60,14 @@ function defineMovementGoal() {
 import { defineGoal } from "../../runtime/lib/goals";
 
 describe("task registry", () => {
+	test("keeps handoffs concise before opening a child", () => {
+		expect(() => assertTaskPrompt("   ")).toThrow("task prompt must not be empty");
+		expect(() => assertTaskPrompt("x".repeat(MAX_TASK_PROMPT_CHARS + 1))).toThrow(
+			`task prompt exceeds ${MAX_TASK_PROMPT_CHARS} characters`,
+		);
+		expect(() => assertTaskPrompt("Outcome: bounded behavior")).not.toThrow();
+	});
+
 	test("resolves a goal lane, role contract, and persistent session id", () => {
 		defineMovementGoal();
 		const goal = resolveGoalTask("tester", "movement-r1", "test");

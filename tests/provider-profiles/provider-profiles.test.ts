@@ -5,6 +5,7 @@ import {
 	configuredProviderProfiles,
 	PROVIDER_PROFILES_PATH,
 } from "../../runtime/extensions/provider-profiles";
+import { readRoleDefinition } from "../../runtime/lib/roles";
 
 const runtimeDir = path.resolve(import.meta.dir, "../../runtime");
 
@@ -96,7 +97,7 @@ describe("provider profiles", () => {
 	});
 
 	test("the planner remains bound to GLM 5.3", () => {
-		const planner = fs.readFileSync(path.join(runtimeDir, "agents", "planner.md"), "utf8");
-		expect(planner).toMatch(/^model: zhipuai-coding-plan\/glm-5\.3$/m);
+		const planner = readRoleDefinition(path.join(runtimeDir, "roles.json"), "planner");
+		expect(planner?.model).toBe("zhipuai-coding-plan/glm-5.3");
 	});
 });

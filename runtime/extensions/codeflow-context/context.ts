@@ -54,14 +54,14 @@ export function escapeXml(value: string): string {
 }
 
 /**
- * Resolve a role's context level from its agent frontmatter.
+ * Resolve a role's context level from its structured registry entry.
  * Anything unrecognized falls back to "full": over-informing a role is a
  * cost, under-informing it is a correctness risk.
  */
-export function resolveLevel(frontmatter: Record<string, unknown> | null): ContextLevel {
-	if (!frontmatter) return "full";
-	const value = frontmatter.needs_project_rules;
-	if (value === false || value === "false") return "none";
+export function resolveLevel(role: { needs_project_rules?: unknown } | null): ContextLevel {
+	if (!role) return "full";
+	const value = role.needs_project_rules;
+	if (value === false) return "none";
 	if (value === "shared") return "shared";
 	return "full";
 }

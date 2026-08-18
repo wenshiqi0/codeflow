@@ -59,7 +59,7 @@ section "Credentials"
 # Credential presence is checked from the caller environment. The optional
 # .env file remains a runtime launcher concern and is not reported here.
 
-# Derive endpoint/credential impact from provider registries plus runtime/agents bindings.
+# Derive endpoint/credential impact from provider registries plus the role registry.
 # Doctor never owns a second copy of the roster.
 KEY_ROLES="$(bun -e '
 const fs = require("node:fs");
@@ -67,36 +67,33 @@ const path = require("node:path");
 const runtime = process.argv[1];
 const staticProviders = JSON.parse(fs.readFileSync(path.join(runtime, "models.json"), "utf8")).providers;
 const profileProviders = JSON.parse(fs.readFileSync(path.join(runtime, "provider-profiles.json"), "utf8")).providers;
-const agents = path.join(runtime, "agents");
+const roles = JSON.parse(fs.readFileSync(path.join(runtime, "roles.json"), "utf8")).roles;
 const impact = new Map();
-for (const file of fs.readdirSync(agents).filter((name) => name.endsWith(".md")).sort()) {
-  const text = fs.readFileSync(path.join(agents, file), "utf8");
-  const match = /^model:\s*([^#\n]+)/m.exec(text);
-  if (!match) continue;
-  const binding = match[1].trim();
+for (const [role, definition] of Object.entries(roles).sort(([left], [right]) => left.localeCompare(right))) {
+  const binding = String(definition.model ?? "").trim();
   const separator = binding.indexOf("/");
   const provider = binding.slice(0, separator);
   const model = binding.slice(separator + 1);
   const config = staticProviders[provider] ?? profileProviders[provider];
   if (!config || !config.models?.some((entry) => entry.id === model)) {
-    console.error(`role ${file} has no configured provider/model: ${binding}`);
+    console.error(`role ${role} has no configured provider/model: ${binding}`);
     process.exit(1);
   }
   const envNames = config.baseUrlEnv
     ? [config.baseUrlEnv, config.apiKeyEnv]
     : [config.apiKey?.match(/\$([A-Z0-9_]+)/)?.[1]];
   if (envNames.some((name) => !name)) {
-    console.error(`role ${file} has incomplete provider configuration: ${binding}`);
+    console.error(`role ${role} has incomplete provider configuration: ${binding}`);
     process.exit(1);
   }
   for (const envName of envNames) {
-    impact.set(envName, [...(impact.get(envName) ?? []), file.replace(/\.md$/, "")]);
+    impact.set(envName, [...(impact.get(envName) ?? []), role]);
   }
 }
 for (const [key, roles] of impact) console.log(`${key}\t${roles.join(", ")}`);
 ' "$RUNTIME_DIR" 2>/dev/null)"
 if [[ -z "$KEY_ROLES" ]]; then
-  bad "could not derive provider requirements from runtime configuration and agents"
+  bad "could not derive provider requirements from runtime configuration and roles"
 else
   while IFS=$'\t' read -r key roles; do
     [[ -z "$key" ]] && continue
@@ -115,6 +112,7 @@ section "Runtime"
 for required in \
   "$RUNTIME_DIR/models.json" \
   "$RUNTIME_DIR/provider-profiles.json" \
+  "$RUNTIME_DIR/roles.json" \
   "$RUNTIME_DIR/AGENTS.md" \
   "$RUNTIME_DIR/lib/handoff/index.ts" \
   "$RUNTIME_DIR/lib/facts.ts" \
@@ -162,7 +160,7 @@ else
     [[ -z "$role" ]] && continue
     ROLE_COUNT=$((ROLE_COUNT + 1))
     if ! bun "$RUNTIME_DIR/cli/run.ts" delegate --role "$role" --print "probe" >/dev/null 2>&1; then
-      bad "role $role does not resolve (check its model: line against provider registries)"
+      bad "role $role does not resolve (check its runtime/roles.json model binding)"
       ROLE_BAD=$((ROLE_BAD + 1))
     fi
   done <<< "$ROLES"

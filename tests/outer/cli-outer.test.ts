@@ -2,7 +2,7 @@
  * Contract tests for the two-binary command surface.
  *
  * The inner/outer ring boundary is enforced by process environment, not by
- * documentation. The outer `codeflow` binary owns exec/ls/sub/stop/memo/audit
+ * documentation. The outer `codeflow` binary owns exec/resume/ls/sub/stop/memo/audit
  * and must refuse the mechanical inner verbs; the inner `code-agent` binary
  * owns delegate/handoff/facts/check/roster and refuses to run without
  * CODEFLOW_RUN_ID in its environment. A boundary kept only in docs erodes
@@ -158,7 +158,7 @@ describe("P3: outer help", () => {
 	test("--help lists the outer vocabulary", () => {
 		const result = outer(["--help"]);
 		expect(result.exitCode).toBe(0);
-		for (const word of ["exec", "ls", "sub", "stop", "memo", "audit", "usage"]) {
+		for (const word of ["exec", "resume", "ls", "sub", "stop", "memo", "audit", "usage"]) {
 			expect(result.stdout).toContain(word);
 		}
 	});

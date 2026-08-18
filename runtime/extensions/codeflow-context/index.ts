@@ -18,18 +18,19 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { type ExtensionAPI, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { buildContext, resolveLevel, type ContextLevel } from "./context";
 import { loadContextImports, stripImportDirectives } from "./imports";
 import { ledgerPath, render } from "../../lib/facts";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
+import { readRoleDefinition } from "../../lib/roles";
 
 const CONTEXT_CUSTOM_TYPE = "codeflow:context";
 const COMPACT_INTERCEPTED_TYPE = "codeflow:compact_intercepted";
 const COMPACT_VIOLATION_TYPE = "codeflow:compact_violation";
 
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const AGENTS_DIR = path.join(RUNTIME_DIR, "agents");
+const ROLES_FILE = path.join(RUNTIME_DIR, "roles.json");
 
 const levelCache = new Map<string, ContextLevel>();
 
@@ -45,15 +46,11 @@ function roleLevel(role: string | undefined): ContextLevel {
 	if (!role) return "full";
 	const cached = levelCache.get(role);
 	if (cached !== undefined) return cached;
-	const agentFile = path.join(AGENTS_DIR, `${role}.md`);
 	let level: ContextLevel = "full";
 	try {
-		const { frontmatter } = parseFrontmatter<Record<string, unknown>>(
-			fs.readFileSync(agentFile, "utf-8"),
-		);
-		level = resolveLevel(frontmatter);
+		level = resolveLevel(readRoleDefinition(ROLES_FILE, role));
 	} catch {
-		// No readable agent file: fall back to full rather than guess.
+		// No readable registry entry: fall back to full rather than guess.
 	}
 	levelCache.set(role, level);
 	return level;

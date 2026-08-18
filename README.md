@@ -23,31 +23,42 @@ Codeflow 把编码工作分成两层，两层之间只通过元数据通信：
   goal contract + test/code/verify sessions + derived join
 ```
 
-- **内环**沿用 pi agents 机制与 handoff 语义：每个角色是一个独立进程，由 frontmatter 绑定自己的 provider/model，通过 handoff 移交工作单元。
+- **内环**沿用 pi agents 机制与 handoff 语义：每个角色是一个独立进程，由 `runtime/roles.json` 绑定 provider/model 和唯一 capability prompt，通过 handoff 移交工作单元。
 - **外环**是宿主 Agent（Claude Code、opencode 等），通过 `SKILL.md` 感知协议。一次阻塞调用，绝不轮询——内环没有进展时外环不应付出任何代价。
 
 两层各有自己的二进制，词汇表严格不相交：
 
 | 二进制 | 受众 | 命令 |
 |---|---|---|
-| `codeflow` | 人 / 外环 Agent | `exec` `ls` `sub` `goals` `usage` `memo` `audit` `stop` |
+| `codeflow` | 人 / 外环 Agent | `exec` `resume` `ls` `sub` `goals` `usage` `memo` `audit` `stop` |
 | `code-agent` | 角色进程 | `delegate` `handoff` `facts` `check` `roster` |
 
 边界由进程环境强制，而不是靠文档纪律：`code-agent` 不装在用户 PATH 上（只有 `codeflow` 拉起的子进程能看到它），且 `CODEFLOW_RUN_ID` 未设置时直接拒绝执行。外环 Agent 想手工驱动交接状态机时会得到 command not found，而不是一个半更新的 `state.json`。
 
 铁律：**状态变更与状态查询是程序式的，需求表达与任务编排走模型与提示词。** CLI 独占状态迁移、序号分配、回执校验与事件投递；模型只写 handoff 正文、回执叙述与诊断。任何角色都不得手写状态文件。
 
+## 启动与续跑
+
+```bash
+codeflow exec "<requirement>"
+codeflow resume <run-id>
+```
+
+`exec` 创建新 run；`resume` 只续跑一个已经完全停止的既有 run。续跑沿用同一 run id、原始 requirement、planner session、goal/lane sessions、facts 和 evidence，并创建下一条 depth-0 planner handoff；已经终态的 handoff 不会重开。
+
+只有最新 attempt 已按顺序产生 `run_finished` 和 `runner_exited` 时才能 `resume`，避免同一 run 中出现两个 root planner。该命令只能由人或外环显式调用，不会自动重试，也不能从另一个 Codeflow run 内调用。
+
 ## 目录结构
 
 ```text
 SKILL.md              # 外环协议：如何发起、如何观察、何时停机
 scripts/              # doctor 等运维脚本
-references/           # 渐进披露：角色、模式、架构、测试与运行契约
-                      # capabilities/ 是内部 role 能力提示，不暴露成宿主 skill
+references/           # 角色能力提示与运行契约
+                      # capabilities/ 是每个 role 的唯一系统提示，不暴露成宿主 skill
                       # usage.md 定义 benchmark 可读取的模型用量报告
 tests/                # 每个模块一个目录，各自可独立运行
 runtime/              # 内环运行时
-├── agents/           #   角色定义，frontmatter 是模型绑定的唯一事实源
+├── roles.json        #   角色注册表：模型、prompt、工具、上下文、lane
 ├── cli/              #   CLI adapter：参数解析、命令路由、输出格式
 ├── lib/              #   状态机、goal、事件、事实台账、usage 等核心机制
 ├── quality/          #   可选机械质量工具
@@ -67,9 +78,9 @@ Codeflow 的目录不是按“文件类型”随手分层，而是按**变更原
 |---|---|---|---|
 | 根 `SKILL.md` | 宿主外环协议 | 内环状态机与角色语义 | 如何 `exec`、`sub`、识别 stop signal、何时 audit |
 | `scripts/` | 人工运行的环境预检和运维脚本 | 角色编排、模型提示、状态迁移 | `doctor.sh` |
-| `references/` | 模型渐进读取的语义知识 | 可执行代码 | 角色、模式、架构、测试、工程风格、usage 契约 |
-| `references/capabilities/` | Codeflow 内部 role 能力提示 | 宿主可发现 skill | planning / testing / implementation / verification / handoff |
-| `runtime/agents/` | role 身份、模型绑定、能力描述 | CLI 参数和状态实现 | planner、architect、coder、tester、verify 及支持角色 |
+| `references/` | 角色语义与运行契约 | 可执行代码和模型绑定 | capability prompts、handoff、goal、facts、usage |
+| `references/capabilities/` | 每个 Codeflow role 的唯一系统提示 | 宿主可发现 skill、重复的 agent prompt | planning / architecture / testing / implementation / verification / support |
+| `runtime/roles.json` | role 注册、模型与运行策略 | 行为提示词和状态实现 | prompt 路径、tool allowlist、context、lane、delegation |
 | `runtime/bin/` | thin entrypoint、进程和环境边界 | 业务逻辑 | `codeflow`、`code-agent`、`pi` shim |
 | `runtime/cli/` | CLI adapter | 状态规则本身 | argv 解析、命令路由、exit code、输出格式 |
 | `runtime/lib/` | 可复用核心机制 | prompt 语义和 CLI 参数格式 | handoff、goal、events、facts、usage、roles、观测 |
@@ -87,7 +98,8 @@ runtime/bin
 
 runtime/extensions
   -> runtime/lib
-  -> references              # context extension 解析显式 import 指令
+  -> runtime/roles.json
+  -> references              # 加载 role prompt；可解析显式 import 指令
 ```
 
 允许：
@@ -95,11 +107,11 @@ runtime/extensions
 - CLI adapter 调用 `lib` 的公开 API；
 - extension adapter 调用 `lib`，避免复制状态规则；
 - `quality/` 保持独立，由 CLI 或 supervisor 显式调用；
-- role prompt 用 `codeflow:import` 声明 `references/` 依赖，由 context extension 在会话开始前注入。
+- role registry 指向 `references/capabilities/` 下的唯一 prompt；必要时 prompt 可用 `codeflow:import` 声明额外参考。
 
 避免：
 
-- `lib/` 反向 import `cli/`、`extensions/` 或 `agents/`；
+- `lib/` 反向 import `cli/` 或 `extensions/`；
 - extension 自己发明第二套 handoff / goal / event 规则；
 - `scripts/` 复制角色、模型或凭证映射；
 - `runtime/` 内出现任何嵌套 `SKILL.md`，避免内部能力泄漏成宿主全局 skill；
@@ -109,8 +121,8 @@ runtime/extensions
 ### 文件归属规则
 
 1. **人会直接运行的环境检查** 放 `scripts/`。
-2. **模型要读的知识** 放 `references/`；内部 role 专用知识放 `references/capabilities/`，并通过 `codeflow:import` 显式注入。
-3. **role 身份与模型绑定** 放 `runtime/agents/*.md`。
+2. **模型要读的行为提示** 放 `references/capabilities/`，每个 role 保留一份完整 prompt；共享运行契约放 `references/`。
+3. **role 身份、模型、prompt 路径和运行策略** 只放 `runtime/roles.json`。
 4. **新命令或参数解析** 放 `runtime/cli/`。
 5. **状态、事件、goal、facts、usage、观测的核心规则** 放 `runtime/lib/`。
 6. **Pi 事件或工具接入** 放 `runtime/extensions/`。
@@ -118,7 +130,7 @@ runtime/extensions
 8. **入口壳、PATH 注入、进程边界** 放 `runtime/bin/`。
 9. **防止结构回退的合同** 放 `tests/architecture/`。
 
-`scripts/doctor.sh` 不维护第二份角色清单；它从 `runtime/models.json`、`runtime/provider-profiles.json` 和 `runtime/agents/*.md` 推导 endpoint/凭证影响。角色或模型改名后 doctor 不需要手工同步。
+`scripts/doctor.sh` 不维护第二份角色清单；它从 `runtime/models.json`、`runtime/provider-profiles.json` 和 `runtime/roles.json` 推导 endpoint/凭证影响。角色或模型改名后 doctor 不需要手工同步。
 
 运行时全局单份，不按项目安装。目标项目里只多出 `.codeflow/runs/`（gitignored），无需修改根 `AGENTS.md`——skill 本身就是入口。
 
@@ -136,7 +148,7 @@ bun test tests/handoff  # 单个模块
 
 多 Agent 隔离带来一个真实代价：每个角色都从零开始探索，plan 阶段已经查清的事实，coder 会再 grep 一遍。
 
-Codeflow 分两层处理这个问题：角色用 `codeflow:import` 声明确定需要的语义知识，context extension 在会话开始前注入并记录哈希；角色确认过的事实（文件位置、接口签名、既有约定）记入当前 run 的共识区，后续角色直接读取而不是重新搜索。后者是执行期的短期上下文，不是跨项目知识库——不依赖外部记忆后端。
+Codeflow 分两层处理这个问题：每个角色从一份精准的 capability prompt 启动，必要的额外参考才用 `codeflow:import` 注入并记录哈希；角色确认过的事实（文件位置、接口签名、既有约定）记入当前 run 的共识区，后续角色直接读取而不是重新搜索。后者是执行期的短期上下文，不是跨项目知识库——不依赖外部记忆后端。
 
 角色可通过 `$PI_CODING_AGENT_DIR` 直接定位 Codeflow 运行时，其父目录是已安装的 Codeflow Skill 根目录；遇到编排自身的异常时可以检查实现。业务 run 内这两个目录保持只读，host guard 会终止任何写入或变更命令，避免诊断过程污染正在使用的运行时。
 
@@ -197,7 +209,7 @@ MEROUTER_BASE_URL=https://router.example.com
 MEROUTER_API_KEY=...
 ```
 
-`merouter` 使用 Anthropic Messages 协议；`MEROUTER_BASE_URL` 填 API 根地址，不要包含 `/v1/messages`。配置后可把某个 `runtime/agents/*.md` 的模型绑定改为 `merouter/claude-opus-5`。它拥有独立 provider ID 和环境变量，不会覆盖 `zhipuai-coding-plan`；默认角色绑定保持不变。
+`merouter` 使用 Anthropic Messages 协议；`MEROUTER_BASE_URL` 填 API 根地址，不要包含 `/v1/messages`。配置后可把 `runtime/roles.json` 中某个角色的模型绑定改为 `merouter/claude-opus-5`。它拥有独立 provider ID 和环境变量，不会覆盖 `zhipuai-coding-plan`；默认角色绑定保持不变。
 
 安装后运行预检，确认依赖与密钥齐备：
 
