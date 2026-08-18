@@ -37,6 +37,8 @@ Exactly six keys are allowed:
 
 Worker behavior is governed by capability semantics and repository style rather than deterministic filesystem gates. Delegation tools are registered only for depth-0 planner.
 
+`architect` intentionally has no `goal_lane`. Architecture decisions are auxiliary handoffs: delegate them without `goal_id` or `lane`, then pass the decision to the appropriate test/code/verify owner. Only those three lanes participate in a goal join.
+
 ## Context imports
 
 A role prompt declares reference dependencies with an HTML comment directive:

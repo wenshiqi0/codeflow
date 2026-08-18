@@ -599,6 +599,36 @@ describe("receipt validation", () => {
 		expect(finishWith({ status: "PASS", receipts: [] })).toThrow(CliError);
 	});
 
+	test("a batch receipt must use an array", () => {
+		expect(finishWith({ status: "PASS", receipts: { unit: { status: "PASS" } } })).toThrow(
+			CliError,
+		);
+	});
+
+	test("a PASS batch rejects a failing entry", () => {
+		expect(
+			finishWith({
+				status: "PASS",
+				receipts: [{ status: "PASS" }, { status: "FAIL" }],
+			}),
+		).toThrow(CliError);
+	});
+
+	test("a verify batch accepts clean PASS entries without failure_class", () => {
+		expect(
+			finishWith(
+				{
+					status: "PASS",
+					receipts: [
+						{ id: "unit", status: "PASS", command: "bun test", exit_code: 0 },
+						{ id: "types", status: "PASS", command: "bun run typecheck", exit_code: 0 },
+					],
+				},
+				"verify",
+			),
+		).not.toThrow();
+	});
+
 	test("a batch validates every entry", () => {
 		expect(
 			finishWith({
@@ -806,6 +836,12 @@ describe("run lifecycle", () => {
 		// Nobody else is left to report that the execute loop stopped.
 		expect(runnerExited(paths, 4242, "planner", 0).event).not.toBeNull();
 		expect(eventNames().some((name) => name.includes("runner_exited"))).toBe(true);
+	});
+
+	test("the same depth-0 exit is published once", () => {
+		expect(runnerExited(paths, 4242, "planner", 0).event).not.toBeNull();
+		expect(runnerExited(paths, 4242, "planner", 0).event).toBeNull();
+		expect(eventNames().filter((name) => name.includes("runner_exited"))).toHaveLength(1);
 	});
 
 	test("a depth-0 exit mechanically closes an abandoned root handoff", () => {

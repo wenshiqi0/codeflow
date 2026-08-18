@@ -59,13 +59,14 @@ section "Credentials"
 # Credential presence is checked from the caller environment. The optional
 # .env file remains a runtime launcher concern and is not reported here.
 
-# Derive credential impact from models.json plus the current role bindings.
+# Derive endpoint/credential impact from provider registries plus runtime/agents bindings.
 # Doctor never owns a second copy of the roster.
 KEY_ROLES="$(bun -e '
 const fs = require("node:fs");
 const path = require("node:path");
 const runtime = process.argv[1];
-const providers = JSON.parse(fs.readFileSync(path.join(runtime, "models.json"), "utf8")).providers;
+const staticProviders = JSON.parse(fs.readFileSync(path.join(runtime, "models.json"), "utf8")).providers;
+const profileProviders = JSON.parse(fs.readFileSync(path.join(runtime, "provider-profiles.json"), "utf8")).providers;
 const agents = path.join(runtime, "agents");
 const impact = new Map();
 for (const file of fs.readdirSync(agents).filter((name) => name.endsWith(".md")).sort()) {
@@ -75,17 +76,27 @@ for (const file of fs.readdirSync(agents).filter((name) => name.endsWith(".md"))
   const binding = match[1].trim();
   const separator = binding.indexOf("/");
   const provider = binding.slice(0, separator);
-  const envName = providers[provider]?.apiKey?.match(/\$([A-Z0-9_]+)/)?.[1];
-  if (!envName) {
-    console.error(`role ${file} has no configured credential: ${binding}`);
+  const model = binding.slice(separator + 1);
+  const config = staticProviders[provider] ?? profileProviders[provider];
+  if (!config || !config.models?.some((entry) => entry.id === model)) {
+    console.error(`role ${file} has no configured provider/model: ${binding}`);
     process.exit(1);
   }
-  impact.set(envName, [...(impact.get(envName) ?? []), file.replace(/\.md$/, "")]);
+  const envNames = config.baseUrlEnv
+    ? [config.baseUrlEnv, config.apiKeyEnv]
+    : [config.apiKey?.match(/\$([A-Z0-9_]+)/)?.[1]];
+  if (envNames.some((name) => !name)) {
+    console.error(`role ${file} has incomplete provider configuration: ${binding}`);
+    process.exit(1);
+  }
+  for (const envName of envNames) {
+    impact.set(envName, [...(impact.get(envName) ?? []), file.replace(/\.md$/, "")]);
+  }
 }
 for (const [key, roles] of impact) console.log(`${key}\t${roles.join(", ")}`);
 ' "$RUNTIME_DIR" 2>/dev/null)"
 if [[ -z "$KEY_ROLES" ]]; then
-  bad "could not derive credential usage from models.json and runtime/agents"
+  bad "could not derive provider requirements from runtime configuration and agents"
 else
   while IFS=$'\t' read -r key roles; do
     [[ -z "$key" ]] && continue
@@ -103,6 +114,7 @@ section "Runtime"
 
 for required in \
   "$RUNTIME_DIR/models.json" \
+  "$RUNTIME_DIR/provider-profiles.json" \
   "$RUNTIME_DIR/AGENTS.md" \
   "$RUNTIME_DIR/lib/handoff/index.ts" \
   "$RUNTIME_DIR/lib/facts.ts" \
@@ -119,6 +131,7 @@ for required in \
   "$RUNTIME_DIR/extensions/host-guard/policy.ts" \
   "$RUNTIME_DIR/extensions/codeflow-context/index.ts" \
   "$RUNTIME_DIR/extensions/codeflow-context/imports.ts" \
+  "$RUNTIME_DIR/extensions/provider-profiles/index.ts" \
   "$RUNTIME_DIR/extensions/usage-ledger/index.ts" \
   "$RUNTIME_DIR/extensions/bash-compressor/index.ts" \
   "$RUNTIME_DIR/extensions/agent-watchdog/index.ts"; do
@@ -137,7 +150,7 @@ else
   bad "runtime TypeScript typecheck failed (bun run typecheck)"
 fi
 
-# Every role must resolve to a provider that exists in models.json. A typo here
+# Every role must resolve to a provider from the static or dynamic registry. A typo here
 # fails at model-call time, which is the most expensive place to learn it.
 ROLES="$(bun "$RUNTIME_DIR/cli/run.ts" debug agent 2>/dev/null)"
 if [[ -z "$ROLES" ]]; then
@@ -149,7 +162,7 @@ else
     [[ -z "$role" ]] && continue
     ROLE_COUNT=$((ROLE_COUNT + 1))
     if ! bun "$RUNTIME_DIR/cli/run.ts" delegate --role "$role" --print "probe" >/dev/null 2>&1; then
-      bad "role $role does not resolve (check its model: line against models.json)"
+      bad "role $role does not resolve (check its model: line against provider registries)"
       ROLE_BAD=$((ROLE_BAD + 1))
     fi
   done <<< "$ROLES"

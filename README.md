@@ -51,9 +51,10 @@ runtime/              # 内环运行时
 ├── cli/              #   CLI adapter：参数解析、命令路由、输出格式
 ├── lib/              #   状态机、goal、事件、事实台账、usage 等核心机制
 ├── quality/          #   可选机械质量工具
-├── extensions/       #   pi 扩展（委派、上下文、压缩、用量、活性）
+├── extensions/       #   pi 扩展（provider、委派、上下文、压缩、用量、活性）
 ├── bin/              #   codeflow（外环）+ code-agent（内环）+ pi 定位器
-└── models.json       #   provider 注册表
+├── models.json       #   固定 endpoint 的 Pi provider 注册表
+└── provider-profiles.json # 环境驱动的动态 provider 注册表
 ```
 
 `lib/` 只放核心机制，`cli/` 负责命令适配，`extensions/` 负责 Pi event/tool 适配；扩展通过 `lib/` 复用同一份状态与观测逻辑。
@@ -117,7 +118,7 @@ runtime/extensions
 8. **入口壳、PATH 注入、进程边界** 放 `runtime/bin/`。
 9. **防止结构回退的合同** 放 `tests/architecture/`。
 
-`scripts/doctor.sh` 不维护第二份角色清单；它从 `runtime/models.json` 和 `runtime/agents/*.md` 推导凭证影响。角色或模型改名后 doctor 不需要手工同步。
+`scripts/doctor.sh` 不维护第二份角色清单；它从 `runtime/models.json`、`runtime/provider-profiles.json` 和 `runtime/agents/*.md` 推导 endpoint/凭证影响。角色或模型改名后 doctor 不需要手工同步。
 
 运行时全局单份，不按项目安装。目标项目里只多出 `.codeflow/runs/`（gitignored），无需修改根 `AGENTS.md`——skill 本身就是入口。
 
@@ -137,7 +138,7 @@ bun test tests/handoff  # 单个模块
 
 Codeflow 分两层处理这个问题：角色用 `codeflow:import` 声明确定需要的语义知识，context extension 在会话开始前注入并记录哈希；角色确认过的事实（文件位置、接口签名、既有约定）记入当前 run 的共识区，后续角色直接读取而不是重新搜索。后者是执行期的短期上下文，不是跨项目知识库——不依赖外部记忆后端。
 
-产品运行中的角色不探索 Codeflow 自身。运行时位置是 Pi 配置的私有细节，在工具环境可用前移除；显式引用或读取 Codeflow checkout 会被 host guard 拦截，工具输出中的残留运行时路径也会被红线处理。
+角色可通过 `$PI_CODING_AGENT_DIR` 直接定位 Codeflow 运行时，其父目录是已安装的 Codeflow Skill 根目录；遇到编排自身的异常时可以检查实现。业务 run 内这两个目录保持只读，host guard 会终止任何写入或变更命令，避免诊断过程污染正在使用的运行时。
 
 ## 安装
 
@@ -156,10 +157,32 @@ Codeflow 分两层处理这个问题：角色用 `codeflow:import` 声明确定�
 ```bash
 skills_dir="$HOME/.codex/skills"
 mkdir -p "$skills_dir"
-git clone git@github.com:wenshiqi0/codeflow.git "$skills_dir/codeflow"
+codeflow_root="$skills_dir/codeflow"
+git clone git@github.com:wenshiqi0/codeflow.git "$codeflow_root"
+
+printf '是否将 codeflow 命令安装到用户全局？ [y/N] '
+IFS= read -r install_codeflow_cli
+case "$install_codeflow_cli" in
+  [yY]|[yY][eE][sS])
+    user_bin="$HOME/.local/bin"
+    mkdir -p "$user_bin"
+    printf '#!/bin/sh\nexec "%s/runtime/bin/codeflow" "$@"\n' "$codeflow_root" > "$user_bin/codeflow"
+    chmod 755 "$user_bin/codeflow"
+    echo "installed: $user_bin/codeflow"
+    case ":$PATH:" in
+      *":$user_bin:"*) ;;
+      *) echo "请将 $user_bin 加入 PATH 后重新打开终端" ;;
+    esac
+    ;;
+  *)
+    echo '跳过全局命令安装；仍可通过 runtime/bin/codeflow 使用'
+    ;;
+esac
 ```
 
 其他宿主替换 `skills_dir` 为上表中的对应目录即可；若宿主还支持项目级 skills 目录，也可以按其约定放置。
+
+全局命令安装是可选的，只把面向人和宿主 Agent 的 `codeflow` 放入用户 PATH；内部 `code-agent` 仍只在 run 内可见。这里使用启动器而不是直接创建符号链接，因为入口需要从真实脚本位置定位同目录下的运行时。若之后移动 skill 目录，请在新目录重新执行这一安装步骤。
 
 密钥统一从全局环境获取，仓库内不含任何凭据。在 shell 配置或全局 env 文件中提供：
 
@@ -168,7 +191,13 @@ KIMI_API_KEY=...
 ZHIPU_API_KEY=...
 MIMO_API_KEY=...
 DEEPSEEK_API_KEY=...
+
+# 可选：独立的 MeRouter Claude Opus 5 provider
+MEROUTER_BASE_URL=https://router.example.com
+MEROUTER_API_KEY=...
 ```
+
+`merouter` 使用 Anthropic Messages 协议；`MEROUTER_BASE_URL` 填 API 根地址，不要包含 `/v1/messages`。配置后可把某个 `runtime/agents/*.md` 的模型绑定改为 `merouter/claude-opus-5`。它拥有独立 provider ID 和环境变量，不会覆盖 `zhipuai-coding-plan`；默认角色绑定保持不变。
 
 安装后运行预检，确认依赖与密钥齐备：
 

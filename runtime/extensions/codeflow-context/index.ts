@@ -76,9 +76,6 @@ function renderFacts(runId: string | undefined, runsDir: string): string {
 
 export default function (pi: ExtensionAPI) {
 	pi.on("before_agent_start", (event) => {
-		// Pi has loaded its isolated model/auth configuration by this point.
-		// Remove the private locator before any model-facing tool can inherit it.
-		delete process.env.PI_CODING_AGENT_DIR;
 		const cwd = event.systemPromptOptions?.cwd || process.cwd();
 		const role = process.env.CODEFLOW_AGENT_ROLE;
 		const level = roleLevel(role);

@@ -89,8 +89,12 @@ describe("capability-oriented role protocol", () => {
 
 	test("architecture is a direction and reversibility capability", () => {
 		const architect = read("agents/architect.md");
+		const planner = read("agents/planner.md");
 		const architecture = read("../references/architecture.md");
 		expect(architect).toContain("direction, reversibility, boundaries, and fitness functions");
+		expect(architect).not.toContain("goal_lane:");
+		expect(planner).toContain("`architect` is intentionally outside the goal lanes");
+		expect(planner).toContain("omit both `goal_id` and `lane`");
 		expect(architect).toContain("architecture decision records");
 		expect(architecture).toContain("Reversibility");
 		expect(architecture).toContain("Fitness functions");
@@ -106,6 +110,23 @@ describe("capability-oriented role protocol", () => {
 		expect(verify).toContain("`POST_IMPLEMENTATION_FAIL`");
 		expect(verification).toContain("exact commands");
 		expect(verification).toContain("next owner");
+		expect(verify).toContain("code-agent evidence run");
+		expect(verify).toContain("code-agent evidence receipt");
+		expect(verify).toContain('"receipts": [');
+		expect(verify).toContain("Clean `PASS` entries omit `failure_class`");
+	});
+
+	test("polling tests use short injected timing before timeout escalation", () => {
+		const tester = read("agents/tester.md");
+		const testing = read("../references/capabilities/testing.md");
+		const reference = read("../references/testing.md");
+		for (const text of [tester, testing, reference]) {
+			expect(text).toContain("poll_interval");
+			expect(text).toContain("max_wait");
+			expect(text).toMatch(/30[–-]60 seconds/);
+			expect(text).toContain("single named test");
+			expect(text).toContain("state transition");
+		}
 	});
 
 	test("handoffs carry semantic outcome and evidence contracts", () => {

@@ -405,13 +405,28 @@ function validateReceipt(
 
 	const spills: string[] = [];
 	const entries = receipt.receipts;
+	if ("receipts" in receipt && !Array.isArray(entries)) {
+		throw new CliError("batch receipt field receipts must be an array");
+	}
 	if (Array.isArray(entries)) {
 		if (entries.length === 0) {
 			throw new CliError("a batch receipt must contain at least one entry");
 		}
-		receipt.receipts = entries.map((entry, index) =>
+		const validated = entries.map((entry, index) =>
 			validateEntry(entry, role, index, paths, handoffId, spills),
 		);
+		const aggregateStatus = validated.every((entry) => entry.status === "PASS")
+			? "PASS"
+			: validated.some((entry) => entry.status === "BLOCKED")
+				? "BLOCKED"
+				: "FAIL";
+		if (receipt.status !== aggregateStatus) {
+			throw new CliError(
+				`batch receipt status ${JSON.stringify(receipt.status)} contradicts entry aggregate ` +
+					JSON.stringify(aggregateStatus),
+			);
+		}
+		receipt.receipts = validated;
 	} else {
 		receipt = validateEntry(receipt, role, 0, paths, handoffId, spills);
 	}
@@ -890,6 +905,20 @@ export function runnerExited(
 	role: string,
 	depth: number,
 ): { run_id: string; pid: number; depth: number; event: DeliveredEvent | null } {
+	const livenessPath = path.join(paths.liveness, `${pid}--${slug(role)}--${depth}.json`);
+	const eventMarker = path.join(paths.liveness, `${pid}--${slug(role)}--${depth}.runner-exited`);
+	if (depth === 0 && fs.existsSync(eventMarker)) {
+		return { run_id: paths.runId, pid, depth, event: null };
+	}
+	if (depth !== 0 && fs.existsSync(livenessPath)) {
+		try {
+			if (readJson<Record<string, unknown>>(livenessPath).status === "exited") {
+				return { run_id: paths.runId, pid, depth, event: null };
+			}
+		} catch {
+			// Replace malformed liveness with the terminal record below.
+		}
+	}
 	const record = {
 		schema_version: SCHEMA_VERSION,
 		run_id: paths.runId,
@@ -899,13 +928,33 @@ export function runnerExited(
 		status: "exited",
 		exited_at: nowIso(),
 	};
-	writeJsonAtomic(path.join(paths.liveness, `${pid}--${slug(role)}--${depth}.json`), record);
+	writeJsonAtomic(livenessPath, record);
 
 	if (depth === 0) closeAbandonedHandoffs(paths);
 
 	let event: DeliveredEvent | null = null;
 	if (depth === 0) {
-		event = emitRunEvent(paths, "runner_exited", "EXITED", { pid, role, ref: "runner.json" });
+		fs.mkdirSync(paths.liveness, { recursive: true });
+		let marker: number;
+		try {
+			marker = fs.openSync(eventMarker, "wx");
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+				return { run_id: paths.runId, pid, depth, event: null };
+			}
+			throw error;
+		}
+		fs.closeSync(marker);
+		try {
+			event = emitRunEvent(paths, "runner_exited", "EXITED", {
+				pid,
+				role,
+				ref: "runner.json",
+			});
+		} catch (error) {
+			fs.rmSync(eventMarker, { force: true });
+			throw error;
+		}
 	}
 	return { run_id: paths.runId, pid, depth, event };
 }

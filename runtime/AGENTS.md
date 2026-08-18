@@ -2,6 +2,10 @@
 
 Worker-only shared contract. Planner guidance (role roster, sequence) is in `agents/planner.md`; the observe loop belongs to the outer coordinator and is not your concern.
 
+## Runtime location
+
+`$PI_CODING_AGENT_DIR` is the Codeflow runtime root; its parent is the installed Codeflow Skill root. Both may be inspected when Codeflow behavior itself needs diagnosis, but they are host-owned and read-only during a business run. Do not edit them or confuse them with the target product repository.
+
 ## Handoff contract
 
 Coordination happens in handoffs: one unit of work from a delegator to a receiver, who maintains its state until terminal. Planner authors the body with its imported handoff capability; never hand off vague requests.

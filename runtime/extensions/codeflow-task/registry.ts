@@ -25,6 +25,7 @@ import {
 	loadGoal,
 } from "../../lib/goals";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
+import { readFrontmatter } from "../../lib/roles";
 import type { RoleRunResult } from "./shared";
 
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -71,6 +72,12 @@ export function resolveGoalTask(
 	lane: string | undefined,
 ): GoalTaskRef | null {
 	if (!goalId && !lane) return null;
+	const role = readFrontmatter(AGENTS_DIR, agent);
+	if (role && !role.goal_lane) {
+		throw new TaskContractError(
+			`role ${agent} owns no goal lane; delegate it without goal_id or lane`,
+		);
+	}
 	if (!goalId || !lane) throw new TaskContractError("goal_id and lane must be provided together");
 	if (!/^(?:test|code|verify)$/.test(lane)) throw new TaskContractError(`invalid goal lane: ${lane}`);
 	const paths = currentRun();

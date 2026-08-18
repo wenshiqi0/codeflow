@@ -37,6 +37,7 @@ usage: code-agent <command> [options]
   delegate --role <role> [--handoff-file <file>]   run a role in this run
   handoff open|start|finish|status|list            handoff state machine
   facts render|list                                this run's fact ledger
+  evidence run|receipt                             execute and aggregate command evidence
   check source [paths...]                          source safety check
   check patch <patch>                              validate a test patch
   verify patch <patch>                             verify an applied test patch
@@ -56,6 +57,10 @@ case "${1:-}" in
   delegate)
     shift
     exec bun "$CLI_DIR/run.ts" delegate "$@"
+    ;;
+  evidence)
+    shift
+    exec bun "$CLI_DIR/evidence.ts" "$@"
     ;;
   # `check`/`apply`/`verify` group the two mechanical pre-commit gates under one
   # verb, so a role has a single entry point to remember.

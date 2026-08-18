@@ -52,9 +52,31 @@ Validated fields:
 | `diagnosis` | string | Marked as inference, not fact |
 | `next_owner` | string | `tester`, `coder`, `planner`, or `environment` |
 | `expected_red` | bool | Intended test-first failure; does not turn `FAIL` into `PASS` |
+| `failure_class` | enum | Optional; clean `PASS` entries omit it |
 | `facts` | array | Shared facts for later roles — see `facts.md` |
 
-Multiple commands go in a `receipts` array with the overall status at top level. Overall `PASS` requires every entry to pass.
+Multiple commands go in a `receipts` array with the overall status at top level;
+the field is always an array rather than an object keyed by id. Each entry may
+carry its `id`. Overall `PASS` requires every entry to pass, while any failing
+entry makes the aggregate `FAIL`.
+
+Single clean pass:
+
+```json
+{"status":"PASS","command":"bun test","exit_code":0}
+```
+
+Single failure:
+
+```json
+{"status":"FAIL","command":"bun test","exit_code":1,"failure_class":"POST_IMPLEMENTATION_FAIL"}
+```
+
+Batch:
+
+```json
+{"status":"PASS","receipts":[{"id":"unit","status":"PASS","command":"bun test","exit_code":0}]}
+```
 
 `--artifact` verifies a non-empty file exists on disk at finish time, so a delegator never has to take a role's word for it.
 

@@ -32,6 +32,7 @@ test surface with it.
 | `usage/` | `lib/usage.ts` + `extensions/usage-ledger/index.ts` | Per-turn model usage and run totals for benchmarks |
 | `liveness/` | `lib/liveness.ts` | Multi-signal probing; never DEAD from one signal |
 | `context/` | `extensions/codeflow-context/context.ts` | Rule levels and fact injection |
+| `provider-profiles/` | `extensions/provider-profiles/index.ts` | Environment-driven provider isolation and safe endpoint validation |
 | `handoff-gate/` | `extensions/codeflow-task/handoff-gate.ts` | Blocked-reason classification |
 | `task-registry/` | `extensions/codeflow-task/registry.ts` | Successful task reconciliation and child-result integration |
 | `host-guard/` | `extensions/host-guard` | Runtime read-only boundary for root and delegated roles |

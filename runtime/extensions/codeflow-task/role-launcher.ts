@@ -16,6 +16,7 @@ import { currentRun, type RoleRunResult } from "./shared";
 // runtime/extensions/codeflow-task/role-launcher.ts -> runtime
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const AGENTS_DIR = path.join(RUNTIME_DIR, "agents");
+const PROVIDER_PROFILES_EXTENSION = path.join(RUNTIME_DIR, "extensions", "provider-profiles", "index.ts");
 const WATCHDOG_EXTENSION = path.join(RUNTIME_DIR, "extensions", "agent-watchdog", "index.ts");
 const CONTEXT_EXTENSION = path.join(RUNTIME_DIR, "extensions", "codeflow-context", "index.ts");
 const BASH_COMPRESSOR_EXTENSION = path.join(RUNTIME_DIR, "extensions", "bash-compressor", "index.ts");
@@ -159,6 +160,9 @@ export async function runRoleChild(
 		"--system-prompt",
 		resolved.body,
 	];
+	if (fs.existsSync(PROVIDER_PROFILES_EXTENSION)) {
+		args.push("--extension", PROVIDER_PROFILES_EXTENSION);
+	}
 	// A delegated child is a pi process too, so it needs the same liveness
 	// coverage as depth 0; without it a SIGKILLed child leaves no trace.
 	if (fs.existsSync(WATCHDOG_EXTENSION)) args.push("--extension", WATCHDOG_EXTENSION);

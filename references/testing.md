@@ -20,6 +20,11 @@ Business tests express externally meaningful contracts through public entry poin
 
 Preferred organization keeps business tests separate from product code and developer unit tests, while preserving the repository's established layout and language idioms.
 
+Polling and state-machine tests inject short `poll_interval` and `max_wait`
+values so a focused run completes within 30–60 seconds. After the first
+unexpected timeout, run the single named test and inspect the protocol and state
+transition path before extending a harness timeout.
+
 ## Test index
 
 For each handoff, record a non-empty index containing case id, criterion, fixture/input, action, expected result, test file, exact runner command, and intended signal. `verify` independently owns execution evidence.

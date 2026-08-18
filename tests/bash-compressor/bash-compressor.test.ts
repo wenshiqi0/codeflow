@@ -129,6 +129,7 @@ describe("bash result compression policy", () => {
 		expect(extension).toContain("ZIPPER_TIMEOUT_MS = 20_000");
 		expect(extension).toContain('"--mode", "json"');
 		expect(extension).toContain('"--no-extensions"');
+		expect(extension).toContain('"--extension", PROVIDER_PROFILES_EXTENSION');
 		expect(extension).toContain('"--no-tools"');
 		expect(extension).toContain('"--no-session"');
 		expect(launcher).toContain("extensions\", \"bash-compressor\"");

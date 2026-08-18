@@ -1,7 +1,7 @@
 /**
  * Liveness ignition for one codeflow agent process.
  *
- * Three responsibilities, then stay quiet:
+ * Four responsibilities, then stay quiet:
  *
  * 1. Mark this process's handoff `running`. The receiver owns that
  *    transition, and hanging it on a lifecycle hook means no model has to
@@ -16,6 +16,8 @@
  *    aborts the in-flight request when no real `message_update`/tool event
  *    arrives for the configured window, so the run fails fast instead of
  *    hanging forever.
+ * 4. Bound bash tool wall time. Provider-idle protection cannot see a shell
+ *    process that never returns, so bash gets its own configurable hard limit.
  *
  * No tools are registered: this extension has no model-facing surface. With
  * no run-id in the environment there is no run to record, so (1) and (2)
@@ -68,6 +70,18 @@ const STREAM_IDLE_TICK_MS = Number.parseInt(
 	10,
 );
 
+/**
+ * A bash command may legitimately compile or test for several minutes, but a
+ * forgotten root walk must not own a run indefinitely. Fifteen minutes matches
+ * the provider-idle ceiling and remains overrideable; 0 disables the guard.
+ */
+export const BASH_TIMEOUT_DEFAULT_MS = 900_000;
+export const BASH_TIMEOUT_MS = Number.parseInt(
+	process.env.CODEFLOW_BASH_TIMEOUT_MS ?? String(BASH_TIMEOUT_DEFAULT_MS),
+	10,
+);
+export const BASH_TIMEOUT_ABORT_MARKER = "[agent-watchdog] bash timeout";
+
 let currentCtx: ExtensionContext | null = null;
 let lastProgressAt = Date.now();
 /**
@@ -80,11 +94,23 @@ let lastProgressAt = Date.now();
  * firing).
  */
 let providerInFlight = false;
+const bashTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /** Stamp progress and remember the latest context for the idle timer. */
 function markProgress(ctx: ExtensionContext | null | undefined): void {
 	lastProgressAt = Date.now();
 	if (ctx) currentCtx = ctx;
+}
+
+function clearBashTimer(toolCallId: string): void {
+	const timer = bashTimers.get(toolCallId);
+	if (timer) clearTimeout(timer);
+	bashTimers.delete(toolCallId);
+}
+
+function clearAllBashTimers(): void {
+	for (const timer of bashTimers.values()) clearTimeout(timer);
+	bashTimers.clear();
 }
 
 let ignited = false;
@@ -154,17 +180,50 @@ export default function (pi: ExtensionAPI) {
 	pi.on("after_provider_response", (_e, ctx) => markProgress(ctx));
 	pi.on("message_start", (_e, ctx) => markProgress(ctx));
 	pi.on("message_update", (_e, ctx) => markProgress(ctx));
-	pi.on("tool_execution_start", (_e, ctx) => markProgress(ctx));
+	pi.on("tool_execution_start", (event, ctx) => {
+		markProgress(ctx);
+		if (
+			event.toolName !== "bash" ||
+			!Number.isFinite(BASH_TIMEOUT_MS) ||
+			BASH_TIMEOUT_MS <= 0
+		) {
+			return;
+		}
+		clearBashTimer(event.toolCallId);
+		const timer = setTimeout(() => {
+			bashTimers.delete(event.toolCallId);
+			process.stderr.write(
+				`${BASH_TIMEOUT_ABORT_MARKER} ${event.toolCallId} exceeded ${BASH_TIMEOUT_MS}ms ` +
+					`(set CODEFLOW_BASH_TIMEOUT_MS=0 to disable); aborting tool execution\n`,
+			);
+			try {
+				ctx.abort();
+			} catch {
+				// The command is already terminal or the host is shutting down.
+			}
+		}, BASH_TIMEOUT_MS);
+		timer.unref();
+		bashTimers.set(event.toolCallId, timer);
+	});
 	pi.on("tool_execution_update", (_e, ctx) => markProgress(ctx));
-	pi.on("tool_execution_end", (_e, ctx) => markProgress(ctx));
+	pi.on("tool_execution_end", (event, ctx) => {
+		markProgress(ctx);
+		clearBashTimer(event.toolCallId);
+	});
 	// Turn / agent boundaries: the request is no longer in flight.
 	const clearInFlight = (): void => {
 		providerInFlight = false;
 	};
 	pi.on("message_end", clearInFlight);
 	pi.on("turn_end", clearInFlight);
-	pi.on("agent_end", clearInFlight);
-	pi.on("agent_settled", clearInFlight);
+	pi.on("agent_end", () => {
+		clearInFlight();
+		clearAllBashTimers();
+	});
+	pi.on("agent_settled", () => {
+		clearInFlight();
+		clearAllBashTimers();
+	});
 
 	if (
 		Number.isFinite(STREAM_IDLE_TIMEOUT_MS) &&

@@ -20,6 +20,7 @@ import {
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ZIPPER_PATH = path.join(RUNTIME_DIR, "agents", "zipper.md");
 const PI_PATH = path.join(RUNTIME_DIR, "bin", "pi");
+const PROVIDER_PROFILES_EXTENSION = path.join(RUNTIME_DIR, "extensions", "provider-profiles", "index.ts");
 export const ZIPPER_TIMEOUT_MS = 20_000;
 
 interface ZipperRole {
@@ -55,6 +56,7 @@ function runZipper(prompt: string, externalSignal?: AbortSignal): Promise<string
 			"--model", role.model,
 			"--system-prompt", role.systemPrompt,
 			"--no-extensions",
+			"--extension", PROVIDER_PROFILES_EXTENSION,
 			"--no-context-files",
 			"--no-session",
 			"--no-tools",

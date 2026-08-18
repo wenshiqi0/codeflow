@@ -28,6 +28,7 @@ const AGENTS_DIR = path.join(RUNTIME_DIR, "agents");
 const VERSION = "0.1.0";
 const ROOT_OUTPUT_DIAGNOSTIC_LIMIT = 8_000;
 const EXTENSIONS = [
+	path.join(RUNTIME_DIR, "extensions", "provider-profiles", "index.ts"),
 	path.join(RUNTIME_DIR, "extensions", "codeflow-task", "index.ts"),
 	path.join(RUNTIME_DIR, "extensions", "host-guard", "index.ts"),
 	path.join(RUNTIME_DIR, "extensions", "codeflow-context", "index.ts"),
@@ -45,6 +46,21 @@ const EXTENSIONS = [
 export function newRunId(now = new Date()): string {
 	const stamp = now.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
 	return `run-${stamp}-${randomBytes(2).toString("hex")}`;
+}
+
+/**
+ * Anchor run state before any child moves to a sibling worktree.
+ *
+ * `code-agent` deliberately changes to the worktree it is operating on. A
+ * relative run root inherited by that child would therefore name a different
+ * directory, while an absolute root keeps coordination state attached to the
+ * checkout that launched the run.
+ */
+export function resolveRunsDir(
+	configured: string | undefined,
+	cwd: string = process.cwd(),
+): string {
+	return path.resolve(cwd, configured ?? DEFAULT_RUNS_DIR);
 }
 
 /**
@@ -201,7 +217,7 @@ export async function run(argv: string[], entry: "exec" | "delegate" = "delegate
 	const inherited = process.env.CODEFLOW_RUN_ID;
 	const freshRun = inherited === undefined;
 	const runId = inherited ?? newRunId();
-	const runsDir = process.env.CODEFLOW_RUNS_DIR ?? DEFAULT_RUNS_DIR;
+	const runsDir = resolveRunsDir(process.env.CODEFLOW_RUNS_DIR);
 	let handoffId = process.env.CODEFLOW_HANDOFF_ID;
 
 	// --print resolves the binding and exits. It must not register a run, emit
@@ -212,9 +228,10 @@ export async function run(argv: string[], entry: "exec" | "delegate" = "delegate
 			JSON.stringify({
 				role: args.role,
 					env: {
-					CODEFLOW_AGENT_ROLE: args.role,
-					CODEFLOW_AGENT_DEPTH: freshRun ? "0" : "1",
+						CODEFLOW_AGENT_ROLE: args.role,
+						CODEFLOW_AGENT_DEPTH: freshRun ? "0" : "1",
 						CODEFLOW_RUN_ID: runId,
+						CODEFLOW_RUNS_DIR: runsDir,
 						...(handoffId ? { CODEFLOW_HANDOFF_ID: handoffId } : {}),
 					},
 				argv: buildArgv(resolved, args.prompt, EXTENSIONS),
@@ -282,17 +299,18 @@ export async function run(argv: string[], entry: "exec" | "delegate" = "delegate
 			dir: paths.piSessions,
 		}),
 		{
-				stdin: captureRootOutput ? "ignore" : "inherit",
-				stdout: captureRootOutput ? "pipe" : "inherit",
-				stderr: captureRootOutput ? "pipe" : "inherit",
+			stdin: captureRootOutput ? "ignore" : "inherit",
+			stdout: captureRootOutput ? "pipe" : "inherit",
+			stderr: captureRootOutput ? "pipe" : "inherit",
 			detached: freshRun,
 			env: {
 				...process.env,
-					PATH: `${path.join(RUNTIME_DIR, "bin")}:${process.env.PATH ?? ""}`,
-					PI_CODING_AGENT_DIR: RUNTIME_DIR,
+				PATH: `${path.join(RUNTIME_DIR, "bin")}:${process.env.PATH ?? ""}`,
+				PI_CODING_AGENT_DIR: RUNTIME_DIR,
 				CODEFLOW_AGENT_ROLE: args.role,
 				CODEFLOW_AGENT_DEPTH: freshRun ? "0" : "1",
 				CODEFLOW_RUN_ID: runId,
+				CODEFLOW_RUNS_DIR: runsDir,
 				...(handoffId ? { CODEFLOW_HANDOFF_ID: handoffId } : {}),
 			},
 		},

@@ -50,7 +50,7 @@ describe("codeflow context extension", () => {
 		}
 	});
 
-	test("removes the private Pi agent directory before model tools run", () => {
+	test("keeps the Pi agent directory available to role tools", () => {
 		const saved = process.env.PI_CODING_AGENT_DIR;
 		process.env.PI_CODING_AGENT_DIR = "/private/codeflow-runtime";
 		const handlers = new Map<string, (event: unknown) => unknown>();
@@ -65,7 +65,7 @@ describe("codeflow context extension", () => {
 				systemPrompt: "",
 				systemPromptOptions: { cwd: process.cwd() },
 			});
-			expect(process.env.PI_CODING_AGENT_DIR).toBeUndefined();
+			expect(process.env.PI_CODING_AGENT_DIR).toBe("/private/codeflow-runtime");
 		} finally {
 			if (saved === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = saved;

@@ -21,18 +21,14 @@ import { roleMayDelegate, runRoleChild, type TaskDetails } from "./role-launcher
 
 const MAX_CONCURRENCY = 8;
 
-type ToolResult<T> = AgentToolResult<T | undefined> & { isError?: boolean };
+type ToolResult<T> = AgentToolResult<T | undefined>;
 
 const RUNTIME_FAILURE_MESSAGE =
 	"Codeflow runtime failure. The root handoff is now BLOCKED; stop immediately and do not retry or repair Codeflow.";
 
-export function taskResolutionFailure(
-	error: unknown,
-	details: TaskDetails,
-): ToolResult<TaskDetails> {
+export function taskResolutionFailure(error: unknown): never {
 	if (error instanceof GoalError || error instanceof TaskContractError) {
-		const message = error instanceof Error ? error.message : String(error);
-		return { content: [{ type: "text", text: message }], details, isError: true };
+		throw error;
 	}
 	const paths = currentRun();
 	const rootHandoffId = process.env.CODEFLOW_HANDOFF_ID;
@@ -50,19 +46,18 @@ export function taskResolutionFailure(
 			// itself fails; the depth-0 runner exit gate will block the root.
 		}
 	}
-	return {
-		content: [{ type: "text", text: RUNTIME_FAILURE_MESSAGE }],
-		details,
-		isError: true,
-		terminate: true,
-	};
+	throw new Error(RUNTIME_FAILURE_MESSAGE);
 }
 
 const TaskParams = Type.Object({
 	agent: Type.String({ description: "Codeflow role name; resolved to agents/<role>.md by filename" }),
 	prompt: Type.String({ description: "Task prompt handed to the role" }),
-	goal_id: Type.Optional(Type.String({ description: "Goal contract id" })),
-	lane: Type.Optional(Type.String({ description: "Goal lane: test, code, or verify" })),
+	goal_id: Type.Optional(Type.String({
+		description: "Goal contract id; use only with tester/coder/verify and omit for architect",
+	})),
+	lane: Type.Optional(Type.String({
+		description: "Goal lane: test, code, or verify; omit for architect, which owns no lane",
+	})),
 });
 
 const GoalParams = Type.Object({
@@ -78,8 +73,12 @@ const TaskGroupParams = Type.Object({
 		Type.Object({
 			agent: Type.String({ description: "Codeflow role name" }),
 			prompt: Type.String({ description: "Task prompt for the role" }),
-			goal_id: Type.Optional(Type.String()),
-			lane: Type.Optional(Type.String()),
+			goal_id: Type.Optional(Type.String({
+				description: "Goal contract id; omit for architect",
+			})),
+			lane: Type.Optional(Type.String({
+				description: "Goal lane: test, code, or verify; omit for architect",
+			})),
 		}),
 	),
 	max_concurrency: Type.Optional(
@@ -105,13 +104,7 @@ export default function (pi: ExtensionAPI) {
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ToolResult<unknown>> {
 			const paths = currentRun();
-			if (!paths) {
-				return {
-					content: [{ type: "text", text: "goal contracts require a Codeflow run" }],
-						details: undefined,
-					isError: true,
-				};
-			}
+			if (!paths) throw new Error("goal contracts require a Codeflow run");
 			try {
 				const previousCwd = process.cwd();
 				process.chdir(ctx.cwd);
@@ -126,8 +119,7 @@ export default function (pi: ExtensionAPI) {
 					process.chdir(previousCwd);
 				}
 			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				return { content: [{ type: "text", text: message }], details: undefined, isError: true };
+				throw error instanceof Error ? error : new Error(String(error));
 			}
 		},
 	});
@@ -137,24 +129,20 @@ export default function (pi: ExtensionAPI) {
 		label: "Task",
 		description:
 			"Delegate a task to a named Codeflow role. " +
-			"The role runs in an isolated pi child process with its own context.",
+			"The role runs in an isolated pi child process with its own context. " +
+			"Architect is an unlaned advisory role: omit goal_id and lane when delegating to it.",
 		parameters: TaskParams,
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx): Promise<ToolResult<TaskDetails>> {
 			const agent = params.agent.trim();
 			const details: TaskDetails = { agent, exitCode: 1, stderr: "" };
-			const fail = (text: string): ToolResult<TaskDetails> => ({
-				content: [{ type: "text", text }],
-				details,
-				isError: true,
-			});
 
 			let goal: GoalTaskRef | null = null;
 			try {
 				goal = resolveGoalTask(agent, params.goal_id, params.lane);
 				if (goal) assertGoalLaneAvailable(goal);
 			} catch (error) {
-				return taskResolutionFailure(error, details);
+				taskResolutionFailure(error);
 			}
 			details.goalId = goal?.goalId;
 			details.lane = goal?.lane;
@@ -180,9 +168,8 @@ export default function (pi: ExtensionAPI) {
 			// Without a registry there is no pointer to return, so the child's
 			// text stays the result; this is the unregistered fallback path.
 			if (!handoff) {
-				return result.success
-					? { content: [{ type: "text", text: result.content }], details }
-					: fail(result.content);
+				if (!result.success) throw new Error(result.content);
+				return { content: [{ type: "text", text: result.content }], details };
 			}
 
 			const reconciled = reconcileHandoff(handoff, result, ctx.cwd);
@@ -195,9 +182,8 @@ export default function (pi: ExtensionAPI) {
 				handoff.statePath,
 			);
 			const text = JSON.stringify(pointer);
-			return reconciled.status === "PASS"
-				? { content: [{ type: "text", text }], details }
-				: { content: [{ type: "text", text }], details, isError: true };
+			if (reconciled.status !== "PASS") throw new Error(text);
+			return { content: [{ type: "text", text }], details };
 		},
 	});
 
@@ -246,6 +232,9 @@ export default function (pi: ExtensionAPI) {
 						goal = resolveGoalTask(agent, task.goal_id, task.lane);
 						if (goal) assertGoalLaneAvailable(goal);
 					} catch (error) {
+						if (!(error instanceof GoalError) && !(error instanceof TaskContractError)) {
+							taskResolutionFailure(error);
+						}
 						results[index] = {
 							agent,
 							success: false,
@@ -305,16 +294,9 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (wasAborted) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: "task_group was aborted by cancellation; running children were killed.",
-						},
-					],
-					details: undefined,
-					isError: true,
-				};
+				throw new Error(
+					"task_group was aborted by cancellation; running children were killed.",
+				);
 			}
 
 			return {

@@ -153,6 +153,93 @@ test("CODEFLOW_STREAM_IDLE_TIMEOUT_MS still overrides the raised default", async
 	}
 });
 
+test("aborts a bash tool that exceeds its hard wall-time limit", async () => {
+	const savedTimeout = process.env.CODEFLOW_BASH_TIMEOUT_MS;
+	process.env.CODEFLOW_BASH_TIMEOUT_MS = "120";
+	const originalWrite = process.stderr.write;
+	const lines: string[] = [];
+	try {
+		const mod = await import("../../runtime/extensions/agent-watchdog/index.ts?bash-timeout");
+		const handlers: Record<string, (e: any, ctx: any) => void> = {};
+		const stubPi = {
+			on: (event: string, handler: (e: any, ctx: any) => void) => {
+				handlers[event] = handler;
+			},
+		};
+		let aborted = 0;
+		const stubCtx = { abort: () => { aborted++; } };
+		(mod as any).default(stubPi);
+
+		process.stderr.write = ((chunk: unknown) => {
+			lines.push(String(chunk));
+			return true;
+		}) as typeof process.stderr.write;
+		handlers.tool_execution_start?.(
+			{ toolCallId: "bash-stuck", toolName: "bash", args: {} },
+			stubCtx,
+		);
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(aborted).toBe(1);
+		expect(lines.some((line) => line.includes((mod as any).BASH_TIMEOUT_ABORT_MARKER))).toBe(true);
+	} finally {
+		process.stderr.write = originalWrite;
+		if (savedTimeout === undefined) delete process.env.CODEFLOW_BASH_TIMEOUT_MS;
+		else process.env.CODEFLOW_BASH_TIMEOUT_MS = savedTimeout;
+	}
+});
+
+test("clears a bash hard-timeout when the tool finishes", async () => {
+	const savedTimeout = process.env.CODEFLOW_BASH_TIMEOUT_MS;
+	process.env.CODEFLOW_BASH_TIMEOUT_MS = "120";
+	try {
+		const mod = await import("../../runtime/extensions/agent-watchdog/index.ts?bash-finished");
+		const handlers: Record<string, (e: any, ctx: any) => void> = {};
+		const stubPi = {
+			on: (event: string, handler: (e: any, ctx: any) => void) => {
+				handlers[event] = handler;
+			},
+		};
+		let aborted = 0;
+		const stubCtx = { abort: () => { aborted++; } };
+		(mod as any).default(stubPi);
+
+		const event = { toolCallId: "bash-fast", toolName: "bash", args: {} };
+		handlers.tool_execution_start?.(event, stubCtx);
+		handlers.tool_execution_end?.(event, stubCtx);
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(aborted).toBe(0);
+	} finally {
+		if (savedTimeout === undefined) delete process.env.CODEFLOW_BASH_TIMEOUT_MS;
+		else process.env.CODEFLOW_BASH_TIMEOUT_MS = savedTimeout;
+	}
+});
+
+test("CODEFLOW_BASH_TIMEOUT_MS=0 disables the bash hard-timeout", async () => {
+	const savedTimeout = process.env.CODEFLOW_BASH_TIMEOUT_MS;
+	process.env.CODEFLOW_BASH_TIMEOUT_MS = "0";
+	try {
+		const mod = await import("../../runtime/extensions/agent-watchdog/index.ts?bash-disabled");
+		const handlers: Record<string, (e: any, ctx: any) => void> = {};
+		const stubPi = {
+			on: (event: string, handler: (e: any, ctx: any) => void) => {
+				handlers[event] = handler;
+			},
+		};
+		let aborted = 0;
+		const stubCtx = { abort: () => { aborted++; } };
+		(mod as any).default(stubPi);
+		handlers.tool_execution_start?.(
+			{ toolCallId: "bash-disabled", toolName: "bash", args: {} },
+			stubCtx,
+		);
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(aborted).toBe(0);
+	} finally {
+		if (savedTimeout === undefined) delete process.env.CODEFLOW_BASH_TIMEOUT_MS;
+		else process.env.CODEFLOW_BASH_TIMEOUT_MS = savedTimeout;
+	}
+});
+
 test("the abort line carries the shared STREAM_IDLE_ABORT_MARKER", async () => {
 	// handoff-gate classifies a watchdog abort by matching the abort line's
 	// prefix. The marker constant lives in handoff-gate as the single

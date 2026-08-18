@@ -25,17 +25,18 @@ describe("runtime architecture boundaries", () => {
 		}
 	});
 
-	test("model-facing prompts do not expose the private runtime directory", () => {
-		const modelFacing = [
-			"runtime/AGENTS.md",
-			...fs.readdirSync(path.join(repo, "runtime/agents")).map((file) => `runtime/agents/${file}`),
-		];
-		for (const relative of modelFacing) {
-			const prompt = read(relative);
-			expect(prompt).not.toContain("PI_CODING_AGENT_DIR");
-			expect(prompt).not.toContain(".codeflow/agents");
-			expect(prompt).not.toContain("Current working directory:");
-		}
+	test("roles receive a direct read-only runtime locator", () => {
+		const sharedRules = read("runtime/AGENTS.md");
+		const run = read("runtime/cli/run.ts");
+		const launcher = read("runtime/extensions/codeflow-task/role-launcher.ts");
+		const context = read("runtime/extensions/codeflow-context/index.ts");
+		const guard = read("runtime/extensions/host-guard/policy.ts");
+		expect(sharedRules).toContain("$PI_CODING_AGENT_DIR");
+		expect(sharedRules).toContain("read-only during a business run");
+		expect(run).toContain("PI_CODING_AGENT_DIR: RUNTIME_DIR");
+		expect(launcher).toContain("PI_CODING_AGENT_DIR: RUNTIME_DIR");
+		expect(context).not.toContain("delete process.env.PI_CODING_AGENT_DIR");
+		expect(guard).toContain("Codeflow runtime is read-only during a run");
 		expect(read("runtime/bin/codeflow")).not.toContain("export PI_CODING_AGENT_DIR");
 		expect(read("runtime/bin/code-agent")).not.toContain("export PI_CODING_AGENT_DIR");
 	});
@@ -89,6 +90,22 @@ describe("runtime architecture boundaries", () => {
 		expect(launcher).toContain("HOST_GUARD_EXTENSION");
 	});
 
+	test("the root process exports one absolute run-state root to every worktree", () => {
+		const run = read("runtime/cli/run.ts");
+		expect(run).toContain("path.resolve(cwd, configured ?? DEFAULT_RUNS_DIR)");
+		expect(run).toContain("CODEFLOW_RUNS_DIR: runsDir");
+	});
+
+	test("root, delegated, and isolated support roles load dynamic provider profiles", () => {
+		const run = read("runtime/cli/run.ts");
+		const launcher = read("runtime/extensions/codeflow-task/role-launcher.ts");
+		const compressor = read("runtime/extensions/bash-compressor/index.ts");
+		expect(run).toContain('extensions", "provider-profiles"');
+		expect(launcher).toContain("PROVIDER_PROFILES_EXTENSION");
+		expect(compressor).toContain("PROVIDER_PROFILES_EXTENSION");
+		expect(compressor).toContain('"--no-extensions"');
+	});
+
 	test("task extension separates tool registration, registry, and child launching", () => {
 		for (const name of ["index.ts", "registry.ts", "role-launcher.ts", "handoff-gate.ts"]) {
 			expect(exists(path.join("runtime/extensions/codeflow-task", name))).toBe(true);
@@ -103,6 +120,7 @@ describe("runtime architecture boundaries", () => {
 	test("doctor derives credentials from runtime configuration", () => {
 		const doctor = read("scripts/doctor.sh");
 		expect(doctor).toContain("models.json");
+		expect(doctor).toContain("provider-profiles.json");
 		expect(doctor).toContain("runtime/agents");
 		expect(doctor).not.toContain("test-writer");
 		expect(doctor).not.toContain("test-runner");

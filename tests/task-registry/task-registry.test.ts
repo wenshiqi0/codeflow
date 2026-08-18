@@ -19,11 +19,19 @@ beforeEach(() => {
 	project = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-task-registry-"));
 	process.chdir(project);
 	paths = new RunPaths(".codeflow/runs/code", "run-task-registry-test");
-	for (const key of ["CODEFLOW_RUN_ID", "CODEFLOW_RUNS_DIR", "CODEFLOW_HANDOFF_ID"]) {
+	for (const key of [
+		"CODEFLOW_RUN_ID",
+		"CODEFLOW_RUNS_DIR",
+		"CODEFLOW_HANDOFF_ID",
+		"CODEFLOW_AGENT_ROLE",
+		"CODEFLOW_AGENT_DEPTH",
+	]) {
 		savedEnv[key] = process.env[key];
 	}
 	process.env.CODEFLOW_RUN_ID = paths.runId;
 	process.env.CODEFLOW_RUNS_DIR = paths.code;
+	process.env.CODEFLOW_AGENT_ROLE = "planner";
+	process.env.CODEFLOW_AGENT_DEPTH = "0";
 });
 
 afterEach(() => {
@@ -65,6 +73,39 @@ describe("task registry", () => {
 		expect(() => resolveGoalTask("coder", "movement-r1", "test")).toThrow(
 			"does not own goal movement-r1 lane test",
 		);
+	});
+
+	test("keeps architect outside goal lanes with an actionable correction", () => {
+		defineMovementGoal();
+		expect(() => resolveGoalTask("architect", "movement-r1", "code")).toThrow(
+			"role architect owns no goal lane; delegate it without goal_id or lane",
+		);
+		expect(resolveGoalTask("architect", undefined, undefined)).toBeNull();
+	});
+
+	test("the task tool throws contract failures so Pi records isError true", async () => {
+		defineMovementGoal();
+		const registered = new Map<string, any>();
+		const mod = await import("../../runtime/extensions/codeflow-task/index.ts");
+		mod.default({
+			registerTool: (tool: { name: string }) => registered.set(tool.name, tool),
+		} as never);
+		const task = registered.get("task");
+		expect(task).toBeDefined();
+		await expect(
+			task.execute(
+				"tool-call",
+				{
+					agent: "architect",
+					prompt: "decide a boundary",
+					goal_id: "movement-r1",
+					lane: "code",
+				},
+				undefined,
+				undefined,
+				{ cwd: project },
+			),
+		).rejects.toThrow("role architect owns no goal lane");
 	});
 
 	test("reconciles a successful child without losing the watchdog marker import", () => {
@@ -109,17 +150,10 @@ describe("task registry", () => {
 			depth: 0,
 		});
 		process.env.CODEFLOW_HANDOFF_ID = root.handoff_id;
-		const details = { agent: "tester", exitCode: 1, stderr: "" };
 
-		const result = taskResolutionFailure(
-			new ReferenceError("secretInternalSymbol is not defined"),
-			details,
-		);
-
-		expect(result.isError).toBe(true);
-		expect(result.terminate).toBe(true);
-		expect(result.content[0]?.text).toContain("Codeflow runtime failure");
-		expect(result.content[0]?.text).not.toContain("secretInternalSymbol");
+		expect(() =>
+			taskResolutionFailure(new ReferenceError("secretInternalSymbol is not defined")),
+		).toThrow("Codeflow runtime failure");
 		const state = JSON.parse(
 			fs.readFileSync(paths.statePath(root.handoff_id), "utf8"),
 		) as { status: string; blocked?: { reasons?: string[] } };
@@ -128,13 +162,8 @@ describe("task registry", () => {
 	});
 
 	test("expected goal-contract errors remain ordinary tool errors", () => {
-		const result = taskResolutionFailure(new GoalError("invalid goal lane"), {
-			agent: "tester",
-			exitCode: 1,
-			stderr: "",
-		});
-		expect(result.isError).toBe(true);
-		expect(result.terminate).toBeUndefined();
-		expect(result.content[0]?.text).toContain("invalid goal lane");
+		expect(() => taskResolutionFailure(new GoalError("invalid goal lane"))).toThrow(
+			"invalid goal lane",
+		);
 	});
 });

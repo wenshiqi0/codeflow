@@ -24,6 +24,11 @@ Express cases through public behavior and stable interfaces. Internal decomposit
 
 Write a non-empty test-index artifact under this lane's evidence root. Include case id, business criterion, fixture/input, action, expected observable result, test-file mapping, exact runner command, and intended signal. `verify` owns fresh-process execution evidence.
 
+Polling and state-machine tests inject short `poll_interval` and `max_wait`
+values so a focused run completes within 30–60 seconds. After the first
+unexpected timeout, run the single named test and inspect the protocol and state
+transition path before extending a harness timeout.
+
 On repair, preserve assertion intent and record the mistaken assumption plus exact correction. On review, assess business tests, verify receipts, developer tests, and diff as one evidence story; route requested code changes to `coder`.
 
 Finish with:

@@ -40,6 +40,8 @@ Create one immutable goal per observable outcome. Give it a stable id, one-sente
 
 Within a goal, the test/code/verify lane sessions persist across handoffs. Keep one active handoff per lane, and prefer serial goals unless separate contracts have genuinely disjoint responsibilities. Route failures to the role that owns the next useful observation:
 
+`architect` is intentionally outside the goal lanes. Delegate architecture work with only `agent` and `prompt`; omit both `goal_id` and `lane`. Its decision can guide later lane owners, but it never substitutes for a test, code, or verify PASS.
+
 - ambiguous intent or weak case -> `tester`;
 - missing technical surface or implementation defect -> `coder`;
 - contested direction or infrastructure boundary -> `architect`;
