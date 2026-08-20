@@ -66,7 +66,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const runtime = process.argv[1];
 const staticProviders = JSON.parse(fs.readFileSync(path.join(runtime, "models.json"), "utf8")).providers;
-const profileProviders = JSON.parse(fs.readFileSync(path.join(runtime, "provider-profiles.json"), "utf8")).providers;
+const providersPath = path.join(runtime, "providers.json");
+const profileProviders = fs.existsSync(providersPath)
+  ? JSON.parse(fs.readFileSync(providersPath, "utf8")).providers
+  : {};
 const roles = JSON.parse(fs.readFileSync(path.join(runtime, "roles.json"), "utf8")).roles;
 const impact = new Map();
 for (const [role, definition] of Object.entries(roles).sort(([left], [right]) => left.localeCompare(right))) {
@@ -111,7 +114,7 @@ section "Runtime"
 
 for required in \
   "$RUNTIME_DIR/models.json" \
-  "$RUNTIME_DIR/provider-profiles.json" \
+  "$RUNTIME_DIR/providers.json.example" \
   "$RUNTIME_DIR/roles.json" \
   "$RUNTIME_DIR/AGENTS.md" \
   "$RUNTIME_DIR/lib/handoff/index.ts" \

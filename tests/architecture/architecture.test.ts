@@ -126,7 +126,7 @@ describe("runtime architecture boundaries", () => {
 	test("doctor derives credentials from runtime configuration", () => {
 		const doctor = read("scripts/doctor.sh");
 		expect(doctor).toContain("models.json");
-		expect(doctor).toContain("provider-profiles.json");
+		expect(doctor).toContain("providers.json");
 		expect(doctor).toContain("roles.json");
 		expect(doctor).not.toContain("test-writer");
 		expect(doctor).not.toContain("test-runner");

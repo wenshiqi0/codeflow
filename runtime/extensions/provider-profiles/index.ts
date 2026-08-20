@@ -1,8 +1,7 @@
 /**
- * Register Codeflow-owned provider profiles whose endpoints are supplied by
- * the caller environment. Pi intentionally does not interpolate baseUrl in
- * models.json, so dynamic endpoints belong in an extension rather than a
- * generated or user-edited runtime file.
+ * Register local provider profiles whose endpoints are supplied by the caller
+ * environment. Pi intentionally does not interpolate baseUrl in models.json,
+ * so dynamic endpoints are loaded from the gitignored providers.json file.
  */
 
 import * as fs from "node:fs";
@@ -15,7 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-export const PROVIDER_PROFILES_PATH = path.join(RUNTIME_DIR, "provider-profiles.json");
+export const PROVIDER_PROFILES_PATH = path.join(RUNTIME_DIR, "providers.json");
 
 interface ProviderProfile {
 	name: string;
@@ -37,7 +36,14 @@ export interface ConfiguredProviderProfile {
 const ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
 
 function parseManifest(file: string): ProviderProfilesManifest {
-	const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<ProviderProfilesManifest>;
+	let source: string;
+	try {
+		source = fs.readFileSync(file, "utf8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { providers: {} };
+		throw error;
+	}
+	const parsed = JSON.parse(source) as Partial<ProviderProfilesManifest>;
 	if (!parsed.providers || typeof parsed.providers !== "object" || Array.isArray(parsed.providers)) {
 		throw new Error(`invalid provider profile manifest: ${file}`);
 	}
