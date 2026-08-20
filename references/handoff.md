@@ -88,11 +88,14 @@ A closed enum. Free-text prose is not an acceptable failure report.
 | --- | --- |
 | `CONTEXT_BUDGET_EXCEEDED` | Protected context exceeded the model window; split the work |
 | `DELEGATION_ARTIFACT_MISSING` | Mandatory artifact absent at finish |
+| `EXECUTION_TIMEOUT` | A command exceeded its per-command timeout and its process tree was terminated; only the planner decides what happens next |
 | `OUTPUT_TRUNCATED` | Response ended `finish=length`; not an empty success |
 | `PROVIDER_FAILURE` | Timeout, auth failure, quota, overload, transport error |
 | `USER_CANCELLED` | Explicit cancellation |
 
 Several may apply at once; pass `--blocked-reason` more than once. Any of these finishes the handoff `BLOCKED` — never an implicit retry, which would hide a real failure behind a second attempt.
+
+An `EXECUTION_TIMEOUT` is reconciled cause-first: a delegated child aborted by the bash watchdog's marker line is classified `EXECUTION_TIMEOUT` (never a bare `DELEGATION_ARTIFACT_MISSING`), a missing receipt trails it, and explicit user cancellation still outranks the marker. A timed-out verification command returns exit code 124 with `failure_class: RUNNER_BLOCKED` and `error_class: EXECUTION_TIMEOUT`; after the record is durable, the recorder mechanically finishes the registered child handoff `BLOCKED`, so the planner receives the cause even if the role fails to issue a final handoff command.
 
 ## Events
 
@@ -104,7 +107,7 @@ Delivered by writing to `tmp/` then renaming into `events/`, so a reader never s
 
 Kinds: `run_started`, `run_resumed`, `run_finished`, `handoff_opened`, `handoff_finished`, `artifact_written`, `runner_exited`.
 
-The event body is also a mechanical contract. `kind`, `status`, and every value in `reasons` must come from closed enums. `summary` is normalized to one bounded line. If it is absent, or the handoff ends in an error/truncation, the summary is built from the original log's first and last 100 characters, flattened to one line with obvious credentials redacted. Besides that bounded summary, identifiers, and pointers, no payload fields are allowed. `codeflow sub` exposes only filename metadata plus `reasons` and `summary`. A terminal provider signal is published as `handoff_finished BLOCKED` as soon as the delegation layer observes it, without waiting for the child process to drain and close.
+The event body is also a mechanical contract. `kind`, `status`, and every value in `reasons` must come from closed enums. `summary` is normalized to one bounded line. If it is absent, or the handoff ends in an error/truncation, the summary is built from the original log's first and last 100 characters, flattened to one line with obvious credentials redacted. Besides that bounded summary, identifiers, and pointers, no payload fields are allowed. `codeflow sub` exposes only filename metadata plus `reasons` and `summary`. A terminal provider signal is published as `handoff_finished BLOCKED` as soon as the delegation layer observes it, without waiting for the child process to drain and close; a bash wall-time timeout observed through the watchdog's marker line is published the same way, classified `EXECUTION_TIMEOUT`.
 
 Sequence numbers are allocated under an exclusive lock, so `--since` is a reliable watermark.
 

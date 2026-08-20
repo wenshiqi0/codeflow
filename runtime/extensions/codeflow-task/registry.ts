@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+	BASH_TIMEOUT_ABORT_MARKER,
 	blockedReasons,
 	delegationPointer,
 	MISSING_HANDOFF_FINISH_SUMMARY,
@@ -145,10 +146,17 @@ export function openHandoff(
 	}
 }
 
-export function readHandoffState(statePath: string): { status?: string; result?: string } {
+export function readHandoffState(
+	statePath: string,
+): { status?: string; result?: string; blockedReasons?: string[] } {
 	try {
 		const state = JSON.parse(fs.readFileSync(statePath, "utf-8"));
-		return { status: state.status, result: state.result };
+		const blockedReasons = Array.isArray(state.blocked?.reasons)
+			? state.blocked.reasons.filter((reason: unknown): reason is string => typeof reason === "string")
+			: typeof state.blocked?.reason === "string"
+				? [state.blocked.reason]
+				: undefined;
+		return { status: state.status, result: state.result, blockedReasons };
 	} catch {
 		return {};
 	}
@@ -196,13 +204,19 @@ export function reconcileHandoff(
 		stopReason: result.stopReason,
 		aborted: result.aborted,
 		watchdogAborted: result.stderr.includes(STREAM_IDLE_ABORT_MARKER),
+		executionTimeout: result.stderr.includes(BASH_TIMEOUT_ABORT_MARKER),
 		receiptPresent,
 	});
 	const recorded = readHandoffState(handoff.statePath);
 	if (recorded.status === "done" || recorded.status === "blocked") {
 		return {
 			status: recorded.status === "blocked" ? "BLOCKED" : recorded.result ?? "PASS",
-			reasons: recorded.status === "blocked" ? reasons : [],
+			// A child that regained control may have finished itself BLOCKED with
+			// a more precise reason than can be reconstructed from its clean
+			// process exit. Preserve the immutable state verdict in the pointer
+			// returned to the planner instead of replacing it with a synthetic
+			// DELEGATION_ARTIFACT_MISSING.
+			reasons: recorded.status === "blocked" ? recorded.blockedReasons ?? reasons : [],
 			receipt: receiptPresent ? handoff.receiptPath : null,
 		};
 	}

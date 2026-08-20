@@ -73,7 +73,7 @@ A timeout returning zero events is not a problem. It means the run is working. C
 
 Exactly two things end your watch early:
 
-1. a handoff finished `BLOCKED` — read its `reason`;
+1. a handoff finished `BLOCKED` — read its `reason`; `EXECUTION_TIMEOUT` is the exception that transfers control to the root planner, so keep subscribing until the planner chooses a bounded next action or the root/run becomes terminal;
 2. `runner_exited` from the depth-0 runner arrived while the last business event was not terminal — the loop died without finishing. Auxiliary roles never emit it.
 
 Nothing else. **Terminal silence and elapsed wall time are never failure evidence** and must never make you kill a run. A long handoff reports `stale: true` past `CODEFLOW_HANDOFF_TIMEOUT_SECONDS`; that is an age, not a verdict. A model reasoning for four minutes looks exactly like a hung one from outside — this is why the stop signals are explicit rather than inferred.
@@ -108,6 +108,7 @@ What crosses runs is the planner's final report. When a follow-up run needs an e
 `blocked.reason` is a closed enum, and each reason implies a different response:
 
 - `DELEGATION_ARTIFACT_MISSING` — a role finished without its mandatory artifact. Check only the expected artifact and receipt paths for existence and non-emptiness; do not treat prose as a substitute receipt.
+- `EXECUTION_TIMEOUT` — a command exceeded its per-command timeout and its process tree was terminated (evidence exit code 124, `error_class: "EXECUTION_TIMEOUT"`). The run returned control to the planner on purpose: only the planner decides whether to split the command, change the timeout or environment, or redelegate. Never an automatic retry.
 - `OUTPUT_TRUNCATED` — a response hit the length limit. The work needs splitting, not retrying.
 - `CONTEXT_BUDGET_EXCEEDED` — a role's context did not fit. Split the requirement and start a new run.
 - `PROVIDER_FAILURE` — timeout, auth, quota, or transport. An environment problem; verify credentials with `scripts/doctor.sh` before restarting.

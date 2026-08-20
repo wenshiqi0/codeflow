@@ -12,7 +12,7 @@ Coordination happens in handoffs: one unit of work from a delegator to a receive
 
 State changes and queries are programmatic; requirement expression goes through models. `code-agent handoff open/start/finish/status/list` owns every transition (`open` -> `running` -> `done(PASS|FAIL)` or `blocked(reason)`), sequences, receipt validation, and events. Models write handoff bodies, receipt narratives, and diagnoses. Never hand-write `state.json`, event files, `active/` sentinels, or liveness records; never claim liveness in prose. Scope conflicts persist as `scope_conflicts` in `state.json`.
 
-A `PASS` or `FAIL` needs a validated receipt file: `code-agent handoff finish --id "$CODEFLOW_HANDOFF_ID" --status <STATUS> --receipt <file> --artifact <path> --summary "<one line>"`. A final message is not a receipt. `BLOCKED` needs no receipt file; the enum is the receipt. `blocked.reason` is one of `CONTEXT_BUDGET_EXCEEDED`, `DELEGATION_ARTIFACT_MISSING`, `OUTPUT_TRUNCATED`, `PROVIDER_FAILURE`, `USER_CANCELLED`. Pass `--blocked-reason` more than once when several apply.
+A `PASS` or `FAIL` needs a validated receipt file: `code-agent handoff finish --id "$CODEFLOW_HANDOFF_ID" --status <STATUS> --receipt <file> --artifact <path> --summary "<one line>"`. A final message is not a receipt. `BLOCKED` needs no receipt file; the enum is the receipt. `blocked.reason` is one of `CONTEXT_BUDGET_EXCEEDED`, `DELEGATION_ARTIFACT_MISSING`, `EXECUTION_TIMEOUT`, `OUTPUT_TRUNCATED`, `PROVIDER_FAILURE`, `USER_CANCELLED`. Pass `--blocked-reason` more than once when several apply.
 
 ## Shared facts
 
@@ -49,5 +49,6 @@ The ledger lives and dies with this run. Do not treat it as durable knowledge, a
 - Put temporary run artifacts below `.codeflow/runs/`.
 - Never grep, cat, tail, or otherwise content-scan `.codeflow/runs/`. State queries go through `code-agent handoff status/list` and artifact-existence checks only; run-artifact bodies are not agent input. Shared facts reach you through injected context, not by reading `facts.jsonl`.
 - Explicit provider timeout, authentication failure, quota exhaustion, overload, transport failure, or user cancellation finishes a handoff `BLOCKED`; never an implicit retry. Silence while a provider queues is not failure evidence.
+- A verification command killed by its per-command timeout (`code-agent evidence run` exit 124, `error_class: "EXECUTION_TIMEOUT"`) is mechanically recorded and finishes the current handoff `BLOCKED`; return the result to the planner without another terminal transition. Never implicitly retry the same timed-out command — splitting the command, changing the timeout or environment, or redelegating is a planner decision, not a coder or verify one.
 - A delegated response ending with `finish=length` is output truncation, not an empty success. When its mandatory artifact is absent it is `BLOCKED` with both truncation and missing-artifact reasons; do not silently retry inside the same handoff.
 - Run `code-agent check source` after implementation edits and before test execution.

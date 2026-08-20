@@ -19,7 +19,8 @@ test surface with it.
 | --- | --- | --- |
 | `seq/` | `lib/seq.ts` | Cross-process uniqueness of event sequence numbers |
 | `facts/` | `lib/facts.ts` | The ledger: verifiable claims, append-only corrections |
-| `handoff/` | `lib/handoff/index.ts` | State machine, receipt validation, event emission |
+| `handoff/` | `lib/handoff/index.ts` | State machine, receipt validation, event emission, the closed blocked-reason enum |
+| `evidence/` | `lib/command-evidence.ts` + `cli/evidence.ts` | Real exit codes, complete logs, batch aggregation, and the per-command execution timeout (12-minute default, `--timeout-ms`/env override, tree kill, exit 124, `error_class: EXECUTION_TIMEOUT`) |
 | `goals/` | `lib/goals.ts` | Immutable goal contracts and derived goal joins |
 | `cli-run/` | `cli/run.ts` | The depth-0 root handoff that makes exec terminable |
 | `roles/` | `lib/roles.ts` | Frontmatter to pi invocation, including defaults |
@@ -33,8 +34,8 @@ test surface with it.
 | `liveness/` | `lib/liveness.ts` | Multi-signal probing; never DEAD from one signal |
 | `context/` | `extensions/codeflow-context/context.ts` | Rule levels and fact injection |
 | `provider-profiles/` | `extensions/provider-profiles/index.ts` | Environment-driven provider isolation and safe endpoint validation |
-| `handoff-gate/` | `extensions/codeflow-task/handoff-gate.ts` | Blocked-reason classification |
-| `task-registry/` | `extensions/codeflow-task/registry.ts` | Successful task reconciliation and child-result integration |
+| `handoff-gate/` | `extensions/codeflow-task/handoff-gate.ts` | Blocked-reason classification, including `EXECUTION_TIMEOUT` as a distinct cause with cause-first ordering |
+| `task-registry/` | `extensions/codeflow-task/registry.ts` | Successful task reconciliation and child-result integration; timed-out delegations end BLOCKED with a planner pointer and no implicit retry |
 | `host-guard/` | `extensions/host-guard` | Runtime read-only boundary for root and delegated roles |
 | `bash-compressor/` | `extensions/bash-compressor/compressor.ts` | Threshold policy and safe fallback for semantic bash summaries |
 | `agent-watchdog/` | `extensions/agent-watchdog/index.ts` | Stream-idle abort |
