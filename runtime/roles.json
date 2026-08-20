@@ -23,7 +23,7 @@
     },
     "supervisor": {
       "description": "Performs only deterministic checks named by a handoff.",
-      "model": "mimo/mimo-v2.5-pro",
+      "model": "deepseek/deepseek-v4-flash",
       "prompt": "references/capabilities/supervision.md",
       "tools": ["read", "write", "bash"],
       "needs_project_rules": false
@@ -44,7 +44,7 @@
     },
     "verify": {
       "description": "Creates independent execution evidence and classifies what it proves.",
-      "model": "mimo/mimo-v2.5-pro",
+      "model": "deepseek/deepseek-v4-flash",
       "prompt": "references/capabilities/verification.md",
       "needs_project_rules": false,
       "goal_lane": "verify"
