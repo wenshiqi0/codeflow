@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "dataset_id": "SWE-bench/SWE-bench_Verified",
+  "split": "test",
+  "revision": "78f471bf655a3137b2e8a75af1501690ec009ec3",
+  "harness_commit": "7a21e05772954cc81471ae19d56f436cecf43c54",
+  "instances": [
+    {
+      "instance_id": "demo/demo-1001",
+      "repo": "demo/demo",
+      "base_commit": "0f1e2d3c4b5a6978877665544332211ff1e2d3c4",
+      "problem_statement": "The `fix` function returns the wrong value. Please make it return the correct value and keep the public API unchanged.",
+      "patch": "--- a/fix.py\n+++ b/fix.py\n@@ -1,2 +1,2 @@\n def fix():\n-    return \"wrong\"\n+    return \"CANARY_GOLD_PATCH_1001\"\n",
+      "test_patch": "--- a/test_fix.py\n+++ b/test_fix.py\n@@\n+assert fix() == \"CANARY_TEST_PATCH_1001\"\n",
+      "FAIL_TO_PASS": ["CANARY_F2P_1001"],
+      "PASS_TO_PASS": ["CANARY_P2P_1001"],
+      "environment_setup_commit": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+      "hints_text": "CANARY_HINTS_1001",
+      "created_at": "2023-06-01T00:00:00Z",
+      "version": "1.4",
+      "assistant_notes": "CANARY_FUTURE_FIELD_1001"
+    },
+    {
+      "instance_id": "demo/demo-1002",
+      "repo": "demo/demo",
+      "base_commit": "1f1e2d3c4b5a6978877665544332211ff1e2d3c5",
+      "problem_statement": "The cache accounting in the loader is off by one under load. Diagnose and correct it.",
+      "patch": "--- a/fix.py\n+++ b/fix.py\n@@\n+return \"CANARY_GOLD_PATCH_1002\"\n",
+      "test_patch": "--- a/test_fix.py\n+++ b/test_fix.py\n@@\n+assert cache == \"CANARY_TEST_PATCH_1002\"\n",
+      "FAIL_TO_PASS": ["CANARY_F2P_1002"],
+      "PASS_TO_PASS": ["CANARY_P2P_1002"],
+      "environment_setup_commit": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+      "hints_text": "CANARY_HINTS_1002",
+      "created_at": "2023-06-02T00:00:00Z",
+      "version": "1.4"
+    },
+    {
+      "instance_id": "demo/demo-1003",
+      "repo": "demo/demo",
+      "base_commit": "2f1e2d3c4b5a6978877665544332211ff1e2d3c6",
+      "problem_statement": "The worker drops the last task on shutdown. Fix the drain path.",
+      "patch": "--- a/fix.py\n+++ b/fix.py\n@@\n+drain(\"CANARY_GOLD_PATCH_1003\")\n",
+      "test_patch": "--- a/test_fix.py\n+++ b/test_fix.py\n@@\n+assert drained == \"CANARY_TEST_PATCH_1003\"\n",
+      "FAIL_TO_PASS": ["CANARY_F2P_1003"],
+      "PASS_TO_PASS": ["CANARY_P2P_1003"],
+      "environment_setup_commit": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+      "hints_text": "CANARY_HINTS_1003",
+      "created_at": "2023-06-03T00:00:00Z",
+      "version": "1.4"
+    },
+    {
+      "instance_id": "demo/demo-1004",
+      "repo": "demo/demo",
+      "base_commit": "3f1e2d3c4b5a6978877665544332211ff1e2d3c7",
+      "problem_statement": "The CLI prints help twice on an unknown flag. Reduce it to one message with a stable exit code.",
+      "patch": "--- a/fix.py\n+++ b/fix.py\n@@\n+print_once(\"CANARY_GOLD_PATCH_1004\")\n",
+      "test_patch": "--- a/test_fix.py\n+++ b/test_fix.py\n@@\n+assert out == \"CANARY_TEST_PATCH_1004\"\n",
+      "FAIL_TO_PASS": ["CANARY_F2P_1004"],
+      "PASS_TO_PASS": ["CANARY_P2P_1004"],
+      "environment_setup_commit": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+      "hints_text": "CANARY_HINTS_1004",
+      "created_at": "2023-06-04T00:00:00Z",
+      "version": "1.4"
+    },
+    {
+      "instance_id": "demo/demo-1005",
+      "repo": "demo/demo",
+      "base_commit": "4f1e2d3c4b5a6978877665544332211ff1e2d3c8",
+      "problem_statement": "The migration planner spends unbounded effort on pathological schemas. Bound it while keeping the correct plan.",
+      "patch": "--- a/fix.py\n+++ b/fix.py\n@@\n+bound(\"CANARY_GOLD_PATCH_1005\")\n",
+      "test_patch": "--- a/test_fix.py\n+++ b/test_fix.py\n@@\n+assert bounded == \"CANARY_TEST_PATCH_1005\"\n",
+      "FAIL_TO_PASS": ["CANARY_F2P_1005"],
+      "PASS_TO_PASS": ["CANARY_P2P_1005"],
+      "environment_setup_commit": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+      "hints_text": "CANARY_HINTS_1005",
+      "created_at": "2023-06-05T00:00:00Z",
+      "version": "1.4"
+    }
+  ]
+}

@@ -30,6 +30,7 @@ const WATCHDOG_EXTENSION = path.join(RUNTIME_DIR, "extensions", "agent-watchdog"
 const CONTEXT_EXTENSION = path.join(RUNTIME_DIR, "extensions", "codeflow-context", "index.ts");
 const BASH_COMPRESSOR_EXTENSION = path.join(RUNTIME_DIR, "extensions", "bash-compressor", "index.ts");
 const USAGE_LEDGER_EXTENSION = path.join(RUNTIME_DIR, "extensions", "usage-ledger", "index.ts");
+const BENCHMARK_LEDGER_EXTENSION = path.join(RUNTIME_DIR, "extensions", "benchmark-ledger", "index.ts");
 const HOST_GUARD_EXTENSION = path.join(RUNTIME_DIR, "extensions", "host-guard", "index.ts");
 const ROLE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
@@ -158,6 +159,11 @@ export async function runRoleChild(
 	}
 	if (fs.existsSync(USAGE_LEDGER_EXTENSION)) {
 		args.push("--extension", USAGE_LEDGER_EXTENSION);
+	}
+	// Benchmark attempts instrument delegated roles the same way; the
+	// extension is inert outside a benchmark driver (env-gated).
+	if (process.env.CODEFLOW_BENCHMARK_DRIVER_LEDGER_DIR && fs.existsSync(BENCHMARK_LEDGER_EXTENSION)) {
+		args.push("--extension", BENCHMARK_LEDGER_EXTENSION);
 	}
 	if (fs.existsSync(HOST_GUARD_EXTENSION)) {
 		args.push("--extension", HOST_GUARD_EXTENSION);

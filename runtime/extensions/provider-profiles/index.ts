@@ -15,6 +15,7 @@ import {
 
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const PROVIDER_PROFILES_PATH = path.join(RUNTIME_DIR, "providers.json");
+export const PROVIDER_PROFILES_PATH_ENV = "CODEFLOW_PROVIDER_PROFILES_PATH";
 
 interface ProviderProfile {
 	name: string;
@@ -30,7 +31,10 @@ interface ProviderProfilesManifest {
 
 export interface ConfiguredProviderProfile {
 	id: string;
-	config: ProviderConfig;
+	/** configuredProviderProfiles() only yields profiles whose baseUrl was
+	 * resolved from the environment and validated, so `baseUrl` is always a
+	 * non-empty string here even though the library type keeps it optional. */
+	config: ProviderConfig & { baseUrl: string };
 }
 
 const ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
@@ -81,7 +85,7 @@ function validateBaseUrl(id: string, envName: string, value: string): string {
 
 export function configuredProviderProfiles(
 	env: Record<string, string | undefined> = process.env,
-	manifestPath = PROVIDER_PROFILES_PATH,
+	manifestPath = env[PROVIDER_PROFILES_PATH_ENV]?.trim() || PROVIDER_PROFILES_PATH,
 ): ConfiguredProviderProfile[] {
 	const manifest = parseManifest(manifestPath);
 	const configured: ConfiguredProviderProfile[] = [];
