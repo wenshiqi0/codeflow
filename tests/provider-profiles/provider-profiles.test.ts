@@ -8,37 +8,38 @@ import {
 import { readRoleDefinition } from "../../runtime/lib/roles";
 
 const runtimeDir = path.resolve(import.meta.dir, "../../runtime");
+const examplePath = path.join(runtimeDir, "providers.json.example");
+const missingPath = path.join(runtimeDir, "providers.json.missing");
 
 describe("provider profiles", () => {
-	test("merouter is optional and does not disturb existing providers", () => {
-		expect(configuredProviderProfiles({})).toEqual([]);
-		const staticProviders = JSON.parse(
-			fs.readFileSync(path.join(runtimeDir, "models.json"), "utf8"),
-		).providers;
-		expect(staticProviders).not.toHaveProperty("merouter");
+	test("the local providers file is optional", () => {
+		expect(PROVIDER_PROFILES_PATH).toBe(path.join(runtimeDir, "providers.json"));
+		expect(configuredProviderProfiles({}, missingPath)).toEqual([]);
 	});
 
-	test("registers Claude Opus 5 under an isolated merouter provider", () => {
-		const [provider] = configuredProviderProfiles({
-			MEROUTER_BASE_URL: "https://router.example.test/anthropic",
-			MEROUTER_API_KEY: "must-not-be-copied",
-		});
+	test("registers a provider from the checked-in example", () => {
+		const [provider] = configuredProviderProfiles(
+			{
+				CUSTOM_ANTHROPIC_BASE_URL: "https://router.example.test/anthropic",
+				CUSTOM_ANTHROPIC_API_KEY: "must-not-be-copied",
+			},
+			examplePath,
+		);
 
-		expect(provider.id).toBe("merouter");
+		expect(provider.id).toBe("custom-anthropic");
 		expect(provider.config).toMatchObject({
-			name: "MeRouter",
+			name: "Custom Anthropic Provider",
 			baseUrl: "https://router.example.test/anthropic",
-			apiKey: "$MEROUTER_API_KEY",
+			apiKey: "$CUSTOM_ANTHROPIC_API_KEY",
 			api: "anthropic-messages",
 		});
 		expect(provider.config.apiKey).not.toContain("must-not-be-copied");
 		expect(provider.config.models).toEqual([
 			expect.objectContaining({
-				id: "claude-opus-5",
+				id: "example-model",
 				reasoning: true,
-				contextWindow: 1_000_000,
-				maxTokens: 128_000,
-				compat: expect.objectContaining({ forceAdaptiveThinking: true }),
+				contextWindow: 200_000,
+				maxTokens: 8_192,
 			}),
 		]);
 	});
@@ -50,50 +51,24 @@ describe("provider profiles", () => {
 			"https://user:secret@router.example.test",
 			"https://router.example.test?token=secret",
 		]) {
-			expect(() => configuredProviderProfiles({ MEROUTER_BASE_URL: baseUrl })).toThrow();
+			expect(() =>
+				configuredProviderProfiles({ CUSTOM_ANTHROPIC_BASE_URL: baseUrl }, examplePath),
+			).toThrow();
 		}
 	});
 
-	test("the checked-in manifest is the provider metadata source", () => {
-		const manifest = JSON.parse(fs.readFileSync(PROVIDER_PROFILES_PATH, "utf8"));
-		expect(Object.keys(manifest.providers)).toEqual(["merouter"]);
-		expect(manifest.providers.merouter).toMatchObject({
-			baseUrlEnv: "MEROUTER_BASE_URL",
-			apiKeyEnv: "MEROUTER_API_KEY",
+	test("the checked-in example documents the provider metadata shape", () => {
+		const manifest = JSON.parse(fs.readFileSync(examplePath, "utf8"));
+		expect(Object.keys(manifest.providers)).toEqual(["custom-anthropic"]);
+		expect(manifest.providers["custom-anthropic"]).toMatchObject({
+			baseUrlEnv: "CUSTOM_ANTHROPIC_BASE_URL",
+			apiKeyEnv: "CUSTOM_ANTHROPIC_API_KEY",
 		});
 	});
 
-	test("the pinned Pi runtime resolves merouter/claude-opus-5 without a provider request", () => {
-		const result = Bun.spawnSync({
-			cmd: [
-				path.join(runtimeDir, "bin", "pi"),
-				"--no-extensions",
-				"--extension",
-				path.join(runtimeDir, "extensions", "provider-profiles", "index.ts"),
-				"--list-models",
-				"merouter",
-			],
-			cwd: path.resolve(runtimeDir, ".."),
-			env: {
-				...process.env,
-				PI_CODING_AGENT_DIR: runtimeDir,
-				MEROUTER_BASE_URL: "https://router.example.test/anthropic",
-				MEROUTER_API_KEY: "test-only",
-			},
-			stdout: "pipe",
-			stderr: "pipe",
-		});
-		const stdout = result.stdout.toString();
-		expect(result.exitCode).toBe(0);
-		expect(stdout).toContain("merouter");
-		expect(stdout).toContain("claude-opus-5");
-		expect(stdout).not.toContain("test-only");
-	});
-
-	test("the launcher preserves shell overrides for both merouter values", () => {
+	test("the launcher contains no provider-specific environment handling", () => {
 		const launcher = fs.readFileSync(path.join(runtimeDir, "bin", "codeflow"), "utf8");
-		expect(launcher).toContain('INHERITED_MEROUTER_BASE_URL="${MEROUTER_BASE_URL:-}"');
-		expect(launcher).toContain('INHERITED_MEROUTER_API_KEY="${MEROUTER_API_KEY:-}"');
+		expect(launcher).not.toContain("CUSTOM_ANTHROPIC");
 	});
 
 	test("the planner remains bound to GLM 5.3", () => {

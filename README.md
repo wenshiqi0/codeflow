@@ -65,7 +65,7 @@ runtime/              # 内环运行时
 ├── extensions/       #   pi 扩展（provider、委派、上下文、压缩、用量、活性）
 ├── bin/              #   codeflow（外环）+ code-agent（内环）+ pi 定位器
 ├── models.json       #   固定 endpoint 的 Pi provider 注册表
-└── provider-profiles.json # 环境驱动的动态 provider 注册表
+└── providers.json.example # 本地动态 provider 配置模板
 ```
 
 `lib/` 只放核心机制，`cli/` 负责命令适配，`extensions/` 负责 Pi event/tool 适配；扩展通过 `lib/` 复用同一份状态与观测逻辑。
@@ -130,7 +130,7 @@ runtime/extensions
 8. **入口壳、PATH 注入、进程边界** 放 `runtime/bin/`。
 9. **防止结构回退的合同** 放 `tests/architecture/`。
 
-`scripts/doctor.sh` 不维护第二份角色清单；它从 `runtime/models.json`、`runtime/provider-profiles.json` 和 `runtime/roles.json` 推导 endpoint/凭证影响。角色或模型改名后 doctor 不需要手工同步。
+`scripts/doctor.sh` 不维护第二份角色清单；它从 `runtime/models.json`、本地 `runtime/providers.json`（如果存在）和 `runtime/roles.json` 推导 endpoint/凭证影响。角色或模型改名后 doctor 不需要手工同步。
 
 运行时全局单份，不按项目安装。目标项目里只多出 `.codeflow/runs/`（gitignored），无需修改根 `AGENTS.md`——skill 本身就是入口。
 
@@ -203,13 +203,15 @@ KIMI_API_KEY=...
 ZHIPU_API_KEY=...
 MIMO_API_KEY=...
 DEEPSEEK_API_KEY=...
-
-# 可选：独立的 MeRouter Claude Opus 5 provider
-MEROUTER_BASE_URL=https://router.example.com
-MEROUTER_API_KEY=...
 ```
 
-`merouter` 使用 Anthropic Messages 协议；`MEROUTER_BASE_URL` 填 API 根地址，不要包含 `/v1/messages`。配置后可把 `runtime/roles.json` 中某个角色的模型绑定改为 `merouter/claude-opus-5`。它拥有独立 provider ID 和环境变量，不会覆盖 `zhipuai-coding-plan`；默认角色绑定保持不变。
+如果需要接入 base URL 由环境变量提供的自定义 provider，先复制模板：
+
+```bash
+cp runtime/providers.json.example runtime/providers.json
+```
+
+`runtime/providers.json` 是本机动态 provider 注册表：它定义 provider ID、协议、模型元数据，以及 base URL/API key 对应的环境变量名。该文件已被 Git 忽略，便于每台机器保持独立路由；真实 URL 和密钥仍只放在 shell 环境或全局 env 文件中，不写入 JSON。未创建该文件时，Codeflow 仅使用仓库内置的 `runtime/models.json`。要让角色使用自定义模型，将 `runtime/roles.json` 中的绑定写为 `<provider-id>/<model-id>`。
 
 安装后运行预检，确认依赖与密钥齐备：
 

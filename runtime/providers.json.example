@@ -1,0 +1,26 @@
+{
+  "providers": {
+    "custom-anthropic": {
+      "name": "Custom Anthropic Provider",
+      "baseUrlEnv": "CUSTOM_ANTHROPIC_BASE_URL",
+      "apiKeyEnv": "CUSTOM_ANTHROPIC_API_KEY",
+      "api": "anthropic-messages",
+      "models": [
+        {
+          "id": "example-model",
+          "name": "Example Model",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "contextWindow": 200000,
+          "maxTokens": 8192
+        }
+      ]
+    }
+  }
+}
