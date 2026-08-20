@@ -13,7 +13,11 @@ import {
 	RoleError,
 	type ResolvedRole,
 } from "../../lib/roles";
-import { immediateFailureReasons, STREAM_IDLE_ABORT_MARKER } from "./handoff-gate";
+import {
+	BASH_TIMEOUT_ABORT_MARKER,
+	immediateFailureReasons,
+	STREAM_IDLE_ABORT_MARKER,
+} from "./handoff-gate";
 import { finishBlocked } from "./registry";
 import type { GoalTaskRef } from "./registry";
 import { currentRun, type RoleRunResult } from "./shared";
@@ -199,12 +203,14 @@ export async function runRoleChild(
 		observedStopReason: string | undefined,
 		watchdogAborted: boolean,
 		fallbackSummary: string,
+		executionTimeout = false,
 	): void {
 		if (!handoffId) return;
 		const paths = currentRun();
 		const reasons = immediateFailureReasons({
 			stopReason: observedStopReason,
 			watchdogAborted,
+			executionTimeout,
 			receiptPresent: paths ? fs.existsSync(paths.receiptPath(handoffId)) : false,
 		});
 		if (reasons.length === 0) return;
@@ -280,7 +286,16 @@ export async function runRoleChild(
 		});
 		proc.stderr.on("data", (data) => {
 			stderr.text += data.toString();
-			if (stderr.text.includes(STREAM_IDLE_ABORT_MARKER)) {
+			if (stderr.text.includes(BASH_TIMEOUT_ABORT_MARKER)) {
+				// The bash wall-time guard aborted a tool mid-turn: the actual cause
+				// is an execution timeout, published before the child closes.
+				publishImmediateFailure(
+					stopReason,
+					false,
+					"bash tool exceeded its wall-time limit; the watchdog aborted the turn",
+					true,
+				);
+			} else if (stderr.text.includes(STREAM_IDLE_ABORT_MARKER)) {
 				publishImmediateFailure(
 					stopReason,
 					true,

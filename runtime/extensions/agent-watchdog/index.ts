@@ -31,7 +31,11 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { startHandoff } from "../../lib/handoff";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
-import { STREAM_IDLE_ABORT_MARKER } from "../codeflow-task/handoff-gate";
+import { BASH_TIMEOUT_ABORT_MARKER, STREAM_IDLE_ABORT_MARKER } from "../codeflow-task/handoff-gate";
+
+// Re-exported so producers and consumers (and the contract tests) can read
+// the marker from either side of the boundary.
+export { BASH_TIMEOUT_ABORT_MARKER };
 
 // .codeflow/extensions/agent-watchdog/index.ts -> .codeflow
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -74,13 +78,18 @@ const STREAM_IDLE_TICK_MS = Number.parseInt(
  * A bash command may legitimately compile or test for several minutes, but a
  * forgotten root walk must not own a run indefinitely. Fifteen minutes matches
  * the provider-idle ceiling and remains overrideable; 0 disables the guard.
+ * Verification commands have their own tighter recorder-level timeout (see
+ * runtime/lib/command-evidence.ts) that fires first and returns control to
+ * the role; this ceiling is the turn-wide backstop behind it.
  */
 export const BASH_TIMEOUT_DEFAULT_MS = 900_000;
 export const BASH_TIMEOUT_MS = Number.parseInt(
 	process.env.CODEFLOW_BASH_TIMEOUT_MS ?? String(BASH_TIMEOUT_DEFAULT_MS),
 	10,
 );
-export const BASH_TIMEOUT_ABORT_MARKER = "[agent-watchdog] bash timeout";
+// The abort line's prefix is BASH_TIMEOUT_ABORT_MARKER, imported from
+// codeflow-task/handoff-gate: the watchdog produces it and the delegation
+// gate consumes it, so both sides share the one string.
 
 let currentCtx: ExtensionContext | null = null;
 let lastProgressAt = Date.now();

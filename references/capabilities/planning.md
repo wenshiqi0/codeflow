@@ -54,6 +54,8 @@ Choose the next owner from the current evidence gap, not from a fixed ceremony:
 
 Keep one active handoff per lane. Continue a lane from its persistent session and route a failure to the owner of the next useful observation. Provider or Codeflow runtime failure is terminal for the run; close the root handoff `BLOCKED` rather than inspecting, patching, or bypassing Codeflow from a business run.
 
+`EXECUTION_TIMEOUT` is a deliberate control transfer to you, not a provider failure and not permission for the child to retry. The timed-out child handoff is already terminal and its structured pointer names the reason. Choose the next bounded action: split the command, change its timeout only when existing evidence justifies the new bound, route an environment defect to coder, or open an explicit new handoff. Never replay the identical timed-out command implicitly. If none of those actions is safe and bounded, finish the root handoff `BLOCKED` with `EXECUTION_TIMEOUT`.
+
 ## Concise handoffs
 
 A handoff contains only what the receiver needs:
