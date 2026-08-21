@@ -20,7 +20,6 @@ Codeflow separates machine policy from model instructions:
 | Role | Capability |
 | --- | --- |
 | `supervisor` | Named deterministic checks such as artifact presence, checksums, and patch gates |
-| `title-compressor` | One-line registry titles |
 | `zipper` | Internal semantic compression of oversized Bash output |
 
 Support roles remain outside goal lanes. `zipper` is marked `internal` and cannot receive a project handoff.

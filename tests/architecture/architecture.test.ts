@@ -51,10 +51,9 @@ describe("runtime architecture boundaries", () => {
 			"planning.md",
 			"testing.md",
 			"implementation.md",
-			"verification.md",
-			"supervision.md",
-			"title-compression.md",
-			"output-compression.md",
+				"verification.md",
+				"supervision.md",
+				"output-compression.md",
 		];
 		for (const name of capabilities) {
 			const file = read(path.join("references/capabilities", name));

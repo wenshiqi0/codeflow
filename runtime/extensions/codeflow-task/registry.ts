@@ -36,7 +36,6 @@ const CONTEXT_EXTENSION = path.join(RUNTIME_DIR, "extensions", "codeflow-context
 const BASH_COMPRESSOR_EXTENSION = path.join(RUNTIME_DIR, "extensions", "bash-compressor", "index.ts");
 const USAGE_LEDGER_EXTENSION = path.join(RUNTIME_DIR, "extensions", "usage-ledger", "index.ts");
 const ROLE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
-const MAX_CONCURRENCY = 8;
 const INTERNAL_ROLES = new Set(["zipper"]);
 
 interface OpenedHandoff {

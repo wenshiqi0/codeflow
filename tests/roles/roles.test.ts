@@ -122,7 +122,6 @@ describe("resolution", () => {
 			["supervisor", ["read", "write", "bash"]],
 			["verify", undefined],
 			["tester", undefined],
-			["title-compressor", ["read"]],
 			["zipper", undefined],
 		]);
 		for (const name of listRoles(production)) {

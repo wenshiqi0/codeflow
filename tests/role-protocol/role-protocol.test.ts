@@ -25,7 +25,6 @@ describe("capability-oriented role protocol", () => {
 			"planner",
 			"supervisor",
 			"tester",
-			"title-compressor",
 			"verify",
 			"zipper",
 		]);
@@ -113,9 +112,31 @@ describe("capability-oriented role protocol", () => {
 		expect(planner).toContain("The CLI transition, not final prose, completes the run");
 	});
 
+	test("mechanical finish rejection permits one repair without hidden retries", () => {
+		const sharedRules = read("runtime/AGENTS.md");
+		expect(sharedRules).toContain("If `handoff finish` is rejected by CLI validation");
+		expect(sharedRules).toContain("the handoff is still non-terminal");
+		expect(sharedRules).toContain("call `handoff finish` once more");
+		expect(sharedRules).toContain("This repair rule does not apply to business failures");
+
+		const verification = prompt("verify");
+		expect(verification).toContain("the handoff is still non-terminal");
+		expect(verification).toContain("call `handoff finish` once more");
+
+		const supervision = prompt("supervisor");
+		expect(supervision).toContain("call finish once more");
+	});
+
+	test("multi-goal parallelism is limited to initial independent test lanes", () => {
+		const planner = prompt("planner");
+		expect(planner).toContain("use `task_group` to start exactly one initial `tester` handoff per goal");
+		expect(planner).toContain("This is the only default parallel batch");
+		expect(planner).toContain("keep each goal's subsequent `code` and `verify` handoffs serial");
+		expect(planner).toContain("If goals share files, contracts, or ordering, keep them serial");
+	});
+
 	test("support prompts remain narrow", () => {
 		expect(prompt("supervisor")).toContain("only deterministic checks named by the handoff");
-		expect(prompt("title-compressor")).toContain("one registry title line");
 		expect(prompt("zipper")).toContain("at most 4,000 characters");
 		expect(readRoleDefinition(registry, "zipper")?.internal).toBeTrue();
 	});

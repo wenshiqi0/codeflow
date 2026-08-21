@@ -35,13 +35,6 @@
       "needs_project_rules": "shared",
       "goal_lane": "test"
     },
-    "title-compressor": {
-      "description": "Compresses one handoff into a single registry title line.",
-      "model": "mimo/mimo-v2.5-pro",
-      "prompt": "references/capabilities/title-compression.md",
-      "tools": ["read"],
-      "needs_project_rules": false
-    },
     "verify": {
       "description": "Creates independent execution evidence and classifies what it proves.",
       "model": "deepseek/deepseek-v4-flash",

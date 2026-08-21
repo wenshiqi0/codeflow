@@ -59,7 +59,7 @@ const FAILURE_CLASSES = [
 /** An excerpt longer than this is spilled to evidence/ and replaced by a ref. */
 const ERROR_EXCERPT_LIMIT = 2000;
 
-/** Registry titles are one line; a longer Goal triggers async compression. */
+/** Registry titles are one line; a long Goal is truncated. */
 export const TITLE_BUDGET = 80;
 
 const DEFAULT_STALE_SECONDS = 600;

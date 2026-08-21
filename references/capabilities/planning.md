@@ -41,6 +41,8 @@ Create one immutable goal per independently observable outcome. Its purpose and 
 
 Prefer one goal unless outcomes can be completed and accepted independently. Goal progress is derived from the latest `test`, `code`, and `verify` lane handoffs; the goal itself has no mutable state.
 
+When multiple independently observable goals are already justified, define them first, then use `task_group` to start exactly one initial `tester` handoff per goal in parallel. This is the only default parallel batch: do not create goals merely to parallelize, and keep each goal's subsequent `code` and `verify` handoffs serial. If goals share files, contracts, or ordering, keep them serial.
+
 ## Capability composition
 
 Choose the next owner from the current evidence gap, not from a fixed ceremony:
@@ -71,7 +73,7 @@ Do not paste source, documentation, API payloads, command transcripts, or a spec
 
 ## Root closure
 
-When all goal joins are terminal, write a non-empty JSON root receipt and a concise closure artifact under `.codeflow/runs/evidence/<run-id>/`. Report goal outcomes, changed files, evidence pointers, usage, risks, and incomplete work. Finish mechanically:
+When all goal joins are terminal, write a non-empty JSON root receipt and a concise closure artifact under `.codeflow/runs/evidence/<run-id>/`. Report goal outcomes, changed files, evidence pointers, risks, and incomplete work. Finish mechanically:
 
 ```bash
 code-agent handoff finish --id "$CODEFLOW_HANDOFF_ID" --status <PASS|FAIL> --receipt <root receipt path> --artifact <closure artifact path> --summary "<one line>"

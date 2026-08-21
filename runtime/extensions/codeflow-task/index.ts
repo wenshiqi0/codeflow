@@ -19,7 +19,7 @@ import {
 } from "./registry";
 import { roleMayDelegate, runRoleChild, type TaskDetails } from "./role-launcher";
 
-const MAX_CONCURRENCY = 8;
+export const MAX_CONCURRENCY = 8;
 export const MAX_TASK_PROMPT_CHARS = 4_000;
 
 type ToolResult<T> = AgentToolResult<T | undefined>;

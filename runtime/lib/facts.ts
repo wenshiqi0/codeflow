@@ -89,7 +89,7 @@ export function ledgerPath(runDir: string): string {
  * readable ledger must degrade to fewer facts rather than break a run that
  * would otherwise succeed.
  */
-function readRecords(ledger: string): FactRecord[] {
+export function readFactRecords(ledger: string): FactRecord[] {
 	let content: string;
 	try {
 		content = fs.readFileSync(ledger, "utf-8");
@@ -244,7 +244,7 @@ export function appendFacts(
 		);
 	}
 
-	const existing = readRecords(ledger);
+	const existing = readFactRecords(ledger);
 	const knownIds = new Set(existing.map((record) => record.id));
 	const nextIndex = existing.length + 1;
 
@@ -273,7 +273,7 @@ export function appendFacts(
 
 /** The surviving view: every record minus those a later one replaced. */
 export function materialize(ledger: string): FactRecord[] {
-	const records = readRecords(ledger);
+	const records = readFactRecords(ledger);
 	const superseded = new Set(
 		records
 			.filter((record) => record.kind === "supersede" && record.supersedes)
@@ -288,6 +288,17 @@ function locator(record: FactRecord): string {
 	}
 	if (record.symbol) return record.symbol;
 	return record.value ?? "";
+}
+
+export function renderFactRecord(record: FactRecord): string {
+	const correction = record.supersedes
+		? `; supersedes ${record.supersedes}${record.reason ? ` (${record.reason})` : ""}`
+		: "";
+	return `${record.id}: ${record.claim} — ${locator(record)} [${record.role}]${correction}`;
+}
+
+export function renderFactRecords(records: FactRecord[]): string {
+	return records.map(renderFactRecord).join("\n");
 }
 
 /** Plain-text view for context injection. Empty when there is nothing. */
