@@ -19,6 +19,7 @@ set -euo pipefail
 
 RUNTIME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLI_DIR="$RUNTIME_DIR/cli"
+BENCHMARK_CLI="$(cd "$RUNTIME_DIR/.." && pwd)/benchmark/cli/benchmark.ts"
 CODEFLOW_HOME="${CODEFLOW_HOME:-$HOME/.codeflow}"
 
 usage() {
@@ -34,6 +35,7 @@ usage: codeflow <command> [options]
   memo <run-id> "<text>"            append to a run's requirement
   audit <run-id> [--force]          gated audit of a blocked or stale run
   stop <run-id>                     terminate a running run
+  benchmark run|report              SWE-bench Verified benchmark runs and reports
 
   --help, --version
 EOF
@@ -64,6 +66,19 @@ case "${1:-}" in
   ls|sub|goals|usage|stop|memo|audit)
     exec bun "$CLI_DIR/outer.ts" "$@"
     ;;
+  benchmark)
+    # Pure report/help/fixture paths need no provider environment. Real runs
+    # continue below so the normal CODEFLOW_HOME/.env loading happens before
+    # the benchmark driver computes the provider-network exemption set.
+    if [[ "${2:-}" != "run" ]]; then
+      exec bun "$BENCHMARK_CLI" "$@"
+    fi
+    for arg in "$@"; do
+      case "$arg" in
+        --fixture|-h|--help) exec bun "$BENCHMARK_CLI" "$@" ;;
+      esac
+    done
+    ;;
 esac
 
 # Credentials come from the environment. A global env file is a convenience for
@@ -89,6 +104,9 @@ case "${1:-}" in
     COMMAND="$1"
     shift
     exec bun "$CLI_DIR/run.ts" "$COMMAND" "$@"
+    ;;
+  benchmark)
+    exec bun "$BENCHMARK_CLI" "$@"
     ;;
   *)
     if [[ -n "${1:-}" ]]; then

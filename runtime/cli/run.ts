@@ -42,6 +42,7 @@ const EXTENSIONS = [
 	path.join(RUNTIME_DIR, "extensions", "codeflow-context", "index.ts"),
 	path.join(RUNTIME_DIR, "extensions", "bash-compressor", "index.ts"),
 	path.join(RUNTIME_DIR, "extensions", "usage-ledger", "index.ts"),
+	path.join(RUNTIME_DIR, "extensions", "telemetry-ledger", "index.ts"),
 	path.join(RUNTIME_DIR, "extensions", "agent-watchdog", "index.ts"),
 ];
 

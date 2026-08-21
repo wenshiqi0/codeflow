@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#
+# PATH-injected `python3` stand-in for offline tests of the official
+# evaluator wrapper (benchmark/scripts/swebench-harness.sh).
+# Tests symlink this file as `python3` inside a stub bin dir (see
+# tests/benchmark/fakes/README.md §7).
+#
+# Two modes:
+#
+# 1. `-m swebench.harness.run_evaluation ...`
+#    -> the pinned-commit simulation: tests/benchmark/fakes/
+#       pinned-harness-logic.py, executed by the REAL python3 named in
+#       $PINNED_HARNESS_REAL_PYTHON3. It records the invocation and
+#       materializes the report exactly where and how the pinned commit does.
+#
+# 2. anything else (notably the wrapper's `python3 - <report> <instance>`
+#    heredoc verdict call) -> exec the REAL python3 unchanged, stdin included:
+#    the wrapper's OWN embedded parsing code is what runs and is graded.
+#
+# Never touches Docker or the network; there is no third mode.
+
+set -euo pipefail
+
+REAL="${PINNED_HARNESS_REAL_PYTHON3:?PINNED_HARNESS_REAL_PYTHON3 must name a real python3}"
+LOGIC="${PINNED_HARNESS_LOGIC:?PINNED_HARNESS_LOGIC must name tests/benchmark/fakes/pinned-harness-logic.py}"
+
+if [ "${1:-}" = "-m" ] && [ "${2:-}" = "swebench.harness.run_evaluation" ]; then
+  exec "$REAL" "$LOGIC" "$@"
+fi
+exec "$REAL" "$@"

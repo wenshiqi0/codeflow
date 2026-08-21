@@ -39,6 +39,7 @@ test surface with it.
 | `host-guard/` | `extensions/host-guard` | Runtime read-only boundary for root and delegated roles |
 | `bash-compressor/` | `extensions/bash-compressor/compressor.ts` | Threshold policy and safe fallback for semantic bash summaries |
 | `agent-watchdog/` | `extensions/agent-watchdog/index.ts` | Stream-idle abort |
+| `benchmark/` | SWE-bench Verified benchmark capability (`docs/benchmark-contract.md`) | CLI surface, offline run→patch→prediction→verdict→report chain, leakage allowlist projection, budgets, ledgers, report math; plus real-mode (non-fixture) acceptance via process-level fakes (`fakes/README.md`): spawned driver process, repo@base_commit workspaces, harness evaluator with unique evaluation run ids, budget supervision of a live process, hub-id resolution to exact revisions |
 
 ## What these tests are for
 
