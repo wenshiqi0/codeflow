@@ -11,9 +11,9 @@ code-agent evidence run --id <check-id> [--timeout-ms <ms>] -- <command> [args..
 code-agent evidence receipt --output <receipt.json>
 ```
 
-The recorder preserves complete stdout/stderr and the real child exit code. Every command runs under a per-command timeout: 12 minutes by default, safely below the 15-minute turn-wide watchdog, so the recorder — not the watchdog — owns the failure. `--timeout-ms` overrides `CODEFLOW_EVIDENCE_TIMEOUT_MS`, which overrides the default; `0` disables the guard. An unparseable or negative value is rejected loudly rather than silently becoming "no timeout".
+The recorder preserves complete stdout/stderr and the real child exit code. Every command uses a per-command timeout: 12 minutes by default, below the 15-minute turn-wide watchdog, so the recorder owns the failure. `--timeout-ms` overrides `CODEFLOW_EVIDENCE_TIMEOUT_MS`, which overrides the default; `0` disables the guard. Invalid values are rejected loudly.
 
-When a command exceeds its timeout, the recorder terminates its whole process tree (SIGTERM, then SIGKILL for descendants that ignore it), atomically records the entry with exit code 124, `failure_class: RUNNER_BLOCKED`, and `error_class: "EXECUTION_TIMEOUT"`, mechanically finishes the registered child handoff `BLOCKED`, and returns control to you with exit code 124 — the agent turn is not aborted. Commands that completed earlier keep their records: evidence persists incrementally, so a later sibling's timeout never erases an earlier result. For ordinary PASS/FAIL checks, continue through every named check and aggregate the receipt. Each entry reports `status`, `command`, integer `exit_code`, `failed_checks`, bounded error evidence, reproduction, diagnosis, and `next_owner`. Optional `failure_class` values are `EXPECTED_FAIL`, `UNEXPECTED_PASS`, `RUNNER_BLOCKED`, `POST_IMPLEMENTATION_FAIL`, and `UNCERTAIN`.
+When a command exceeds its timeout, the recorder terminates its process tree, atomically records exit code 124 with `failure_class: RUNNER_BLOCKED` and `error_class: "EXECUTION_TIMEOUT"`, mechanically finishes the registered child handoff `BLOCKED`, and returns control with exit code 124 — the agent turn is not aborted. Earlier sibling records persist. For an ordinary PASS/FAIL check, continue through the named checks and aggregate the receipt. Required fields are `status`, `command`, and integer `exit_code`; add `failed_checks`, bounded `error_excerpt`, `reproduction`, `diagnosis`, and `next_owner` when they clarify the result. Optional `failure_class` values are `EXPECTED_FAIL`, `UNEXPECTED_PASS`, `RUNNER_BLOCKED`, `POST_IMPLEMENTATION_FAIL`, and `UNCERTAIN`.
 
 Nonzero exit remains `FAIL`; `expected_red: true` describes intent without rewriting the result. A command that cannot start is `RUNNER_BLOCKED`; a command killed by its timeout is `RUNNER_BLOCKED` with `error_class: "EXECUTION_TIMEOUT"` and exit code 124. Clean `PASS` entries omit `failure_class` and `error_class`. Batch `PASS` requires every entry to pass.
 
@@ -34,6 +34,8 @@ code-agent handoff finish --id "$CODEFLOW_HANDOFF_ID" --status <STATUS> --receip
 ```
 
 A blocked or failing observation is valid evidence; assign the next owner rather than softening it.
+
+If `handoff finish` is rejected by CLI validation, the handoff is still non-terminal. Read the exact error, repair only that receipt or artifact defect, and call `handoff finish` once more. If the second call is rejected, stop and report it; do not keep retrying. Business or command failures are not validation failures.
 
 ## Execution timeouts return control to the planner
 

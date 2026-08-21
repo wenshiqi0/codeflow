@@ -11,6 +11,7 @@ import {
 } from "../../runtime/extensions/codeflow-task/registry";
 import {
 	assertTaskPrompt,
+	MAX_CONCURRENCY,
 	MAX_TASK_PROMPT_CHARS,
 	taskResolutionFailure,
 } from "../../runtime/extensions/codeflow-task/index";
@@ -66,6 +67,10 @@ describe("task registry", () => {
 			`task prompt exceeds ${MAX_TASK_PROMPT_CHARS} characters`,
 		);
 		expect(() => assertTaskPrompt("Outcome: bounded behavior")).not.toThrow();
+	});
+
+	test("exports one task-group concurrency ceiling", () => {
+		expect(MAX_CONCURRENCY).toBe(8);
 	});
 
 	test("resolves a goal lane, role contract, and persistent session id", () => {

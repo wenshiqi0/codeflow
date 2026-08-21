@@ -5,7 +5,7 @@ const base = {
 	projectRules: "project rules body",
 	sharedRules: "shared rules body",
 	facts: "",
-	generatedAt: "2026-01-01T00:00:00.000Z",
+	factsCursor: 0,
 };
 
 describe("resolveLevel", () => {
@@ -120,6 +120,104 @@ describe("buildContext imports", () => {
 	});
 });
 
+describe("buildContext continuation", () => {
+	test("unchanged static sources are manifest-only; only new facts become a delta", () => {
+		const first = buildContext({
+			...base,
+			level: "shared",
+			facts: "f1: first — value [tester]",
+			factsCursor: 1,
+		});
+		const second = buildContext({
+			...base,
+			level: "shared",
+			facts: "f2: second — value [coder]",
+			factsCursor: 2,
+			previous: {
+				role: "coder",
+				level: "shared",
+				sources: first.sources,
+				factsCursor: 1,
+			},
+		});
+
+		expect(second.mode).toBe("delta");
+		expect(second.xml).not.toContain("<shared_rules>");
+		expect(second.xml).toContain('kind="shared_rules"');
+		expect(second.xml).toContain('action="unchanged"');
+		expect(second.xml).toContain("<shared_facts_delta>");
+		expect(second.xml).toContain("f2: second — value [coder]");
+		expect(second.xml).not.toContain("f1: first — value [tester]");
+	});
+
+	test("a changed static source is fully replaced with its previous hash", () => {
+		const first = buildContext({ ...base, level: "shared" });
+		const second = buildContext({
+			...base,
+			level: "shared",
+			sharedRules: "new shared rules body",
+			previous: {
+				role: "coder",
+				level: "shared",
+				sources: first.sources,
+				factsCursor: 0,
+			},
+		});
+
+		expect(second.mode).toBe("delta");
+		expect(second.xml).toContain(`previous_hash="${first.sources[0].hash}"`);
+		expect(second.xml).toContain('action="replace"');
+		expect(second.xml.match(/<shared_rules>/g)).toHaveLength(1);
+		expect(second.xml).toContain("new shared rules body");
+		expect(second.xml).not.toContain("project rules body");
+	});
+
+	test("a continuation with no new facts still emits a small visible manifest", () => {
+		const first = buildContext({ ...base, level: "shared", factsCursor: 2 });
+		const second = buildContext({
+			...base,
+			level: "shared",
+			factsCursor: 2,
+			previous: {
+				role: "coder",
+				level: "shared",
+				sources: first.sources,
+				factsCursor: 2,
+			},
+		});
+
+		expect(second.mode).toBe("delta");
+		expect(second.xml).toContain("No new shared facts were recorded");
+		expect(second.xml).not.toContain("<shared_rules>");
+		expect(second.xml).not.toContain("<shared_facts_delta");
+	});
+
+	test("a changed import set falls back to a full context block", () => {
+		const first = buildContext({
+			...base,
+			level: "none",
+			imports: [{ ref: "references/one.md", content: "one" }],
+			factsCursor: 0,
+		});
+		const second = buildContext({
+			...base,
+			level: "none",
+			imports: [{ ref: "references/two.md", content: "two" }],
+			factsCursor: 0,
+			previous: {
+				role: "coder",
+				level: "none",
+				sources: first.sources,
+				factsCursor: 0,
+			},
+		});
+
+		expect(second.mode).toBe("full");
+		expect(second.xml).toContain('ref="references/two.md"');
+		expect(second.xml).toContain("two");
+	});
+});
+
 describe("XML safety", () => {
 	test("angle brackets in rules cannot break out of the block", () => {
 		const { xml } = buildContext({
@@ -143,13 +241,15 @@ describe("XML safety", () => {
 describe("block structure", () => {
 	test("the block is a single well-formed root element", () => {
 		const { xml } = buildContext({ ...base, level: "full", facts: "f1: a — b" });
-		expect(xml.startsWith('<codeflow_context version="1">')).toBe(true);
+		expect(xml.startsWith('<codeflow_context version="1" mode="full">')).toBe(true);
 		expect(xml.endsWith("</codeflow_context>")).toBe(true);
 	});
 
-	test("the generation timestamp is recorded", () => {
-		const { xml } = buildContext({ ...base, level: "none" });
-		expect(xml).toContain('generated_at="2026-01-01T00:00:00.000Z"');
+	test("the model-visible block is deterministic and has no generation timestamp", () => {
+		const first = buildContext({ ...base, level: "full", facts: "f1: a — b" });
+		const second = buildContext({ ...base, level: "full", facts: "f1: a — b" });
+		expect(first.xml).toBe(second.xml);
+		expect(first.xml).not.toContain("generated_at");
 	});
 
 	test("a role with nothing injected still yields a valid manifest", () => {

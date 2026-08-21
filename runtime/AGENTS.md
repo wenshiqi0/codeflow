@@ -14,6 +14,8 @@ State changes and queries are programmatic; requirement expression goes through 
 
 A `PASS` or `FAIL` needs a validated receipt file: `code-agent handoff finish --id "$CODEFLOW_HANDOFF_ID" --status <STATUS> --receipt <file> --artifact <path> --summary "<one line>"`. A final message is not a receipt. `BLOCKED` needs no receipt file; the enum is the receipt. `blocked.reason` is one of `CONTEXT_BUDGET_EXCEEDED`, `DELEGATION_ARTIFACT_MISSING`, `EXECUTION_TIMEOUT`, `OUTPUT_TRUNCATED`, `PROVIDER_FAILURE`, `USER_CANCELLED`. Pass `--blocked-reason` more than once when several apply.
 
+If `handoff finish` is rejected by CLI validation — for example invalid receipt JSON, a missing fact path, or an empty artifact — the handoff is still non-terminal. Read the exact CLI error, repair only that mechanical defect, and call `handoff finish` once more in this same handoff. If the second call is also rejected, stop and report the rejection honestly; do not keep retrying. This repair rule does not apply to business failures, test failures, provider failures, or execution timeouts.
+
 ## Shared facts
 
 You run in a fresh process with no memory of earlier roles. What you do get is the `<shared_facts>` block in your injected context: locators earlier roles in this run confirmed and recorded. Read it before searching. If it already names the file you need, go straight there instead of grepping for it.

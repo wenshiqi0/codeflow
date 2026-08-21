@@ -24,5 +24,3 @@ code-agent handoff finish --id "$CODEFLOW_HANDOFF_ID" --status <PASS|FAIL> --rec
 ```
 
 If business intent and the implementable contract conflict, return that decision to planner instead of silently choosing one.
-
-If a command you delegated or ran is killed by an execution timeout (the evidence recorder's exit 124, `error_class: "EXECUTION_TIMEOUT"`), the recorder has already finished the current handoff `BLOCKED`. Never implicitly retry the same command or attempt another terminal transition; return control to the planner. Only the planner decides whether to split the command, change the timeout or environment, or redelegate.

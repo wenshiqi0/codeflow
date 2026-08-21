@@ -20,7 +20,9 @@ import {
 	materialize,
 	MAX_CLAIM_CHARS,
 	MAX_FACTS_PER_HANDOFF,
+	readFactRecords,
 	render,
+	renderFactRecords,
 	type FactRecord,
 } from "../../runtime/lib/facts";
 
@@ -271,6 +273,18 @@ describe("reading", () => {
 	test("render names the author so a reader can judge the fact", () => {
 		append([{ claim: "route entry", value: "x" }], "tester");
 		expect(render(ledger)).toContain("tester");
+	});
+
+	test("raw record rendering keeps supersede events for incremental context", () => {
+		append([{ claim: "route entry", path: "src/router.ts", line: 42 }]);
+		append(
+			[{ supersedes: "f1", claim: "config entry", path: "src/config.ts", reason: "moved" }],
+			"coder",
+			"h-2",
+		);
+		const records = readFactRecords(ledger);
+		expect(records.map((record) => record.kind)).toEqual(["fact", "supersede"]);
+		expect(renderFactRecords(records)).toContain("f2: config entry — src/config.ts [coder]; supersedes f1 (moved)");
 	});
 
 	test("render omits a line number when there is none", () => {

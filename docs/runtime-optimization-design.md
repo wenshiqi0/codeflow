@@ -25,7 +25,7 @@
 
 ### A1.1 context manifest 时间戳稳定化
 
-**问题**：`codeflow-context/context.ts` 的 `buildContext` 在 XML 里写
+**问题**：原实现中 `codeflow-context/context.ts` 的 `buildContext` 在 XML 里写
 `<context_manifest generated_at="${input.generatedAt}">`，每次注入必变。
 这与 `handoff-gate.ts` 中 `delegationPointer` 特意固定 key 顺序保证
 "byte-stable across turns" 的设计自相矛盾：同一 lane session 续用时，
@@ -33,59 +33,49 @@
 前缀匹配，也破坏 transcript 可复现性。
 
 **改动**：
-- `ContextInput.generatedAt` 改为 run 级常量：取 `CODEFLOW_RUN_ID` 对应
-  run 的创建时间（`state.json` 已有），或直接删除该属性、把真实注入时间挪进
-  message 的 `details`（不进模型可见文本）。
+- 删除 `ContextInput.generatedAt` 与 `<context_manifest generated_at="...">`；
+  真实注入时间写入 context message 的 `details.generatedAt`（不进模型可见文本）。
 - sources hash 机制不变（它本来就是内容 hash，天然稳定）。
 
 **验收**：同一角色、同一规则内容、同一 facts 下两次 `buildContext` 输出
-逐字节相等；现有 context 测试全绿。
+逐字节相等；XML 中不再出现 `generated_at`，`details.generatedAt` 保留注入时间。
 
-### A1.2 扩展预打包为单入口
+### A1.2 扩展预打包为单入口（明确不做）
 
 **问题**：`role-launcher.ts` 每次 spawn 子进程都挂 6 个 TS 源码扩展
 （provider-profiles / agent-watchdog / codeflow-context / bash-compressor /
 usage-ledger / host-guard），每个都要 Bun 即时转译；且 6 次 `fs.existsSync`
 + 6 个 `--extension` 参数。一次中型 run 几十个 handoff，冷启动开销 × N。
 
-**改动**：
-- 新增安装期构建步骤（`scripts/build-extensions.ts`）：把 6 个扩展
-  bundle 成 `runtime/dist/role-extensions.js` 单入口（一个 default export
-  依序调用各扩展的 register 函数）。
-- `role-launcher.ts`：优先探测 `dist/role-extensions.js`，存在则单个
-  `--extension`；不存在回退现状（开发态不需要 build）。
-- zipper 子进程（`bash-compressor/index.ts` 中 `runZipper`）同样受益：
-  它目前挂 `provider-profiles/index.ts` 源码路径。
-
-**验收**：bundle 与源码两种路径下全部现有测试通过；新增微基准脚本
-（见 A1.5）记录 spawn→first-event 耗时，bundle 路径应有可测下降。
-
-**风险**：bundle 陈旧（源码改了没重建）。缓解：bundle 头部嵌入源文件
-内容 hash，`role-launcher` 比对不符则回退源码路径并 stderr 告警。
+**决策**：不做安装期 bundle，也不引入 `runtime/dist` 产物。保留 Bun
+直接启动 TS 源码扩展的开发与部署路径。若为了秒级冷启动收益引入构建
+步骤、stale bundle 校验和双路径回退，会持续增加双 loop 迭代成本，
+也削弱源码可调试性；该 tradeoff 不成立。
 
 ### A1.3 常量去重
 
 `MAX_CONCURRENCY = 8` 在 `codeflow-task/registry.ts` 与
 `codeflow-task/index.ts` 各定义一次（registry 中的实际未使用）。
-删 registry 侧，index 侧导出。
+已删 registry 侧，index 侧导出。
 
 ### A1.4 title-compressor 死配置处理
 
-`roles.json` 定义了 `title-compressor`（mimo-v2.5-pro），
-`references/roles.md` 也列出，但 runtime 无任何调用点。
-**建议删除**（roles.json 条目 + roles.md 行）：接通它会增加 support 轮数，
-与本设计方向相反；将来需要时从 git 历史恢复。
+`roles.json` 曾定义 `title-compressor`（mimo-v2.5-pro），但 runtime 无任何
+调用点。已删除 roles.json 条目、role 文档行、capability prompt 与相关
+测试引用；将来需要时从 git 历史恢复。
 
-### A1.5 微基准回归脚本（配套仪表）
+### A1.5 微基准回归脚本（暂缓，由独立 benchmark 承接）
 
-新增 `scripts/bench-local.ts`，不依赖模型/网络，输出 JSON：
+暂不新增 `scripts/bench-local.ts`。运行时性能、token 曲线与 support rounds
+由独立 benchmark 工作承接，避免在这里维护第二套度量口径。若后续局部
+回归仍需要无模型微基准，再按原候选指标评估：
 
 - `spawn_cold_start_ms`：spawn 一个 no-op 角色子进程（`--no-session`、
   假 provider 立即退出）到收到首个 stdout event 的耗时，P50/P95 × 10 次；
 - `context_block_bytes`：对固定 fixture 调 `buildContext`，输出字节数；
 - `precompress_ratio`（A2.2 落地后）：fixture 日志集的确定性预压缩率。
 
-用途：A1/A2 每个改动前后跑一次，写进 PR 描述；日常迭代不必碰 SWE-bench。
+用途：仅作为未来局部诊断，不作为本 PR 的验收门槛。
 
 ---
 
@@ -100,39 +90,78 @@ project AGENTS.md + shared AGENTS.md（约 7KB）+ 全量 fact ledger。
 并且作为历史消息在之后每一轮持续计入 input token。facts 越攒越多时
 每份快照还在变大。这是当前最大的结构性 token 浪费。
 
-**机制**：注入消息已带 `details.sources`（kind/ref/hash）。续用 session 时：
+**机制**：session 只有 `codeflow:context` 一种消息类型，不按 session 或
+context 消息分版本；在现有 `details` 上扩展增量所需的机械 metadata，并把
+静态规则与 fact ledger 分开处理。
+增量是 append-only：不重写历史消息，也不在 provider 请求边界改写 payload；
+从本次注入开始只避免继续制造重复。
 
-1. `codeflow-context/index.ts` 在 `before_agent_start` 读取当前 session
-   的既有 entries（pi session 文件可定位：`--session-dir` + `--session-id`
-   已由 role-launcher 传入），找到最近一条 `codeflow:context` 消息的
-   `details.sources`；
-2. 对每个 source 按 hash 比对：
-   - `project_rules` / `shared_rules` / `context_import` 未变 →
-     不重复注入正文，manifest 写
+1. **读取 active session context，不手解析 session 文件**。
+   `before_agent_start` 的 extension context 已提供 `ctx.sessionManager`；
+   调用 `buildContextEntries()`，从后向前找最近一条 active 的
+   `custom_message` 且 `customType === "codeflow:context"`。这样跟随
+   session branch/compaction 语义，避免把 abandoned branch 或旧文件格式
+   误当作当前上下文。
+
+2. **静态 source 用 hash 判断 unchanged / replace**。
+   对 `project_rules`、`shared_rules`、`context_import`：
+   - hash 未变 → 不重复注入正文，manifest 写
      `<source kind="..." ref="..." hash="..." unchanged="true" />`；
-   - facts：ledger 追加不可变（append-only、supersede 不改历史），
-     注入上次快照之后**新增/新 supersede 的行**，节区改名
-     `<shared_facts_delta since_hash="...">`；上次快照里被 supersede 的
-     fact 通过 delta 里的 superseding 记录自然失效；
-3. 新 session（lane 首个 handoff、或 architect/verify 无 session 的
-   `--no-session` 路径）行为完全不变——全量注入。
+   - hash 变化 → 不做文本 diff，直接全量重注入该 source，manifest 写
+     `previous_hash`、新 hash 与 `action="replace"`，并明确该正文取代
+     早期同 ref 版本，避免新旧规则被拼接出歧义。
 
-**兜底**：定位既有 entries 失败（session 文件缺失、解析异常）→ 全量注入。
-增量是优化，不是正确性依赖。
+3. **facts 用 raw ledger cursor，不用渲染快照 hash 推断边界**。
+   当前 `shared_facts` hash 只能说明 surviving view 变化，不能恢复上次
+   读到哪里。context details 需要持久化：
+   - `facts.from_cursor` / `facts.to_cursor`；
+   - 可选 `from_record_id` / `to_record_id`（例如 `f7` → `f12`）。
+
+   第一次 baseline 注入 raw event stream（含被 supersede 的历史记录），
+   渲染时明确“later record supersedes the earlier record it names”；后续
+   handoff 只注入 cursor 之后新增的 raw records。新的 supersede record
+   天然失效早期 session 中的旧 fact，不需要重发全量 surviving view。
+   若静态规则均未变且没有新增 facts，仍注入一个很小的 delta manifest，
+   说明没有新 facts，保留可见性与增量 metadata。
+
+4. **不做历史 session 兼容，也不引入第二类 context session**。lane 首个
+   handoff，以及 architect/verify 等 `--no-session` 路径，仍做全量
+   baseline 注入。后续增量继续使用同一种 `codeflow:context` custom
+   message；没有旧格式迁移分支，也不因历史 session 选择不同消息类型。
+
+**兜底**：以下情况一律 full injection，并在 details 记录
+`mode="fallback"` 与 bounded reason：没有 `ctx.sessionManager`；active
+entries 中找不到上一条 context；role/level 不匹配；source 或 facts
+metadata 格式不合法；cursor 大于当前 ledger 长度；ledger ID 序列不连续；
+`CODEFLOW_CONTEXT_DELTA=off`。增量是优化，不是正确性依赖，也不生成
+兼容分支。
 
 **可见性契约**：delta 消息依旧 `display: true`；人在 transcript 里看到的
-是"上次之后新增了什么"，与审计目标一致。
+是“上次之后新增了什么”。`details.generatedAt`、facts cursor 与 fallback
+reason 均不进入模型可见 XML；模型只看到 manifest、replacement 正文和
+facts delta。
 
 **验收**：
 - 单测：同 hash 不重复注入正文；hash 变更（AGENTS.md 被改）→ 该 source
-  全量重注；facts delta 只含新行；损坏 session → 回退全量；
-- 集成：模拟一条 lane 连续 3 个 handoff，第 2、3 个的注入 block 字节数
-  显著小于第 1 个（配合 B4 的 per-handoff input 曲线做真实验证）。
+  全量 replace 并携带 previous hash；facts delta 只含 cursor 后新增记录；
+  supersede record 明确指向被替换事实；cursor 异常 / metadata 异常 /
+  role 不匹配 → 回退全量；
+- extension 测试：用 fake `ctx.sessionManager` 覆盖从
+  `buildContextEntries()` 读取上一条 active context，且不读取 abandoned
+  branch；
+- 真实 Pi 冒烟：两个独立 Pi 进程复用同一 `--session-id/--session-dir`，
+  第一轮持久化 full context message，第二轮从 active session entries 读取
+  该 message 并输出 facts delta；
+- 集成：模拟一条 lane 连续 3 个 handoff，第 1 个 full baseline，第 2 个
+  facts delta，第 3 个 tiny delta / 新 facts；断言 facts cursor 单调推进、
+  第 2、3 个注入 block 字节数显著小于第 1 个（配合 B4 的 per-handoff
+  input 曲线做真实验证）。
 
 **风险**：模型对"规则在很早的历史消息里"的遵循度可能弱于"规则刚刚重申"。
-缓解：delta 注入保留一行指针（"rules unchanged, see the context block at
-the start of this session"）；若 pilot 显示行为退化，规则层可配置
-`CODEFLOW_CONTEXT_DELTA=off` 单独关闭。
+缓解：delta manifest 保留明确的 continuity 指针（"rules unchanged, see
+the context block at the start of this session"）；若 pilot 显示行为退化，
+`CODEFLOW_CONTEXT_DELTA=off` 可单独关闭。收益表述以 input token 与
+context growth 下降为主，不把 prompt cache 命中率作为硬承诺。
 
 ### A2.2 zipper 前置确定性预压缩 + 缓存
 
@@ -167,6 +196,8 @@ B 报告中 `support_model_rounds` 与 by_role=zipper 的分解可直接验证�
 > A3 每条都触碰"无重试"哲学的边界，措辞上的原则是：**被禁止的是
 > 隐式重试**（隐藏在同一 handoff 内、事件流不可见、掩盖第一次失败）；
 > A3 引入的都是**显式、有记录、有次数上限**的恢复动作。
+> 当前只落地 A3.1 / A3.4 的 prompt 契约；A3.2 / A3.3 等 benchmark
+> 证据后再决策。
 
 ### A3.1 机械性 finish 失败允许一次进程内修复
 
@@ -181,16 +212,24 @@ pointer、决策、重开 handoff → 新子进程全套冷启动 + 重新做完
 **校验拒绝不是终态**，子角色可以修复 receipt 文件后再次调用 finish——
 这已经在同一进程、同一 handoff 内，不需要 runtime 改动，需要的是：
 
-- `runtime/AGENTS.md` 与各 capability prompt 明确"CLI 校验拒绝 →
-  修复后重试 finish 一次；第二次仍被拒 → 停止并如实退出"；
-- `handoff finish` CLI 在拒绝时输出结构化的可修复原因（现有 CliError
-  文本已较精确，补齐即可）；
-- 事件流增加可选 `finish_rejected` 记录（kind 枚举扩一项），使修复行为
-  可审计。
+- `runtime/AGENTS.md` 明确"CLI 校验拒绝 → 修复机械缺陷后重试 finish
+  一次；第二次仍被拒 → 停止并如实退出"；
+- `verify` / `supervisor` 不接收 shared rules，因此在各自 capability
+  prompt 中补充同一契约；
+- 不新增 `finish_rejected` event，不扩展 event kind / payload，也不做
+  runtime 重试计数。第一次 CLI 错误留在当前 tool transcript 中，最终
+  成功或失败仍由既有 handoff terminal event 审计。
 
-**不改**：业务命令失败、测试失败、EXECUTION_TIMEOUT 的处理完全不变。
+**不改**：业务命令失败、测试失败、provider failure、EXECUTION_TIMEOUT
+的处理完全不变。该条已按 prompt-only 方案落地。
 
 ### A3.2 零产出 PROVIDER_FAILURE 的一次显式重派
+
+**状态**：暂不实现，等待 benchmark B3 的 blocked-reason / infra-error
+证据后再决策。实现前还必须修正触发条件：零产出 provider failure 通常
+同时缺少 receipt，实际 reason 组合是
+`[PROVIDER_FAILURE, DELEGATION_ARTIFACT_MISSING]`，不是仅
+`[PROVIDER_FAILURE]`。
 
 **问题**：provider 一次瞬时 transport/overload 故障 = 子 handoff BLOCKED
 → planner 按契约"Provider or Codeflow runtime failure is terminal for the
@@ -199,10 +238,11 @@ run" 关根 → 整 run 报废，已烧 token 全部作废，等人工 resume。
 
 **改动**（在委派层 `codeflow-task/index.ts` 的 task 工具内）：
 
-- 条件全部满足才触发：reasons 恰为 `[PROVIDER_FAILURE]`（无伴随
-  truncation/artifact-missing 之外的业务信号）、子角色**零助手产出**
-  （`finalText` 为空且无任何 tool call 发生——从 stopReason 与 stdout
-  事件判定）、该 handoff 是本 (goal, lane, 原 handoff) 的首次尝试；
+- 条件全部满足才触发：reasons 恰为
+  `[PROVIDER_FAILURE, DELEGATION_ARTIFACT_MISSING]`，且子角色**零助手
+  产出**（没有任何 assistant text 或 tool call——从 stdout 事件判定）、
+  无 truncation / execution timeout / user cancellation、该 handoff 不是
+  retry、该 (goal, lane) 本 run 尚未使用 provider retry；
 - 动作：自动开一个**新 handoff**（新 id，`retry_of: <原id>` 记入 state），
   原 handoff 保持 BLOCKED 终态不可变，事件流出现两条 `handoff_opened`；
   等待≥5s 退避后重派同 prompt、同 session 参数；
@@ -220,6 +260,8 @@ recorded redelegation is terminal"；SKILL.md 观察者语义不变（它看到�
 
 ### A3.3 首 token 超时与流中 idle 分层
 
+**状态**：暂不实现，等待 benchmark B1/B3 的延迟与失败分布后再决策。
+
 **问题**：`agent-watchdog` 的 stream-idle 统一 900s。真挂死的请求
 （连首 token 都没有）也要等 15 分钟。
 
@@ -234,10 +276,12 @@ provider_latency 分解验证长尾缩短。
 
 ### A3.4 planner 并行提示
 
-`references/capabilities/planning.md` 增补一段：多个可独立验收的 goal
-存在时，用 `task_group` 并行开各 goal 的 test lane（互不依赖）；
-单 goal 内保持现状（one active handoff per lane 不变）。
-纯 prompt 改动，无 runtime 变更。
+`references/capabilities/planning.md` 已增补：只有多个确实独立、可分别
+验收的 goal 成立时，才用 `task_group` 并行开启每个 goal 的**初始 test
+lane**，且每个 goal 恰一个 tester handoff。不为并行而拆 goal；后续
+code / verify lane 保持串行；共享文件、契约或存在顺序依赖的 goal 保持
+串行。单 goal 内 one active handoff per lane 不变。纯 prompt 改动，
+无 runtime 变更，已落地。
 
 ---
 
@@ -246,11 +290,10 @@ provider_latency 分解验证长尾缩短。
 | 顺序 | PR | 前置 | 验证手段 |
 |---|---|---|---|
 | 1 | Design B（另一文档） | — | 自身测试 |
-| 2 | A1 | — | 微基准 A1.5 + 全量测试 |
+| 2 | A1 | — | 全量测试 + 真实 Pi session 冒烟；性能指标交给独立 benchmark |
 | 3 | A2 | B 合入（用 B4 曲线对照） | pilot 前后对照：input token 曲线、support rounds |
-| 4 | A3.1 / A3.3 | B3 | pilot：DELEGATION_ARTIFACT_MISSING 与超时长尾 |
-| 5 | A3.2 | B3，团队确认哲学边界 | 注入故障测试 + infra_error 率 |
-| 6 | A3.4 | — | pilot wall time |
+| 4 | A3.1 / A3.4 | — | prompt contract 测试 + pilot 观察机械性拒绝修复与 wall time |
+| 5 | A3.2 / A3.3 | B1/B3 与团队确认哲学边界 | 等待 benchmark 证据后再实现 |
 
 全部改动遵守仓库既有验收：`bun test`、`bun run typecheck`、
 `git diff --check`、source safety。

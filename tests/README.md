@@ -32,7 +32,7 @@ test surface with it.
 | `events/` | `lib/events.ts` | Closed event enums and bounded one-line summaries |
 | `usage/` | `lib/usage.ts` + `extensions/usage-ledger/index.ts` | Per-turn model usage and run totals for benchmarks |
 | `liveness/` | `lib/liveness.ts` | Multi-signal probing; never DEAD from one signal |
-| `context/` | `extensions/codeflow-context/context.ts` | Rule levels and fact injection |
+| `context/` | `extensions/codeflow-context/context.ts` | Rule levels, fact injection, and a two-process real Pi persistent-session full → delta smoke |
 | `provider-profiles/` | `extensions/provider-profiles/index.ts` | Environment-driven provider isolation and safe endpoint validation |
 | `handoff-gate/` | `extensions/codeflow-task/handoff-gate.ts` | Blocked-reason classification, including `EXECUTION_TIMEOUT` as a distinct cause with cause-first ordering |
 | `task-registry/` | `extensions/codeflow-task/registry.ts` | Successful task reconciliation and child-result integration; timed-out delegations end BLOCKED with a planner pointer and no implicit retry |
