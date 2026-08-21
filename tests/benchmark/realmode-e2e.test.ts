@@ -244,7 +244,7 @@ describe("REAL-5: usage instrumentation from the real process feeds the ledger",
 		expect(rows[1].handoff_id).toBe("h-2001");
 		expect(rows[1].goal_id).toBe("g-2001");
 		expect(rows[1].lane).toBe("main");
-		for (const row of rows) expect(row.schema_version).toBe(1);
+		for (const row of rows) expect(row.schema_version).toBe(2);
 	});
 
 	test("failed provider attempts are recorded separately, never as rounds", () => {
@@ -322,7 +322,15 @@ describe("REAL-7: the report aggregates the real-mode run honestly", () => {
 	});
 
 	test("cache: unreported round poisons availability; sums stay token-true", () => {
-		expect(report().cache).toEqual({ read: 900, write: 100, hit_rate: null, metrics_available: false });
+		expect(report().cache).toEqual({
+			read: 900,
+			write: 100,
+			fresh_input_tokens: 4200,
+			prompt_tokens: 5200,
+			hit_rate: null,
+			metrics_available: false,
+			per_attempt_hit_rate: { median: 0, p90: 0 },
+		});
 	});
 
 	test("budgets terminated nobody in this run; breakdowns attribute by model", () => {

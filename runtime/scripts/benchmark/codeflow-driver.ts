@@ -215,11 +215,16 @@ function streamLedgers(): number {
 		const row = JSON.parse(line) as Record<string, unknown>;
 		emit({
 			type: "round",
-			round: {
-				role: row.role,
-				provider: row.provider,
-				model: row.model,
-				handoff_id: row.handoff_id ?? null,
+				round: {
+					at: row.at,
+					run_id: row.run_id ?? null,
+					role: row.role,
+					provider: row.provider,
+					model: row.model,
+					depth: row.depth ?? null,
+					turn: row.turn ?? null,
+					request_started_at: row.request_started_at ?? null,
+					handoff_id: row.handoff_id ?? null,
 				goal_id: row.goal_id ?? null,
 				lane: row.lane ?? null,
 				usage: row.usage,
@@ -233,6 +238,7 @@ function streamLedgers(): number {
 			pendingRequested.set(String(row.call_id), row);
 			continue;
 		}
+		const requested = pendingRequested.get(String(row.call_id)) ?? null;
 		pendingRequested.delete(String(row.call_id));
 		emit({
 			type: "tool_calls",
@@ -244,7 +250,15 @@ function streamLedgers(): number {
 			handoff_id: row.handoff_id ?? null,
 			goal_id: row.goal_id ?? null,
 			lane: row.lane ?? null,
-			calls: [{ call_id: row.call_id, tool: row.tool, status: row.status }],
+				calls: [
+					{
+						call_id: row.call_id,
+						tool: row.tool,
+						status: row.status,
+						requested_at: requested?.at ?? row.at,
+						result_at: row.at,
+					},
+				],
 		});
 	}
 	return consumed;
@@ -294,7 +308,15 @@ for (const row of pendingRequested.values()) {
 		handoff_id: row.handoff_id ?? null,
 		goal_id: row.goal_id ?? null,
 		lane: row.lane ?? null,
-		calls: [{ call_id: row.call_id, tool: row.tool, status: "incomplete" }],
+			calls: [
+				{
+					call_id: row.call_id,
+					tool: row.tool,
+					status: "incomplete",
+					requested_at: row.at,
+					result_at: null,
+				},
+			],
 	});
 }
 

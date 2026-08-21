@@ -1,175 +1,303 @@
-# Design B — PR #7 benchmark 补强（直接落在 `codex/benchmark-support`）
+# Design B — benchmark-facing runtime observability（B1–B4 + prompt cache）
 
-状态：待评审
+状态：已实现第一批完整功能面，待评审
 基线：PR #7（`922d93e`，feat: add SWE-bench Verified benchmark support）
-定位：**报告层与 runner 层增量**，复用既有 usage / tool-call / handoff ledger，
-不改执行协议、不改数据泄漏边界、不改官方 evaluator 权威地位。
-原设计文档（docs/benchmark-design.md）的 §5 预算、§6/§7 计数口径、§9 判定分类全部保持。
 
-## 0. 动机
+## 0. 架构边界
 
-PR #7 现有报告能回答"消耗了多少"（rounds/tokens/tool calls 及 per-resolved），
-但不能回答优化工作需要的四个问题：
+PR #7 的 `benchmark-ledger` 不是 benchmark 专属数据层；它采集的是 Codeflow runtime 的通用行为事实。Benchmark 只是 observability facts 的一个消费者。
 
-1. 时间花在哪（性能优化是否生效）——wall time 只有总量，无归因；
-2. 结果稳不稳（方差多大）——每 instance 只跑一次，方差不可测；
-3. 失败长什么样——`infra_error` 只是计数，codeflow 自己的封闭
-   blocked-reason 枚举没有进报告；
-4. 轮数/token 浪费在哪——没有"非 PASS handoff 消耗占比"“注入开销曲线"
-   这类归因维度。
+```text
+Runtime observability
+  model usage / tool execution / provider failure /
+  handoff terminal state / derived timing spans
 
-四个补强（B1–B4）对应四个问题。全部字段为**新增**，
-`report.json` 的 `schema_version` 升为 2；既有字段不变，
-`benchmark report` 对 v1 产物重建时新增字段输出 `null` 并带
-availability 标记（沿用 §8 cache_metrics_available 的先例）。
-
-## B1 — wall time 归因分解 + time-to-first-patch
-
-**数据来源（全部已有）**：
-- usage ledger（`usage.jsonl`）每行 `at` 时间戳 + role/depth 归属；
-- tool-call ledger `requested`/`result` 行对：`result.at − requested.at`
-  即该工具的执行时长；
-- attempt 起止时间 runner 已记录（`wall_seconds`）。
-
-**新增 per-attempt 字段**（`cases/<instance>/` 的 attempt metrics）：
-
-```
-wall_breakdown: {
-  tool_execution_seconds,   // Σ (result.at − requested.at)，并发时按墙钟合并区间
-  provider_seconds,         // Σ 相邻事件推得的模型等待窗口（见下）
-  local_overhead_seconds,   // wall − tool_execution − provider（进程冷启动、编排）
-  attribution: "derived"    // 明示为推导值，非 provider 上报
-}
-time_to_first_patch_seconds: number | null   // attempt 开始到工作区首次出现非空 git diff
+Benchmark harness
+  dataset / runner / evaluator / report /
+  pass@N / dispersion / SWE-bench verdicts
 ```
 
-`provider_seconds` 的推导口径：一个 model round 的等待窗口 =
-该 round usage 行的 `at` 减去前一个终结事件（上一 tool result 或上一
-usage 行）的 `at`，同 attempt 内求和。这是近似值，文档必须写明；
-它的用途是**同一环境下前后对照**，不做跨环境比较。
+当前实现采用渐进边界：
 
-`time_to_first_patch` 采集：runner 在轮询预算的同一循环里（已有
-per-round 检查点）廉价执行 `git diff --quiet`，首次非零记录时间戳。
-不新增进程外监控。
+- `runtime/lib/observability/` 承接 handoff projection、timing 与 usage analysis；
+- usage/tool 的既有 ledger 暂保留在 `runtime/lib/benchmark/`，但 schema 语义已按 observability contract 扩展；
+- SWE-bench dataset、evaluator、runner、multi-attempt 统计仍在 benchmark 层；
+- 目录 pure-move 与 `benchmark-ledger` → `telemetry-ledger` rename 作为后续独立 PR，不与行为变化混合。
 
-**报告层**：suite 级输出三段耗时与 TTFP 的 total/median/p90，
-全部归入现有 `wall_time` 节并保持 `not_ranked: true`。
+所有 telemetry 遵守：
 
-**测试**：fixture ledger（两工具重叠区间、无工具纯推理、零 round）
-的区间合并断言；TTFP 在 fake driver 下的确定性注入。
+- append-only / crash-safe；
+- 只写 attribution、timestamp、count、token、封闭枚举；
+- 不写 prompt、response、tool arguments、command、stdout/stderr、source、credential、receipt body 或 transcript；
+- attribution 包含 `run_id`、`handoff_id`、`goal_id`、`lane`、`role`、`depth`、`turn`、`provider`、`model`；
+- absent 与 0 可区分；
+- reader 显式处理旧 schema。
 
-## B2 — 多 attempt 与方差
+## B-cache — prompt cache hit rate
 
-**CLI**：`codeflow benchmark run --attempts N`（默认 1，行为不变）。
+公式：
 
-**runner**：
-- 每个 attempt 独立：新 Codeflow run id、新工作区、新 evaluation run id
-  （§4 的 run_id+instance_id 缓存键机制已支持，直接复用）；
-- attempt 记录进同一 `cases/<instance>/`，`CaseAttemptRecord` 已是数组
-  形态（PR 已有 attempts 结构），追加即可；
-- `final_verdict` 口径：任一 attempt resolved → instance 计入
-  `resolved_any`（等价 pass@N 的分子）；同时新增 `resolved_rate_mean`
-  = 各 attempt resolved 率的均值（等价 pass@1 的无偏估计）。
-
-**报告新增**：
-
+```text
+prompt_cache_hit_rate =
+  sum(cache_read) /
+  sum(input + cache_read + cache_write)
 ```
-attempts_per_instance: N
-resolved: { pass_at_1_mean, pass_at_1_stderr, pass_at_n }
-dispersion: {                      // 仅 N ≥ 2 时非 null
-  rounds:  { per_instance_cv_median },   // 每 instance 跨 attempt 变异系数的中位数
-  tokens:  { per_instance_cv_median },
-  verdict_flip_rate                      // 同 instance 不同 attempt 结论不一致的比例
+
+Suite report：
+
+```ts
+cache: {
+  read: number;
+  write: number;
+  fresh_input_tokens: number;
+  prompt_tokens: number;
+  hit_rate: number | null;
+  metrics_available: boolean;
+  per_attempt_hit_rate: { median: number | null; p90: number | null };
 }
 ```
 
-`verdict_flip_rate` 是"稳定性"最直接的单值指标。
+规则：
 
-**约束沿用原设计**：full 500 正式成绩仍以单 attempt 口径公布
-（§4 "每个 instance 默认执行一次"不变）；多 attempt 是**迭代期
-pilot 工具**，manifest 里 `attempts > 1` 时报告自动标注
-`not_official: true`。
+- token-weighted，不平均各轮或各 attempt 百分比；
+- provider 明确上报 0 是真实 0%；
+- 未上报输出 null；
+- 任一 attempt cache unavailable 时 suite availability false；
+- per-attempt distribution 排除 unavailable attempt；
+- 该指标不参与综合分数，只作为 prompt prefix 复用诊断。
 
-**测试**：fixture verdicts 构造 flip 场景断言 flip_rate；N=1 时
-dispersion 为 null；不同 attempt 的 evaluation run id 互异（已有
-hub-revision/predictions 测试模式可扩）。
+## B3 — handoff terminal-state observability
 
-## B3 — blocked-reason 分布
+数据源：
 
-**数据来源**：run 的 handoff 终态。合规读取方式沿用外环契约——
-只读 `state.json` 的枚举字段（`status`、`blocked.reasons`、`goal_id`、
-`lane`、`role`、`retry_of` 若 Design A3.2 落地），**不读 body/receipt
-prose**。benchmark runner 本来就拥有 run 目录（它创建的），
-这不违反 §12 "不解析 session transcript"——handoff state 是
-metadata plane。
-
-**新增 per-attempt 字段**：
-
+```text
+cases/<instance>/attempts/<n>/codeflow-runs/<run-id>/handoffs/<handoff-id>/state.json
 ```
-handoffs: {
-  total, pass, fail, blocked,
-  blocked_reasons: { PROVIDER_FAILURE: n, EXECUTION_TIMEOUT: n, ... },  // 封闭枚举
-  redelegations: n          // retry_of 命中数（A3.2 未落地时恒 0）
+
+Runner 结束后 bounded scan，并原子写 canonical telemetry：
+
+```text
+cases/<instance>/attempts/<n>/telemetry/handoff-states.json
+```
+
+文件：
+
+```ts
+interface HandoffStateTelemetryFile {
+  schema_version: 1;
+  states: HandoffStateProjection[];
 }
 ```
 
-**报告层**：suite 级按 reason 聚合 + 按 role/lane 分解。
-`infra_error` attempt 与 PROVIDER_FAILURE 终态的关联在报告里并列展示，
-用于区分"harness/Docker 故障"与"provider 故障"两类基础设施问题。
+Projection 只允许：
 
-**测试**：fixture run 目录含各 reason 的 state.json，断言聚合；
-含 prose 的 state 字段以外内容不被读取（复用 leakage.test.ts 的
-拒读模式写一个 metadata-plane 合同测试）。
-
-## B4 — 浪费归因与注入开销曲线
-
-**数据来源**：usage ledger 已带 `handoff_id`/`goal_id`/`lane`/`role`/
-`turn`/`input`；B3 提供各 handoff 终态。两者 join 即可，无新采集。
-
-**新增 per-attempt 字段**：
-
-```
-waste: {
-  rounds_in_non_pass_handoffs,           // 终态非 PASS 的 handoff 消耗的 rounds
-  tokens_in_non_pass_handoffs,
-  waste_ratio_rounds,                    // 上项 / model_rounds_total
-  planner_rounds_ratio,                  // depth-0 rounds / total
-  handoff_reopens_per_goal_lane_median   // 同 (goal,lane) 的 handoff 数 − 1 的中位数
-}
-context_growth: {
-  // 同一 (goal,lane) session 内，第 k 个 handoff 首 turn 的 input token 序列
-  // 报告聚合为：first_turn_input_by_handoff_index: [median_1, median_2, ...]
-  first_turn_input_by_handoff_index: number[],
-  metrics_available: boolean
-}
+```text
+run_id
+handoff_id
+role
+depth
+status
+result
+goal_id
+lane
+blocked_reasons
+unknown_blocked_reasons
+retry_of
 ```
 
-`context_growth` 是 Design A2.1（增量注入）的直接验证仪表：
-增量注入生效时该序列应从线性增长变为近平；
-每个 handoff 的"首 turn"由 usage ledger 中该 handoff_id 的最小 `turn`
-行确定，`input + cache_read` 之和为其起始上下文规模。
+禁止输出 goal/scope/summary/detail/receipt/artifacts/evidence/prose。未知 blocked reason 计入 `unknown_blocked_reasons`，不静默丢弃。
 
-**测试**：构造 3-handoff 单 lane fixture ledger，断言序列与
-waste_ratio；全 PASS run 的 waste 为 0；无 goal 归属行（planner）
-正确进 planner_rounds_ratio。
+Report 输出 total / PASS / FAIL / BLOCKED / nonterminal、blocked reasons、unknown reasons、redelegations，以及 by_role / by_lane 分解。旧 artifact 无 telemetry 时 `metrics_available=false`。
 
-## 落地顺序（同一 PR 内的 commit 切分）
+## B1 — source-clock timing + time-to-first-patch
 
-1. B3（纯读 state.json + 报告聚合，独立性最强）
-2. B1（ledger 时间戳推导 + runner 的 TTFP 探针）
-3. B4（usage × handoff join）
-4. B2（runner attempt 循环 + 报告方差节，改动面最大放最后）
+### Tool timing contract
 
-每步独立可测、独立可 revert；schema_version 2 的迁移测试
-（v1 产物重建 → 新字段 null + availability 标记）放在第 1 步一起进。
+`DriverToolCall` 保留源时钟：
 
-## 与原设计文档的一致性核对
+```ts
+interface DriverToolCall {
+  call_id: string;
+  tool: string;
+  status: "succeeded" | "failed" | "rejected" | "incomplete";
+  requested_at?: string;
+  result_at?: string | null;
+}
+```
 
-- §5 预算不变，B2 的多 attempt 不影响预算语义（每 attempt 独立计）；
-- §7 tool ledger 隐私白名单不变，B1 只用已有 `at` 字段；
-- §9 正式 resolved rate 分母口径不变，pass@N 只在 attempts>1 的
-  非正式报告出现；
-- §12 非目标"不解析 session transcript"保持——B3/B4 只碰
-  metadata plane（state.json 枚举 + usage/tool ledger）；
-- 验收标准 §13 新增四条：B1 区间合并、B2 flip/独立 run id、
-  B3 metadata-plane 合同、B4 序列与 waste 断言。
+Production driver 从 staging requested/result rows 取原始时间；incomplete call 只有 `requested_at`，`result_at=null`。Runner 写 canonical tool ledger 时不得用到达时间覆盖源时间。
+
+并发工具调用按墙钟区间 merge，不按 duration 简单相加。
+
+### Model round timing contract
+
+`DriverRound` 保留：
+
+```text
+at: assistant response timestamp
+request_started_at: provider request start boundary, nullable
+depth
+turn
+```
+
+Runner 写 usage ledger 时保留这些字段。provider 请求起点未观测时用前一终结事件推导，并显式命名 derived。
+
+### Report 字段
+
+```ts
+wall_time: {
+  total_seconds;
+  median_seconds;
+  p90_seconds;
+  not_ranked: true;
+
+  tool_execution_seconds: { total, median, p90 };
+  provider_wait_derived_seconds: { total, median, p90 };
+  local_overhead_derived_seconds: { total, median, p90 };
+  time_to_first_patch_seconds: { median, p90 };
+}
+```
+
+`provider_wait_derived_seconds` 与 `local_overhead_derived_seconds` 是 residual estimate，只用于同一环境前后对照，不用于跨环境排名。
+
+### TTFP
+
+TTFP 是 benchmark 语义，不属于 runtime telemetry。Runner 在事件边界检查 workspace，使用 `git status --porcelain --untracked-files=all`，因此同时覆盖 tracked 与 untracked changes；不能只用 `git diff --quiet`。
+
+## B4 — waste attribution + context growth
+
+Usage ledger 升级为 v2：
+
+```ts
+interface AttemptUsageRecord {
+  schema_version: 2;
+  at: string;
+  request_started_at: string | null;
+  attempt: number;
+  run_id: string | null;
+  role: string;
+  provider: string;
+  model: string;
+  depth: number | null;
+  turn: number | null;
+  handoff_id: string | null;
+  goal_id: string | null;
+  lane: string | null;
+  usage: { ...current token/cache fields... };
+}
+```
+
+v1 rows 可读，缺失 attribution 规范化为 null，相关新指标 unavailable。
+
+派生指标：
+
+```text
+rounds_in_non_pass_handoffs
+tokens_in_non_pass_handoffs
+waste_ratio_rounds
+planner_rounds_ratio
+handoff_reopens_per_goal_lane_median
+first_turn_input_by_handoff_index
+```
+
+口径：
+
+- non-PASS 由 canonical handoff terminal state 判定，不从 transcript 推断；
+- planner ratio = depth-0 rounds / rounds with known depth；
+- first turn 是同一 handoff 内最小 `turn`；
+- starting context size = `input + cache_read`；
+- cache 未上报时 context growth unavailable；
+- zero-round handoff 仍计入 reopen 统计；
+- suite aggregate 对所有 attempt 的 attribution availability 取严格口径。
+
+## B2 — multiple attempts + dispersion
+
+CLI：
+
+```text
+codeflow benchmark run --attempts N
+```
+
+默认 `N=1`。`N>1` 是 pilot / diagnostic，不代表正式 full-run 成绩。
+
+每个 attempt 独立：
+
+- workspace；
+- Codeflow run；
+- evaluation run id；
+- budget state；
+- prediction file；
+- attempt ledger；
+- handoff telemetry。
+
+`case.json` 保存全部 attempts；`final_verdict` 口径：
+
+1. 任一 attempt resolved → resolved；
+2. 否则任一 unresolved → unresolved；
+3. 否则任一 infra_error → infra_error；
+4. 否则 not_evaluated。
+
+共享 `predictions.jsonl` 仍严格保持 one line per instance：优先第一条 resolved attempt，否则 attempt 1。
+
+Report：
+
+```ts
+attempts_per_instance: number;
+not_official: boolean;
+resolved: {
+  pass_at_1_mean: number | null;
+  pass_at_1_stderr: number | null;
+  pass_at_n: number | null;
+};
+dispersion: {
+  rounds_per_instance_cv_median: number | null;
+  tokens_per_instance_cv_median: number | null;
+  verdict_flip_rate: number | null;
+} | null;
+```
+
+统计口径：
+
+- pass@1 只以 resolved/unresolved 有效样本为分母；
+- `infra_error` / `not_evaluated` 不进入 pass@1 分母，但仍保留在 counts；
+- stderr 是 per-instance success rate 的 sample standard error；
+- pass@N 是任一有效 attempt resolved 的 instance 比例；
+- dispersion 仅 `attempts >= 2` 时非 null；
+- verdict flip 使用该 instance 全部 attempt verdict 的集合大小。
+
+## Schema / compatibility
+
+| Artifact / stream | Version | Compatibility |
+|---|---|---|
+| manifest | v2 | report reader 兼容 v1，v1 视作 attempts=1 |
+| case.json | v1 + additive metrics | 缺新 metrics 时 report 填 unavailable |
+| model usage | v2 | v1 rows 可读，新 attribution 字段规范化为 null |
+| tool execution | v1 字段不变 | DriverEvent 现在携带源 requested/result timestamps |
+| handoff telemetry | v1 | 缺文件时 unavailable |
+| report | v2 | v1 artifacts 可重建，新节点 unavailable |
+
+## 验证
+
+新增 / 扩展测试覆盖：
+
+- prompt cache token weighting 与 unavailable；
+- handoff metadata projection / prose 拒绝 / unknown reason；
+- runner 写 canonical handoff telemetry；
+- tool requested/result 源时间戳跨 production driver 保留；
+- overlapping tool duration merge；
+- tracked/untracked TTFP；
+- usage schema v2 depth/turn/run attribution；
+- v1 usage rows 兼容；
+- non-PASS waste、planner ratio、reopen median、context growth；
+- multiple attempt workspace / evaluation id 独立；
+- pass@1 / pass@N / verdict flip / not_official；
+- CLI `--attempts` 参数错误与 help。
+
+标准 gate：
+
+```text
+bun run typecheck
+bun test tests/benchmark
+bun test
+git diff --check
+```

@@ -170,12 +170,33 @@ function parseToolCalls(value: unknown): DriverToolCall[] | null {
 		const callId = nonEmptyString(raw.call_id);
 		const tool = nonEmptyString(raw.tool);
 		const status = nonEmptyString(raw.status);
-		if (callId === null || tool === null || status === null || !TERMINAL_TOOL_STATUSES.has(status)) {
+		const requestedAt = optionalString(raw.requested_at);
+		const resultAt = optionalString(raw.result_at);
+		if (
+			callId === null ||
+			tool === null ||
+			status === null ||
+			!TERMINAL_TOOL_STATUSES.has(status) ||
+			(requestedAt !== null && Number.isNaN(Date.parse(requestedAt))) ||
+			(resultAt !== null && Number.isNaN(Date.parse(resultAt)))
+		) {
 			return null;
 		}
-		calls.push({ call_id: callId, tool, status: status as DriverToolCall["status"] });
+		if (status === "incomplete" && resultAt !== null) return null;
+		calls.push({
+			call_id: callId,
+			tool,
+			status: status as DriverToolCall["status"],
+			...(requestedAt === null ? {} : { requested_at: requestedAt }),
+			...(raw.result_at === undefined ? {} : { result_at: resultAt }),
+		});
 	}
 	return calls;
+}
+
+function optionalNonnegativeInteger(value: unknown): number | null {
+	if (value === undefined || value === null) return null;
+	return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : -1;
 }
 
 function parseRound(value: unknown): DriverRound | null {
@@ -184,13 +205,34 @@ function parseRound(value: unknown): DriverRound | null {
 	const provider = nonEmptyString(value.provider);
 	const model = nonEmptyString(value.model);
 	const usage = parseUsage(value.usage);
-	if (role === null || provider === null || model === null || usage === null) return null;
+	const depth = optionalNonnegativeInteger(value.depth);
+	const turn = optionalNonnegativeInteger(value.turn);
+	const requestStartedAt = optionalString(value.request_started_at);
+	const respondedAt = optionalString(value.at);
+	const runId = optionalString(value.run_id);
+	if (
+		role === null ||
+		provider === null ||
+		model === null ||
+		usage === null ||
+		depth === -1 ||
+		turn === -1 ||
+		(requestStartedAt !== null && Number.isNaN(Date.parse(requestStartedAt)))
+		|| (respondedAt !== null && Number.isNaN(Date.parse(respondedAt)))
+	) {
+		return null;
+	}
 	const toolCalls = parseToolCalls(value.tool_calls);
 	if (toolCalls === null) return null;
 	return {
 		role,
 		provider,
 		model,
+		depth,
+		turn,
+		...(respondedAt === null ? {} : { at: respondedAt }),
+		run_id: runId,
+		request_started_at: requestStartedAt,
 		handoff_id: optionalString(value.handoff_id),
 		goal_id: optionalString(value.goal_id),
 		lane: optionalString(value.lane),

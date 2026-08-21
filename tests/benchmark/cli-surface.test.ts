@@ -34,6 +34,7 @@ describe("benchmark CLI discoverability", () => {
 	test("codeflow benchmark run --help and report --help exit 0", () => {
 		expect(runCodeflow(["benchmark", "run", "--help"]).exitCode).toBe(0);
 		expect(runCodeflow(["benchmark", "report", "--help"]).exitCode).toBe(0);
+		expect(runCodeflow(["benchmark", "run", "--help"]).stdout).toContain("--attempts");
 	});
 });
 
@@ -89,6 +90,19 @@ describe("benchmark CLI argument contract (stable non-zero exit 2)", () => {
 		]);
 		expect(result.exitCode).toBe(2);
 		expect(result.stderr).toMatch(/budget/i);
+	});
+
+	test("malformed --attempts fails with exit 2, not a crash", () => {
+		const result = runCodeflow([
+			"benchmark",
+			"run",
+			"--dataset",
+			"whatever",
+			"--attempts",
+			"zero",
+		]);
+		expect(result.exitCode).toBe(2);
+		expect(result.stderr).toMatch(/--attempts.*integer >= 1/);
 	});
 
 	test("unknown --budget name fails with exit 2", () => {

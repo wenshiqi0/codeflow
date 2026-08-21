@@ -9,7 +9,9 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { cleanupTmpDirs, loadBenchmarkModule } from "./helpers";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { cleanupTmpDirs, loadBenchmarkModule, makeTmpDir } from "./helpers";
 
 afterEach(cleanupTmpDirs);
 
@@ -116,6 +118,26 @@ describe("token-weighted cache hit rate", () => {
 		]);
 		expect(summary.total_tokens).toBe(150);
 		expect(summary.reasoning).toBe(20);
+	});
+});
+
+describe("usage observability schema compatibility", () => {
+	test("v1 rows read as v2 with unavailable attribution, not guessed values", async () => {
+		const mod = await bench();
+		const file = path.join(makeTmpDir(), "usage.jsonl");
+		fs.writeFileSync(
+			file,
+			`${JSON.stringify(record({ input: 10, output: 5, reasoning: 0, cache_read: null, cache_write: null, total_tokens: 15, cost: null }))}\n`,
+		);
+		const rows = mod.readAttemptUsageRecords(file);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({
+			schema_version: 2,
+			request_started_at: null,
+			run_id: null,
+			depth: null,
+			turn: null,
+		});
 	});
 });
 

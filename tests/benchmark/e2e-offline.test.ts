@@ -97,9 +97,9 @@ describe("the chain completes offline through the real CLI", () => {
 		const files = listFiles(outDir);
 		// Guard against a vacuous pass: a run that wrote nothing has nothing to check.
 		expect(files.filter((rel) => rel.endsWith(".json")).length).toBeGreaterThan(0);
-		for (const rel of files) {
-			if (rel.endsWith(".json")) {
-				expect(readJson(artifact(rel)).schema_version).toBe(1);
+			for (const rel of files) {
+				if (rel.endsWith(".json")) {
+					expect([1, 2]).toContain(readJson(artifact(rel)).schema_version);
 			} else if (rel.endsWith(".jsonl")) {
 				// Throws on any half line: append-only writers must write whole lines.
 				expect(readJsonl(artifact(rel)).length).toBeGreaterThan(0);
@@ -112,7 +112,7 @@ describe("the chain completes offline through the real CLI", () => {
 describe("the manifest pins what actually ran", () => {
 	test("dataset identity, harness, and codeflow commits are exact", () => {
 		const manifest = readJson(artifact("benchmark-run.json"));
-		expect(manifest.schema_version).toBe(1);
+		expect(manifest.schema_version).toBe(2);
 		expect(manifest.dataset.dataset_id).toBe("SWE-bench/SWE-bench_Verified");
 		expect(manifest.dataset.split).toBe("test");
 		expect(manifest.dataset.revision).toBe("78f471bf655a3137b2e8a75af1501690ec009ec3");
@@ -303,8 +303,11 @@ describe("report.json", () => {
 		expect(report().cache).toEqual({
 			read: 120,
 			write: 5,
+			fresh_input_tokens: 2_002_010,
+			prompt_tokens: 2_002_135,
 			hit_rate: null,
 			metrics_available: false,
+			per_attempt_hit_rate: { median: 0, p90: 9 / 110 },
 		});
 	});
 

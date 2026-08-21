@@ -82,7 +82,7 @@ export function selectInstances(
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "dataset_id": "SWE-bench/SWE-bench_Verified",
   "split": "test",
   "revision": "<40-hex>",
@@ -233,7 +233,7 @@ Counting rules:
 ### 1.5 Token and cache metrics
 
 ```ts
-export const ATTEMPT_USAGE_SCHEMA_VERSION = 1;
+export const ATTEMPT_USAGE_SCHEMA_VERSION = 2;
 
 export interface AttemptUsageCost {
   input: number; output: number; cache_read: number; cache_write: number; total: number;
@@ -241,12 +241,16 @@ export interface AttemptUsageCost {
 
 /** One completed model round as recorded per attempt. cache null = provider did not report. */
 export interface AttemptUsageRecord {
-  schema_version: 1;
+  schema_version: 2;
   at: string;
+  request_started_at: string | null; // request boundary when observed
   attempt: number;
+  run_id: string | null;
   role: string;
   provider: string;
   model: string;
+  depth: number | null;
+  turn: number | null;
   handoff_id: string | null;
   goal_id: string | null;
   lane: string | null;
@@ -260,6 +264,13 @@ export interface AttemptUsageRecord {
     cost: AttemptUsageCost | null;   // informational only
   };
 }
+
+export const LEGACY_ATTEMPT_USAGE_SCHEMA_VERSION = 1;
+
+Legacy v1 rows remain readable. `readAttemptUsageRecords` normalizes missing
+observability attribution to `request_started_at=null`, `run_id=null`,
+`depth=null`, and `turn=null`; derived B4 metrics become unavailable rather
+than guessing those values.
 
 export function appendAttemptUsageRecord(file: string, record: AttemptUsageRecord): void;
 export function readAttemptUsageRecords(file: string): AttemptUsageRecord[];
@@ -307,6 +318,9 @@ export interface AttemptMetricsInput {
   usageRecords: AttemptUsageRecord[];
   failedModelAttempts: FailedModelAttempt[];
   toolCallRecords: ToolCallRecord[];
+  handoffStates?: HandoffStateProjection[]; // optional for v1-style callers
+  handoffTelemetryAvailable?: boolean;      // true only when telemetry was written
+  timeToFirstPatchSeconds?: number | null;
   wallSeconds: number;
   terminatedBy: BudgetName | null;
 }
@@ -323,13 +337,76 @@ export interface AttemptMetrics {
   tokens: TokenUsageSummary;
   wall_seconds: number;
   terminated_by: BudgetName | null;
+  handoffs: HandoffObservabilitySummary;
+  wall_breakdown: WallBreakdown;
+  time_to_first_patch_seconds: number | null;
+  waste: WasteSummary;
+  context_growth: ContextGrowthSummary;
 }
 
 export function buildAttemptMetrics(input: AttemptMetricsInput): AttemptMetrics;
+
+export const HANDOFF_STATE_PROJECTION_SCHEMA_VERSION = 1;
+export const OBSERVABILITY_BLOCKED_REASONS: readonly string[];
+export type ObservabilityBlockedReason = ...;
+export class HandoffObservabilityError extends Error;
+export interface HandoffStateProjection { /* closed metadata fields only */ }
+export interface HandoffStateScan { states: HandoffStateProjection[]; unknownBlockedReasons: number }
+export interface HandoffStateTelemetryFile { schema_version: 1; states: HandoffStateProjection[] }
+export interface HandoffObservabilitySummary {
+  total: number; pass: number; fail: number; blocked: number; nonterminal: number;
+  blocked_reasons: Record<string, number>; unknown_blocked_reasons: number;
+  redelegations: number; metrics_available: boolean;
+}
+export function projectHandoffState(runId: string, value: unknown): HandoffStateProjection;
+export function scanHandoffStates(runsRoot: string): HandoffStateScan;
+export function readHandoffStateProjections(file: string): HandoffStateProjection[];
+export function summarizeHandoffStates(
+  states: readonly HandoffStateProjection[],
+  metricsAvailable: boolean,
+): HandoffObservabilitySummary;
+export interface WallBreakdown {
+  tool_execution_seconds: number;
+  provider_wait_derived_seconds: number;
+  local_overhead_derived_seconds: number;
+  attribution: "derived";
+  metrics_available: boolean;
+}
+export function summarizeWallBreakdown(
+  usageRecords: readonly AttemptUsageRecord[],
+  toolCallRecords: readonly ToolCallRecord[],
+  wallSeconds: number,
+  wallStartedAtMs?: number | null,
+): WallBreakdown;
+export interface WasteSummary {
+  rounds_in_non_pass_handoffs: number | null;
+  tokens_in_non_pass_handoffs: number | null;
+  waste_ratio_rounds: number | null;
+  planner_rounds_ratio: number | null;
+  handoff_reopens_per_goal_lane_median: number | null;
+  metrics_available: boolean;
+}
+export interface ContextGrowthSummary {
+  first_turn_input_by_handoff_index: number[] | null;
+  metrics_available: boolean;
+}
+export function summarizeWaste(
+  usageRecords: readonly AttemptUsageRecord[],
+  handoffs: readonly HandoffStateProjection[],
+  telemetryAvailable: boolean,
+): WasteSummary;
+export function summarizeContextGrowth(
+  usageRecords: readonly AttemptUsageRecord[],
+  handoffs: readonly HandoffStateProjection[],
+  telemetryAvailable: boolean,
+): ContextGrowthSummary;
 ```
 
 Model rounds are derived from the per-attempt usage ledger row count (one
 assistant usage row == one completed round), never from session transcripts.
+Handoff observability is metadata-only: it projects closed status/reason enums
+and attribution from runtime `state.json`; prose, receipts, artifacts, and
+evidence refs cannot be represented.
 
 ### 1.7 Driver and evaluator seams
 
@@ -341,16 +418,23 @@ export interface DriverToolCall {
   call_id: string;
   tool: string;
   status: "succeeded" | "failed" | "rejected" | "incomplete";
+  requested_at?: string;       // source-clock request timestamp
+  result_at?: string | null;   // source-clock result timestamp
 }
 
 export interface DriverRound {
+  at?: string;                 // source assistant-response timestamp
+  run_id?: string | null;      // source-attributed run id
   role: string;
   provider: string;
   model: string;
+  depth?: number | null;
+  turn?: number | null;
   handoff_id?: string | null;
   goal_id?: string | null;
   lane?: string | null;
   usage: AttemptUsageRecord["usage"];
+  request_started_at?: string | null;
   tool_calls?: DriverToolCall[];  // tool calls emitted by this one response
   advance_ms?: number;            // simulated wall-clock advance for this round
 }
@@ -549,6 +633,9 @@ Omitted `cache_read`/`cache_write` keys mean "provider did not report"
 (`null`), not zero. An `infra_error` string terminates the attempt after the
 scripted rounds. The fixture driver plays events in file order; when the
 runner stops early (budget), the remaining script is never played.
+Fixture rounds and tool calls may also carry the source-clock/attribution
+fields shown in §1.7 (`at`, `run_id`, `depth`, `turn`,
+`request_started_at`, `requested_at`, `result_at`).
 
 `verdicts.json`:
 
@@ -563,11 +650,11 @@ wall-time budgets are deterministic offline.
 ### 1.9 Report
 
 ```ts
-export const BENCHMARK_REPORT_SCHEMA_VERSION = 1;
+export const BENCHMARK_REPORT_SCHEMA_VERSION = 2;
 
 export interface BenchmarkReport { /* shape below */ }
 
-/** Reads <outDir> artifacts only — manifest, case files, predictions. No driver, no evaluator, no model, no network. */
+/** Reads <outDir> artifacts only — manifest, cases, predictions, telemetry. No driver, evaluator, model, or network. */
 export function buildBenchmarkReport(outDir: string): BenchmarkReport;
 ```
 
@@ -575,21 +662,48 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport;
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "benchmark_run_id": "bench-...",
   "generated_at": "<ISO>",
+  "attempts_per_instance": 1,
+  "not_official": false,
   "counts": { "instances": 0, "attempts": 0, "resolved": 0, "unresolved": 0, "infra_error": 0, "not_evaluated": 0 },
   "resolved_rate": null,
   "resolved_rate_denominator": 0,
+  "resolved": { "pass_at_1_mean": null, "pass_at_1_stderr": null, "pass_at_n": null },
+  "dispersion": null,
   "budget_terminations": { "model_rounds": 0, "tool_calls": 0, "total_tokens": 0, "wall_seconds": 0, "none": 0 },
   "model_rounds": { "total": 0, "median": 0, "p90": 0, "primary": 0, "support": 0, "failed_attempts": 0 },
   "tool_calls": { "total": 0, "median": 0, "p90": 0 },
   "tokens": { "total": 0, "median": 0, "p90": 0 },
   "per_resolved": { "rounds": null, "tool_calls": null, "tokens": null },
-  "cache": { "read": 0, "write": 0, "hit_rate": null, "metrics_available": false },
+  "cache": {
+    "read": 0, "write": 0, "fresh_input_tokens": 0, "prompt_tokens": 0,
+    "hit_rate": null, "metrics_available": false,
+    "per_attempt_hit_rate": { "median": null, "p90": null }
+  },
   "tool_calls_per_model_round": null,
   "breakdowns": { "by_role": {}, "by_model": {}, "by_lane": {}, "by_tool": {} },
-  "wall_time": { "total_seconds": 0, "median_seconds": 0, "p90_seconds": 0, "not_ranked": true },
+  "wall_time": {
+    "total_seconds": 0, "median_seconds": 0, "p90_seconds": 0, "not_ranked": true,
+    "tool_execution_seconds": { "total": 0, "median": null, "p90": null },
+    "provider_wait_derived_seconds": { "total": 0, "median": null, "p90": null },
+    "local_overhead_derived_seconds": { "total": 0, "median": null, "p90": null },
+    "time_to_first_patch_seconds": { "median": null, "p90": null }
+  },
+  "runtime_observability": {
+    "handoffs": {
+      "total": 0, "pass": 0, "fail": 0, "blocked": 0, "nonterminal": 0,
+      "blocked_reasons": {}, "unknown_blocked_reasons": 0, "redelegations": 0,
+      "metrics_available": false, "by_role": {}, "by_lane": {}
+    },
+    "waste": {
+      "rounds_in_non_pass_handoffs": null, "tokens_in_non_pass_handoffs": null,
+      "waste_ratio_rounds": null, "planner_rounds_ratio": null,
+      "handoff_reopens_per_goal_lane_median": null, "metrics_available": false
+    },
+    "context_growth": { "first_turn_input_by_handoff_index": null, "metrics_available": false }
+  },
   "comparison_keys": {
     "dataset_id": "", "dataset_split": "", "dataset_revision": "",
     "instance_set_digest": "", "budgets": { "model_rounds": 0, "tool_calls": 0, "total_tokens": 0, "wall_seconds": 0 },
@@ -608,14 +722,33 @@ Rules:
   (resolved, unresolved, infra_error, not_evaluated, budget-terminated alike)
   by the resolved count — failed-but-infra-valid consumption stays in the
   numerator. `null` when `resolved == 0`.
-- `cache.hit_rate` is the token-weighted formula across all attempts;
-  `null` unless every contributing attempt had `cache_metrics_available`.
+- `cache.hit_rate` is the prompt-cache hit rate: token-weighted
+  `sum(cache_read) / sum(input + cache_read + cache_write)`. It is `null`
+  unless every contributing attempt had `cache_metrics_available`.
+  `per_attempt_hit_rate` excludes attempts whose cache metrics are unavailable.
+- `resolved.pass_at_1_mean` averages each instance's success rate over its
+  resolved/unresolved attempts only; `infra_error` and `not_evaluated` stay out
+  of that denominator. `pass_at_1_stderr` is the sample standard error across
+  per-instance rates. `pass_at_n` is the share of instances with any resolved
+  valid attempt.
+- `attempts_per_instance > 1` sets `not_official=true`; `dispersion` is null
+  for single-attempt reports.
 - `median` = middle value, or the mean of the two middle values for even n;
   `p90` = nearest-rank `sorted[max(0, ceil(0.9 * n) - 1)]`, over per-attempt
   totals (attempts with zero included).
 - `breakdowns.by_*` map a name (`by_model` uses `provider/model`) to
   `{ "model_rounds": 0, "tool_calls": 0, "total_tokens": 0 }`.
 - `wall_time.not_ranked` is always `true`.
+- Wall attribution is diagnostic: tool intervals use source timestamps and are
+  unioned across concurrent calls; provider/local fields are derived residual
+  estimates and must not be compared across environments.
+- `runtime_observability.handoffs` aggregates canonical handoff-state telemetry
+  only. It contains closed enums and attribution; prose and receipts cannot
+  appear. Old artifacts without telemetry rebuild with
+  `metrics_available: false`.
+- `runtime_observability.waste` joins usage facts to handoff terminal facts;
+  `runtime_observability.context_growth` uses each handoff's minimum-turn usage
+  and requires cache metrics. Old v1 attribution makes these nodes unavailable.
 - `instance_set_digest` = sha256 hex of the sorted selected instance ids
   joined by `\n`.
 - No composite score exists: no top-level key contains `score` (the report
@@ -634,6 +767,8 @@ codeflow benchmark run    --dataset <snapshot-path | hub-id>
                                                       # (first 20 in dataset order, design §2)
                           [--out <dir>]               # default .codeflow/benchmark/<benchmark-run-id>
                           [--concurrency <n>]         # default 1
+                          [--attempts <n>]            # attempts per instance; default 1,
+                                                      # >1 is non-official diagnostic only
                           [--budget <name>=<value>]... # repeatable; model-rounds|tool-calls|total-tokens|wall-seconds
                           [--model-config <id>]        # default "default"
                           [--fixture <dir>]            # offline driver+evaluator+simulated clock
@@ -646,7 +781,7 @@ codeflow benchmark report --run <dir>                  # benchmark out dir
 - `codeflow benchmark --help`, `... run --help`, `... report --help` exit 0
   with usage on stdout.
 - Argument errors (unknown subcommand, unknown option, missing `--dataset` /
-  `--run`, malformed `--budget`, bad `--concurrency`) exit **2** with
+  `--run`, malformed `--budget`, bad `--concurrency`, bad `--attempts`) exit **2** with
   `codeflow benchmark: error: ...` on stderr — a stable non-zero code.
   Argument validation (options, budget syntax, concurrency) happens before
   dataset/fixture resolution, so a malformed flag is reported as such even
@@ -666,12 +801,14 @@ One benchmark run writes, under `<outDir>`:
 
 ```text
 benchmark-run.json                      # manifest (atomic replace)
-predictions.jsonl                       # append-only, one complete line per attempt
+predictions.jsonl                       # append-only, one complete line per selected instance
 report.json                             # atomic replace; rebuildable
 cases/<slug>/case.json                  # per-instance verdicts + metrics (atomic replace)
 cases/<slug>/attempts/<n>/usage.jsonl   # append-only round ledger
 cases/<slug>/attempts/<n>/tool-calls.jsonl  # append-only tool ledger
 cases/<slug>/attempts/<n>/prediction.jsonl   # the attempt's own official prediction
+cases/<slug>/attempts/<n>/telemetry/handoff-states.json
+                                             # real mode only: privacy-safe runtime handoff telemetry
 cases/<slug>/attempts/<n>/workspace/    # the attempt workspace (repo@base_commit in real mode)
 cases/<slug>/attempts/<n>/driver-ledger/     # real mode only: staging ledgers written by the
                                              # spawned Codeflow run's instrumentation
@@ -691,7 +828,7 @@ with complete lines, so an interrupted run can never parse half a document.
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "benchmark_run_id": "bench-...",
   "created_at": "<ISO>",
   "dataset": { "dataset_id": "", "split": "", "revision": "<40-hex>", "source": "local-snapshot|hub", "instance_count": 0 },
@@ -700,6 +837,7 @@ with complete lines, so an interrupted run can never parse half a document.
   "codeflow_commit": "<40-hex>",
   "model_config": "",
   "concurrency": 1,
+  "attempts_per_instance": 1,
   "tool_network": "disabled",
   "model_provider_network": "disabled",
   "budgets": { "defaults": {}, "overrides": null, "effective": {} },
@@ -710,6 +848,8 @@ with complete lines, so an interrupted run can never parse half a document.
 - The manifest must record the exact dataset id, split, resolved revision
   (40-hex), harness commit, Codeflow commit, actual concurrency, network
   declarations, and effective budgets. Never a moving alias.
+- Report rebuilding accepts legacy manifest v1 and interprets it as
+  `attempts_per_instance: 1`; new runs write manifest v2.
 - `tool_network` defaults to `"disabled"` and is `"disabled"` in fixture mode.
 - `model_provider_network` is `"disabled"` in fixture mode (no provider is
   called) and `"required"` in real mode — the two networks are declared
@@ -738,11 +878,11 @@ with complete lines, so an interrupted run can never parse half a document.
 ```
 
 `predictions.jsonl` lines carry exactly the three official keys:
-`instance_id`, `model_name_or_path`, `model_patch`. One line per attempt; the
-latest attempt for an instance is the official prediction (`instance_id` stays
-unique from the harness's point of view because only the last line per
-instance is submitted). `model_patch` is the git diff extracted from the
-workspace; an empty patch is representable as `""`.
+`instance_id`, `model_name_or_path`, `model_patch`. Exactly one line per
+selected instance remains the harness-facing contract. For multi-attempt runs
+the representative is the first resolved attempt, or attempt 1 when no attempt
+resolved. `model_patch` is the git diff extracted from that attempt workspace;
+an empty patch is representable as `""`.
 
 ## 4. Classification
 

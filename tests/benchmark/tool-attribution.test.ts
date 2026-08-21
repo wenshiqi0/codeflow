@@ -458,6 +458,38 @@ describe("EXT: benchmark-ledger attributes tool calls to the emitting model", ()
 		expect(rows[0].model.length).toBeGreaterThan(0);
 	});
 
+	test("EXT-4b usage rows carry runtime depth/turn attribution for B4 joins", async () => {
+		const ledger = path.join(makeTmpDir(), "staging");
+		await withExtension(
+			ledger,
+			{
+				CODEFLOW_RUN_ID: "run-attr",
+				CODEFLOW_AGENT_ROLE: "coder",
+				CODEFLOW_AGENT_DEPTH: "1",
+				CODEFLOW_HANDOFF_ID: "h-77",
+				CODEFLOW_GOAL_ID: "g-attr",
+				CODEFLOW_LANE: "code",
+			},
+			(handlers) => {
+				handlers.get("turn_start")!({ type: "turn_start", turnIndex: 2 });
+				fireMessageEnd(handlers, "prov-d", "model-delegated");
+			},
+		);
+		const rows = readJsonlFile(path.join(ledger, "usage.jsonl"));
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({
+			schema_version: 2,
+			run_id: "run-ext",
+			role: "coder",
+			depth: 1,
+			turn: 3,
+			handoff_id: "h-77",
+			goal_id: "g-attr",
+			lane: "code",
+			request_started_at: null,
+		});
+	});
+
 	test("EXT-5 usage-less assistant messages stay failed attempts, not rounds or calls", async () => {
 		const ledger = path.join(makeTmpDir(), "staging");
 		await withExtension(ledger, { CODEFLOW_AGENT_ROLE: "coder", CODEFLOW_AGENT_DEPTH: "1" }, (handlers) => {
@@ -833,10 +865,17 @@ describe("CHAIN: the production driver forwards provider/model on tool events", 
 			expect(event.provider).toBe("fake-anthropic");
 			expect(event.model).toBe("fake-coder");
 			expect(event.role).toBe("coder");
+			for (const call of event.calls) {
+				expect(Date.parse(call.requested_at)).not.toBeNaN();
+				if (call.status === "incomplete") expect(call.result_at).toBeNull();
+				else expect(Date.parse(call.result_at)).toBeGreaterThanOrEqual(Date.parse(call.requested_at));
+			}
 		}
 		// Rounds already carry provider/model (the usage-ledger attribution).
 		expect(events[0].round.provider).toBe("fake-anthropic");
 		expect(events[0].round.model).toBe("fake-coder");
+		expect(events[0].round.depth).toBe(0);
+		expect(events[0].round.turn).toBe(1);
 	}, 30_000);
 });
 

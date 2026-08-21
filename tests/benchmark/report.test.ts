@@ -181,7 +181,7 @@ describe("classification counts and the resolved-rate denominator", () => {
 		});
 		expect(report.resolved_rate).toBeCloseTo(1 / 2, 12);
 		expect(report.resolved_rate_denominator).toBe(2);
-		expect(report.schema_version).toBe(1);
+		expect(report.schema_version).toBe(2);
 	});
 
 	test("resolved = 0: rate null, denominator 0, per-resolved null — no division by zero", async () => {
@@ -299,12 +299,51 @@ describe("per-resolved efficiency numerators", () => {
 		expect(report.cache).toEqual({
 			read: 100,
 			write: 20,
+			fresh_input_tokens: 0,
+			prompt_tokens: 120,
 			hit_rate: null,
 			metrics_available: false,
+			per_attempt_hit_rate: { median: 0.25, p90: 0.5 },
 		});
 
 		// Wall time is telemetry, explicitly not a ranking axis.
-		expect(report.wall_time).toEqual({ total_seconds: 225, median_seconds: 52.5, p90_seconds: 90, not_ranked: true });
+		expect(report.wall_time).toMatchObject({
+			total_seconds: 225,
+			median_seconds: 52.5,
+			p90_seconds: 90,
+			not_ranked: true,
+		});
+		expect(report.wall_time.tool_execution_seconds).toEqual({ total: 0, median: 0, p90: 0 });
+		expect(report.wall_time.provider_wait_derived_seconds).toEqual({ total: 0, median: 0, p90: 0 });
+		expect(report.wall_time.local_overhead_derived_seconds).toEqual({ total: 0, median: 0, p90: 0 });
+		expect(report.wall_time.time_to_first_patch_seconds).toEqual({ median: null, p90: null });
+	});
+
+	test("prompt cache hit rate is token-weighted and unavailable means null", async () => {
+		const mod = await bench();
+		const dir = makeTmpDir();
+		const tokenSummary = (input: number, read: number, write: number) => ({
+			...metrics().tokens,
+			input,
+			cache_read: read,
+			cache_write: write,
+			total_tokens: input + read + write + 10,
+			cache_metrics_available: true,
+			cache_hit_rate: read / (input + read + write),
+		});
+		writeOutDir(dir, [
+			{ id: "demo/a", verdict: "resolved", metrics: metrics({ tokens: tokenSummary(10, 90, 0) }) },
+			{ id: "demo/b", verdict: "resolved", metrics: metrics({ tokens: tokenSummary(10, 10, 10) }) },
+		]);
+		const report = mod.buildBenchmarkReport(dir);
+		expect(report.cache.fresh_input_tokens).toBe(20);
+		expect(report.cache.read).toBe(100);
+		expect(report.cache.write).toBe(10);
+		expect(report.cache.prompt_tokens).toBe(130);
+		expect(report.cache.metrics_available).toBe(true);
+		// (90 + 10) / (10+90 + 10+10+10), not mean(0.9, 1/3).
+		expect(report.cache.hit_rate).toBeCloseTo(100 / 130, 12);
+		expect(report.cache.per_attempt_hit_rate).toEqual({ median: (0.9 + 1 / 3) / 2, p90: 0.9 });
 	});
 });
 

@@ -20,7 +20,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-export const ATTEMPT_USAGE_SCHEMA_VERSION = 1;
+export const ATTEMPT_USAGE_SCHEMA_VERSION = 2;
+export const LEGACY_ATTEMPT_USAGE_SCHEMA_VERSION = 1;
 
 export interface AttemptUsageCost {
 	input: number;
@@ -45,20 +46,41 @@ export interface AttemptUsage {
 
 /** One completed model round as recorded per attempt. */
 export interface AttemptUsageRecord {
-	schema_version: 1;
+	schema_version: 2;
 	/** ISO timestamp. */
 	at: string;
+	/** Null for provider requests whose start boundary was not observed. */
+	request_started_at: string | null;
 	attempt: number;
+	run_id: string | null;
 	role: string;
 	provider: string;
 	model: string;
+	depth: number | null;
+	turn: number | null;
 	handoff_id: string | null;
 	goal_id: string | null;
 	lane: string | null;
 	usage: AttemptUsage;
 }
 
-const RECORD_KEYS = [
+const RECORD_KEYS_V2 = [
+	"schema_version",
+	"at",
+	"request_started_at",
+	"attempt",
+	"run_id",
+	"role",
+	"provider",
+	"model",
+	"depth",
+	"turn",
+	"handoff_id",
+	"goal_id",
+	"lane",
+	"usage",
+] as const;
+const RECORD_KEYS_V1 = [
 	"schema_version",
 	"at",
 	"attempt",
@@ -89,16 +111,17 @@ function isObject(value: unknown): value is Record<string, unknown> {
 export function validateAttemptUsageRecord(record: unknown): string[] {
 	const violations: string[] = [];
 	if (!isObject(record)) return ["record must be a JSON object"];
+	const keys = record.schema_version === LEGACY_ATTEMPT_USAGE_SCHEMA_VERSION ? RECORD_KEYS_V1 : RECORD_KEYS_V2;
 	for (const key of Object.keys(record)) {
-		if (!(RECORD_KEYS as readonly string[]).includes(key)) {
+		if (!(keys as readonly string[]).includes(key)) {
 			violations.push(`unexpected key: ${key} (usage rows carry attribution and numbers only)`);
 		}
 	}
-	for (const key of RECORD_KEYS) {
+	for (const key of keys) {
 		if (!(key in record)) violations.push(`missing key: ${key}`);
 	}
-	if (record.schema_version !== ATTEMPT_USAGE_SCHEMA_VERSION) {
-		violations.push(`schema_version must be ${ATTEMPT_USAGE_SCHEMA_VERSION}`);
+	if (record.schema_version !== ATTEMPT_USAGE_SCHEMA_VERSION && record.schema_version !== LEGACY_ATTEMPT_USAGE_SCHEMA_VERSION) {
+		violations.push(`schema_version must be ${LEGACY_ATTEMPT_USAGE_SCHEMA_VERSION} or ${ATTEMPT_USAGE_SCHEMA_VERSION}`);
 	}
 	if (typeof record.at !== "string" || Number.isNaN(Date.parse(record.at))) {
 		violations.push("at must be an ISO timestamp string");
@@ -114,6 +137,26 @@ export function validateAttemptUsageRecord(record: unknown): string[] {
 	for (const key of ["handoff_id", "goal_id", "lane"] as const) {
 		if (record[key] !== null && typeof record[key] !== "string") {
 			violations.push(`${key} must be a string or null`);
+		}
+	}
+	for (const key of ["request_started_at", "run_id"] as const) {
+		if (record.schema_version === LEGACY_ATTEMPT_USAGE_SCHEMA_VERSION) continue;
+		if (record[key] !== null && typeof record[key] !== "string") {
+			violations.push(`${key} must be a string or null`);
+		}
+		if (record[key] === null) continue;
+		if (key === "request_started_at" && Number.isNaN(Date.parse(record[key] as string))) {
+			violations.push("request_started_at must be an ISO timestamp string or null");
+		}
+		if (key === "run_id" && (record[key] as string).length === 0) {
+			violations.push("run_id must be a non-empty string or null");
+		}
+	}
+	for (const key of ["depth", "turn"] as const) {
+		if (record.schema_version === LEGACY_ATTEMPT_USAGE_SCHEMA_VERSION) continue;
+		const value = record[key];
+		if (value !== null && (typeof value !== "number" || !Number.isInteger(value) || value < 0)) {
+			violations.push(`${key} must be a non-negative integer or null`);
 		}
 	}
 	const usage = record.usage;
@@ -203,7 +246,15 @@ export function readAttemptUsageRecords(file: string): AttemptUsageRecord[] {
 		if (violations.length > 0) {
 			throw new Error(`usage row ${index + 1} in ${file}: ${violations.join("; ")}`);
 		}
-		return row as unknown as AttemptUsageRecord;
+		if (row.schema_version === ATTEMPT_USAGE_SCHEMA_VERSION) return row as unknown as AttemptUsageRecord;
+		return {
+			...row,
+			schema_version: ATTEMPT_USAGE_SCHEMA_VERSION,
+			request_started_at: null,
+			run_id: null,
+			depth: null,
+			turn: null,
+		} as AttemptUsageRecord;
 	});
 }
 

@@ -84,6 +84,14 @@ function asNullableNumber(value: unknown): number | null {
 	return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function asNullableNonnegativeInteger(value: unknown): number | null {
+	return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function asNullableIso(value: unknown): string | null {
+	return typeof value === "string" && !Number.isNaN(Date.parse(value)) ? value : null;
+}
+
 function parseCost(value: unknown): AttemptUsageCost | null {
 	if (value === null || value === undefined) return null;
 	const cost = asRecord(value, "cost");
@@ -122,24 +130,35 @@ function parseToolCalls(value: unknown): DriverToolCall[] {
 				`tool_calls[${index}].status must be succeeded|failed|rejected|incomplete, got: ${status}`,
 			);
 		}
+		const requestedAt = asNullableIso(call.requested_at);
+		const resultAt = asNullableIso(call.result_at);
 		return {
 			call_id: asString(call.call_id, `tool_calls[${index}].call_id`),
 			tool: asString(call.tool, `tool_calls[${index}].tool`),
 			status,
+			...(requestedAt === null ? {} : { requested_at: requestedAt }),
+			...(resultAt === null ? {} : { result_at: resultAt }),
 		};
 	});
 }
 
 function parseRound(value: unknown): DriverRound {
 	const round = asRecord(value, "round");
+	const respondedAt = asNullableIso(round.at);
+	const runId = typeof round.run_id === "string" && round.run_id.length > 0 ? round.run_id : null;
 	return {
-		role: asString(round.role, "round.role"),
+		...(respondedAt === null ? {} : { at: respondedAt }),
+		run_id: runId,
+			role: asString(round.role, "round.role"),
 		provider: asString(round.provider, "round.provider"),
 		model: asString(round.model, "round.model"),
+		depth: asNullableNonnegativeInteger(round.depth),
+		turn: asNullableNonnegativeInteger(round.turn),
 		handoff_id: typeof round.handoff_id === "string" ? round.handoff_id : null,
 		goal_id: typeof round.goal_id === "string" ? round.goal_id : null,
 		lane: typeof round.lane === "string" ? round.lane : null,
 		usage: parseUsage(round.usage),
+		request_started_at: asNullableIso(round.request_started_at),
 		tool_calls: parseToolCalls(round.tool_calls),
 		advance_ms: typeof round.advance_ms === "number" ? round.advance_ms : 0,
 	};

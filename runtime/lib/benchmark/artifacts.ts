@@ -11,11 +11,12 @@ import type { BenchmarkBudgets, BudgetName } from "./budgets";
 import type { AttemptMetrics } from "./metrics";
 import type { BenchmarkVerdict } from "./driver";
 
-export const BENCHMARK_MANIFEST_SCHEMA_VERSION = 1;
+export const BENCHMARK_MANIFEST_SCHEMA_VERSION = 2;
+export const LEGACY_BENCHMARK_MANIFEST_SCHEMA_VERSION = 1;
 export const BENCHMARK_CASE_SCHEMA_VERSION = 1;
 
 export interface BenchmarkManifest {
-	schema_version: 1;
+	schema_version: 2;
 	benchmark_run_id: string;
 	created_at: string;
 	dataset: {
@@ -37,6 +38,8 @@ export interface BenchmarkManifest {
 	codeflow_commit: string;
 	model_config: string;
 	concurrency: number;
+	/** Official single-attempt reports use 1; >1 is pilot/diagnostic only. */
+	attempts_per_instance: number;
 	tool_network: "disabled";
 	model_provider_network: "disabled" | "required";
 	budgets: {

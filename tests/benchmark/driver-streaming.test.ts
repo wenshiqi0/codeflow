@@ -208,11 +208,16 @@ describe("production codeflow-driver.ts streams from the live Codeflow process",
 		expect(round1.round.tool_calls).toBeUndefined();
 		expect(round1.round.usage.total_tokens).toBe(400_000);
 		// The terminated call is its own standalone event.
-		expect(run.events[1].calls).toEqual([{ call_id: "t-1", tool: "bash", status: "succeeded" }]);
+		expect(run.events[1].calls).toMatchObject([{ call_id: "t-1", tool: "bash", status: "succeeded" }]);
+		expect(Date.parse(run.events[1].calls[0].requested_at)).not.toBeNaN();
+		expect(Date.parse(run.events[1].calls[0].result_at)).toBeGreaterThanOrEqual(
+			Date.parse(run.events[1].calls[0].requested_at),
+		);
 		expect(run.events[1].role).toBe("coder");
 		// The request that never terminated is emitted incomplete only once
 		// the process has ENDED (it cannot be known incomplete while alive).
-		expect(run.events[3].calls).toEqual([{ call_id: "t-2", tool: "bash", status: "incomplete" }]);
+		expect(run.events[3].calls).toMatchObject([{ call_id: "t-2", tool: "bash", status: "incomplete" }]);
+		expect(run.events[3].calls[0].result_at).toBeNull();
 
 		// Liveness: the first three events were received while the inner
 		// process was demonstrably still running (it sleeps 500ms after each

@@ -116,6 +116,13 @@ export default function (pi: ExtensionAPI): void {
 	let lastEmitting: EmittingContext = UNKNOWN_CONTEXT;
 	/** call_id -> the context that EMITTED that call (result rows keep it). */
 	const callEmitting = new Map<string, EmittingContext>();
+	/** 1-based turn attribution when Pi emitted a turn_start event. */
+	let currentTurn: number | null = null;
+
+	pi.on("turn_start", (event) => {
+		const turn = Number((event as { turnIndex?: unknown }).turnIndex);
+		if (Number.isInteger(turn) && turn >= 0) currentTurn = turn + 1;
+	});
 
 	pi.on("message_end", (event) => {
 		const message = asRecord(event.message);
@@ -159,12 +166,16 @@ export default function (pi: ExtensionAPI): void {
 		const rawCost = asRecord(rawUsage.cost);
 
 		const record: AttemptUsageRecord = {
-			schema_version: 1,
+			schema_version: 2,
 			at,
+			request_started_at: null,
 			attempt,
+			run_id: optionalEnv("CODEFLOW_RUN_ID"),
 			role,
 			provider,
 			model,
+			depth: Number(env("CODEFLOW_AGENT_DEPTH") ?? "0") || 0,
+			turn: currentTurn,
 			handoff_id: optionalEnv("CODEFLOW_HANDOFF_ID"),
 			goal_id: optionalEnv("CODEFLOW_GOAL_ID"),
 			lane: optionalEnv("CODEFLOW_LANE"),

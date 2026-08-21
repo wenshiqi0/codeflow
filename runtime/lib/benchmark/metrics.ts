@@ -13,6 +13,18 @@ import { classifyModelRole } from "./rounds";
 import { summarizeToolCalls } from "./tool-calls";
 import { summarizeTokenUsage, type AttemptUsageRecord, type TokenUsageSummary } from "./tokens";
 import type { ToolCallRecord } from "./tool-calls";
+import {
+	summarizeHandoffStates,
+	type HandoffObservabilitySummary,
+	type HandoffStateProjection,
+} from "../observability/handoff-state";
+import { summarizeWallBreakdown, type WallBreakdown } from "../observability/timing";
+import {
+	summarizeContextGrowth,
+	summarizeWaste,
+	type ContextGrowthSummary,
+	type WasteSummary,
+} from "../observability/usage-analysis";
 
 /** A provider request that failed before any assistant response. */
 export const FAILED_ATTEMPT_SCHEMA_VERSION = 1;
@@ -32,6 +44,11 @@ export interface AttemptMetricsInput {
 	usageRecords: AttemptUsageRecord[];
 	failedModelAttempts: FailedModelAttempt[];
 	toolCallRecords: ToolCallRecord[];
+	handoffStates?: HandoffStateProjection[];
+	/** True only when a canonical handoff telemetry artifact was produced. */
+	handoffTelemetryAvailable?: boolean;
+	timeToFirstPatchSeconds?: number | null;
+	wallStartedAtMs?: number | null;
 	wallSeconds: number;
 	terminatedBy: BudgetName | null;
 }
@@ -57,6 +74,11 @@ export interface AttemptMetrics {
 	tokens: TokenUsageSummary;
 	wall_seconds: number;
 	terminated_by: BudgetName | null;
+	handoffs: HandoffObservabilitySummary;
+	wall_breakdown: WallBreakdown;
+	time_to_first_patch_seconds: number | null;
+	waste: WasteSummary;
+	context_growth: ContextGrowthSummary;
 }
 
 export function buildAttemptMetrics(input: AttemptMetricsInput): AttemptMetrics {
@@ -68,6 +90,11 @@ export function buildAttemptMetrics(input: AttemptMetricsInput): AttemptMetrics 
 		else primary++;
 	}
 	const rounds = input.usageRecords.length;
+	const handoffs = summarizeHandoffStates(
+		input.handoffStates ?? [],
+		input.handoffTelemetryAvailable ?? false,
+	);
+	const telemetryAvailable = input.handoffTelemetryAvailable ?? false;
 	return {
 		model_rounds_total: rounds,
 		primary_model_rounds: primary,
@@ -87,5 +114,19 @@ export function buildAttemptMetrics(input: AttemptMetricsInput): AttemptMetrics 
 		tokens: summarizeTokenUsage(input.usageRecords),
 		wall_seconds: input.wallSeconds,
 		terminated_by: input.terminatedBy,
+		handoffs,
+		wall_breakdown: summarizeWallBreakdown(
+			input.usageRecords,
+			input.toolCallRecords,
+			input.wallSeconds,
+			input.wallStartedAtMs,
+		),
+		time_to_first_patch_seconds: input.timeToFirstPatchSeconds ?? null,
+		waste: summarizeWaste(input.usageRecords, input.handoffStates ?? [], telemetryAvailable),
+		context_growth: summarizeContextGrowth(
+			input.usageRecords,
+			input.handoffStates ?? [],
+			telemetryAvailable,
+		),
 	};
 }

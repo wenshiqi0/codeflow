@@ -47,8 +47,8 @@ printf '%s\n' "$*" >"$capture/inner-argv"
 now() { date -u "+%Y-%m-%dT%H:%M:%S.000Z"; }
 
 usage_row() { # $1=role $2=model $3=total_tokens
-	printf '{"schema_version":1,"at":"%s","attempt":1,"role":"%s","provider":"fake-anthropic","model":"%s","handoff_id":null,"goal_id":null,"lane":null,"usage":{"input":%d,"output":100,"reasoning":0,"cache_read":0,"cache_write":0,"total_tokens":%d,"cost":null}}\n' \
-		"$(now)" "$1" "$2" "$(($3 - 100))" "$3" >>"$ledger/usage.jsonl"
+	printf '{"schema_version":2,"at":"%s","request_started_at":null,"attempt":%d,"run_id":null,"role":"%s","provider":"fake-anthropic","model":"%s","depth":0,"turn":1,"handoff_id":null,"goal_id":null,"lane":null,"usage":{"input":%d,"output":100,"reasoning":0,"cache_read":0,"cache_write":0,"total_tokens":%d,"cost":null}}\n' \
+		"$(now)" "${CODEFLOW_BENCHMARK_ATTEMPT:-1}" "$1" "$2" "$(($3 - 100))" "$3" >>"$ledger/usage.jsonl"
 }
 
 tool_row() { # $1=kind $2=call_id $3=status ("-" for null) [$4=provider] [$5=model]

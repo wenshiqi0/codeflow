@@ -47,6 +47,8 @@ run options:
   --out <dir>                       output dir
                                     (default .codeflow/benchmark/<run-id>)
   --concurrency <n>                 instance concurrency, default 1
+  --attempts <n>                    attempts per instance, default 1;
+                                    values >1 are non-official diagnostics
   --budget <name>=<value>           repeatable override; name one of
                                     model-rounds|tool-calls|total-tokens|wall-seconds
   --model-config <id>               Codeflow model config id, default "default"
@@ -157,6 +159,7 @@ const RUN_OPTIONS = [
 	"--instances",
 	"--out",
 	"--concurrency",
+	"--attempts",
 	"--budget",
 	"--model-config",
 	"--fixture",
@@ -187,6 +190,15 @@ async function runCommand(argv: string[]): Promise<number> {
 			return usageError(`invalid --concurrency value: ${concurrencyRaw} (must be an integer >= 1)`);
 		}
 		concurrency = value;
+	}
+	let attempts = 1;
+	const attemptsRaw = optionValue(options, "--attempts");
+	if (attemptsRaw !== undefined) {
+		const value = Number(attemptsRaw);
+		if (!Number.isInteger(value) || value < 1) {
+			return usageError(`invalid --attempts value: ${attemptsRaw} (must be an integer >= 1)`);
+		}
+		attempts = value;
 	}
 	let budgetOverrides: Partial<BenchmarkBudgets> | undefined;
 	const budgetEntries = optionValues(options, "--budget");
@@ -221,6 +233,7 @@ async function runCommand(argv: string[]): Promise<number> {
 			outDir,
 			budgets: budgetOverrides,
 			concurrency,
+			attempts,
 			modelConfig,
 			benchmarkRunId,
 		};
@@ -250,6 +263,7 @@ async function runCommand(argv: string[]): Promise<number> {
 				report: path.join(result.outDir, "report.json"),
 				counts: result.report.counts,
 				resolved_rate: result.report.resolved_rate,
+				prompt_cache_hit_rate: result.report.cache.hit_rate,
 			}),
 		);
 		return 0;
@@ -290,6 +304,7 @@ async function runRealMode(inputs: {
 	outDir: string;
 	budgets: Partial<BenchmarkBudgets> | undefined;
 	concurrency: number;
+	attempts: number;
 	modelConfig: string;
 	benchmarkRunId: string;
 }): Promise<ReturnType<typeof runBenchmark>> {
@@ -300,6 +315,7 @@ async function runRealMode(inputs: {
 		outDir: inputs.outDir,
 		budgets: inputs.budgets,
 		concurrency: inputs.concurrency,
+		attempts: inputs.attempts,
 		modelConfig: inputs.modelConfig,
 		driver: createProcessCodeflowDriver(),
 		evaluator: createProcessHarnessEvaluator(),

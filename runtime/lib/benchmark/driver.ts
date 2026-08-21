@@ -17,16 +17,28 @@ export interface DriverToolCall {
 	call_id: string;
 	tool: string;
 	status: "succeeded" | "failed" | "rejected" | "incomplete";
+	/** Source-clock request timestamp; required for credible B1 timing. */
+	requested_at?: string;
+	/** Source-clock terminal timestamp; null only for incomplete calls. */
+	result_at?: string | null;
 }
 
 export interface DriverRound {
+	/** Source assistant-response timestamp when the runtime observed one. */
+	at?: string;
+	/** Runtime-attributed run id when the source ledger observed one. */
+	run_id?: string | null;
 	role: string;
 	provider: string;
 	model: string;
+	depth?: number | null;
+	turn?: number | null;
 	handoff_id?: string | null;
 	goal_id?: string | null;
 	lane?: string | null;
 	usage: AttemptUsage;
+	/** Source provider request start boundary when observed. */
+	request_started_at?: string | null;
 	/** Tool calls emitted by this one response. */
 	tool_calls?: DriverToolCall[];
 	/** Simulated wall-clock advance for this round; the driver applies it to the injected clock. */

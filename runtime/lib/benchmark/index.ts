@@ -69,6 +69,18 @@ export {
 } from "./metrics";
 
 export {
+	type WallBreakdown,
+	summarizeWallBreakdown,
+} from "../observability/timing";
+
+export {
+	type WasteSummary,
+	type ContextGrowthSummary,
+	summarizeWaste,
+	summarizeContextGrowth,
+} from "../observability/usage-analysis";
+
+export {
 	type DriverToolCall,
 	type DriverRound,
 	type DriverEvent,
@@ -140,3 +152,18 @@ export {
 	type BreakdownTotals,
 	buildBenchmarkReport,
 } from "./report";
+
+export {
+	HANDOFF_STATE_PROJECTION_SCHEMA_VERSION,
+	OBSERVABILITY_BLOCKED_REASONS,
+	HandoffObservabilityError,
+	type HandoffStateProjection,
+	type HandoffStateScan,
+	type HandoffStateTelemetryFile,
+	type ObservabilityBlockedReason,
+	projectHandoffState,
+	scanHandoffStates,
+	readHandoffStateProjections,
+	type HandoffObservabilitySummary,
+	summarizeHandoffStates,
+} from "../observability/handoff-state";
