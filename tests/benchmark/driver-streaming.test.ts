@@ -1,6 +1,6 @@
 /**
  * Developer tests for the PRODUCTION default driver script
- * (runtime/scripts/benchmark/codeflow-driver.ts) — the innermost live
+ * (benchmark/scripts/codeflow-driver.ts) — the innermost live
  * boundary: the `codeflow exec` process it spawns per attempt.
  *
  * The acceptance suite (realmode-*.test.ts) pins the runner<->driver seam
@@ -31,7 +31,7 @@ import * as path from "node:path";
 import { baseEnv, cleanupTmpDirs, makeTmpDir, readJson, readJsonl, REPO, runCodeflow, writeInstancesFile } from "./helpers";
 import { buildRealmodeWorld, INSTANCE_RESOLVED, pidAlive, type RealmodeWorld } from "./realmode-world";
 
-const DRIVER_SCRIPT = path.join(REPO, "runtime", "scripts", "benchmark", "codeflow-driver.ts");
+const DRIVER_SCRIPT = path.join(REPO, "benchmark", "scripts", "codeflow-driver.ts");
 const FAKE_INNER = path.join(REPO, "tests", "benchmark", "fakes", "inner-codeflow.sh");
 
 const PROJECTION = {
@@ -279,7 +279,7 @@ describe("production defaults end to end: a cap terminates the live nested run",
 		const capture = world.newCapture();
 		// Everything real except the two live boundaries the host cannot serve
 		// offline: the driver seam is NOT overridden (the PRODUCTION default
-		// runtime/scripts/benchmark/codeflow-driver.ts runs), and only its inner
+		// benchmark/scripts/codeflow-driver.ts runs), and only its inner
 		// `codeflow` binary is the fake, streaming rounds forever.
 		const env = world.env(capture);
 		delete env.CODEFLOW_BENCHMARK_DRIVER_BIN;

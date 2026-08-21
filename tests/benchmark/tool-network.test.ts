@@ -1,6 +1,6 @@
 /**
  * Developer tests for the benchmark tool-network wall builder
- * (runtime/lib/benchmark/tool-network.ts — design §4, fakes/README.md §6).
+ * (benchmark/lib/tool-network.ts — design §4, fakes/README.md §6).
  *
  * The wall's end-to-end behavior (curl + fetch observable denial inside the
  * production driver's spawned tree, root AND delegated, provider exempt,

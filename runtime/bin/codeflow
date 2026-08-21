@@ -19,6 +19,7 @@ set -euo pipefail
 
 RUNTIME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLI_DIR="$RUNTIME_DIR/cli"
+BENCHMARK_CLI="$(cd "$RUNTIME_DIR/.." && pwd)/benchmark/cli/benchmark.ts"
 CODEFLOW_HOME="${CODEFLOW_HOME:-$HOME/.codeflow}"
 
 usage() {
@@ -70,11 +71,11 @@ case "${1:-}" in
     # continue below so the normal CODEFLOW_HOME/.env loading happens before
     # the benchmark driver computes the provider-network exemption set.
     if [[ "${2:-}" != "run" ]]; then
-      exec bun "$CLI_DIR/benchmark.ts" "$@"
+      exec bun "$BENCHMARK_CLI" "$@"
     fi
     for arg in "$@"; do
       case "$arg" in
-        --fixture|-h|--help) exec bun "$CLI_DIR/benchmark.ts" "$@" ;;
+        --fixture|-h|--help) exec bun "$BENCHMARK_CLI" "$@" ;;
       esac
     done
     ;;
@@ -105,7 +106,7 @@ case "${1:-}" in
     exec bun "$CLI_DIR/run.ts" "$COMMAND" "$@"
     ;;
   benchmark)
-    exec bun "$CLI_DIR/benchmark.ts" "$@"
+    exec bun "$BENCHMARK_CLI" "$@"
     ;;
   *)
     if [[ -n "${1:-}" ]]; then

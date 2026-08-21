@@ -95,7 +95,7 @@ spawning:
 ## 5. `CODEFLOW_BENCHMARK_HUB_API_BASE` / `CODEFLOW_BENCHMARK_HUB_SERVER_BASE` — the offline Hub for the PRODUCTION fetch script
 
 The production default behind `CODEFLOW_BENCHMARK_DATASET_FETCH_BIN` is
-`runtime/scripts/benchmark/hub-fetch.ts` (§4's live boundary: the only code
+`benchmark/scripts/hub-fetch.ts` (§4's live boundary: the only code
 path that talks to the HuggingFace Hub). Design §2 requires row retrieval to
 be pinned to the exact resolved 40-hex revision — for the FIRST rows request
 and EVERY paginated follow-up — so resolution and retrieval cannot race. The
@@ -184,7 +184,7 @@ Probes and markers:
 Driver/run wiring the tests use (see `tests/benchmark/tool-network-wall.test.ts`):
 no ambient proxy variables (clean baseline), `MEROUTER_BASE_URL` +
 `MEROUTER_API_KEY` set to the provider stand-in, and the production default
-seams otherwise. The implemented wall (runtime/lib/benchmark/tool-network.ts,
+seams otherwise. The implemented wall (benchmark/lib/tool-network.ts,
 applied by the production driver to its spawned tree's env): every proxy
 variable → the unlistening loopback proxy `http://127.0.0.1:9`, and
 `NO_PROXY` = EXACTLY the hostnames from checked-in `runtime/models.json` plus
@@ -196,7 +196,7 @@ registers them) — overwriting, never merging, ambient proxy config.
 ## 7. `pinned-harness-python3` + `pinned-harness-logic.py` — the OFFICIAL harness at the pinned commit, offline
 
 Used by `tests/benchmark/swebench-harness-contract.test.ts` to test the
-PRODUCTION evaluator wrapper (`runtime/scripts/benchmark/swebench-harness.sh`)
+PRODUCTION evaluator wrapper (`benchmark/scripts/swebench-harness.sh`)
 against what SWE-bench/SWE-bench at commit
 `7a21e05772954cc81471ae19d56f436cecf43c54` ACTUALLY does — never against an
 invented CLI or report layout. The test symlinks `pinned-harness-python3` as
@@ -303,7 +303,7 @@ ordered step list `{event?, sleep_ms?, write?: {path: content}}`: emit the
 `DriverEvent` line, sleep, then write files into the workspace. `marathon`
 mode emits budget-sized rounds forever (one write after each round's sleep),
 so a cap must stop a live process mid-flight. `stream` mode speaks the
-PRODUCTION event protocol of `runtime/scripts/benchmark/codeflow-driver.ts`:
+PRODUCTION event protocol of `benchmark/scripts/codeflow-driver.ts`:
 round events carry usage only (no attached `tool_calls`), every terminated
 tool call is its own standalone `tool_calls` event, one workspace file is
 written per round, and the process observes the runner's ledgers before each
@@ -312,10 +312,10 @@ model responses and that ledgers land while the process is alive.
 
 `inner-codeflow.sh` is a different layer: it does not stand in for the driver,
 but for the `codeflow` binary that the PRODUCTION
-`runtime/scripts/benchmark/codeflow-driver.ts` spawns as
+`benchmark/scripts/codeflow-driver.ts` spawns as
 `bash <bin> exec "<prompt>"` (`CODEFLOW_BENCHMARK_CODEFLOW_BIN`, default
 `runtime/bin/codeflow`). It appends rows to the staging ledger dir in the same
-schema `runtime/extensions/benchmark-ledger` writes, so
+schema `runtime/extensions/telemetry-ledger` writes, so
 `tests/benchmark/driver-streaming.test.ts` can pin the production script's own
 behavior offline: ledger rows stream as DriverEvents while the inner process
 is alive, SIGTERM is forwarded to it, and the driver's exit code mirrors the

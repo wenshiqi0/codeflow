@@ -12,7 +12,7 @@
  * - CODEFLOW_BENCHMARK_REPO_CLONE_BIN  (workspace provisioning)
  * - CODEFLOW_BENCHMARK_DATASET_FETCH_BIN (hub dataset resolution)
  *
- * Each seam has an explicit production default under runtime/scripts/benchmark
+ * Each seam has an explicit production default under benchmark/scripts
  * (the live boundary: real model credentials, network, Docker, and the
  * official harness itself). Tests never exercise the production defaults —
  * they pin the seam contract, which both sides implement.
@@ -58,17 +58,16 @@ import type {
 	PredictionEntry,
 } from "./driver";
 import type { ModelVisibleInstance } from "./dataset";
-import type { AttemptUsage, AttemptUsageCost } from "./tokens";
+import type { AttemptUsage, AttemptUsageCost } from "../../runtime/lib/observability/model-usage";
 
 export const BENCHMARK_DRIVER_BIN_ENV = "CODEFLOW_BENCHMARK_DRIVER_BIN";
 export const BENCHMARK_HARNESS_BIN_ENV = "CODEFLOW_BENCHMARK_HARNESS_BIN";
 export const BENCHMARK_REPO_CLONE_BIN_ENV = "CODEFLOW_BENCHMARK_REPO_CLONE_BIN";
 export const BENCHMARK_DATASET_FETCH_BIN_ENV = "CODEFLOW_BENCHMARK_DATASET_FETCH_BIN";
 
-/** runtime/ — resolved from this module so the scripts always ship with it. */
-const RUNTIME_DIR = path.resolve(import.meta.dir, "..", "..");
 /** Production defaults for the four seams (the live boundary). */
-export const BENCHMARK_SCRIPTS_DIR = path.join(RUNTIME_DIR, "scripts", "benchmark");
+const BENCHMARK_ROOT = path.resolve(import.meta.dir, "..");
+export const BENCHMARK_SCRIPTS_DIR = path.join(BENCHMARK_ROOT, "scripts");
 
 export function defaultDriverBin(): string[] {
 	return [process.execPath, path.join(BENCHMARK_SCRIPTS_DIR, "codeflow-driver.ts")];

@@ -5,10 +5,10 @@ name and shape referenced by `docs/benchmark-design.md` (normative sections
 §3–§11, §13). Where the design doc and this contract disagree on a name, this
 contract wins; where they disagree on intent, the design doc wins.
 
-Implementation target: `runtime/lib/benchmark/index.ts` (public module),
-`runtime/cli/benchmark.ts` (CLI adapter), dispatched from `runtime/bin/codeflow`.
+Implementation target: `benchmark/lib/index.ts` (public module),
+`benchmark/cli/benchmark.ts` (CLI adapter), dispatched from `runtime/bin/codeflow`.
 Acceptance tests live in `tests/benchmark/` and assert only the surfaces fixed
-here. Internal decomposition below `runtime/lib/benchmark/` is free as long as
+here. Internal decomposition below `benchmark/lib/` is free as long as
 `index.ts` re-exports the public API with the exact names below.
 
 Everything in this contract is executable offline: no network, no Docker, no
@@ -19,7 +19,7 @@ real (non-fixture) runs.
 
 ## 1. Module surface
 
-`runtime/lib/benchmark/index.ts` must export, with exactly these names:
+`benchmark/lib/index.ts` must export, with exactly these names:
 
 ### 1.1 Dataset and leakage boundary
 
@@ -492,13 +492,13 @@ export interface BenchmarkEvaluator {
 ### 1.7.1 Real-mode process seams (production defaults)
 
 Real mode (no `--fixture`) spawns external commands. Each has an override
-seam and a production default under `runtime/scripts/benchmark/` (the live
+seam and a production default under `benchmark/scripts/` (the live
 boundary — real model credentials, network, and Docker; exercised only in
 live runs):
 
 | seam (env var) | spawned as | production default |
 | --- | --- | --- |
-| `CODEFLOW_BENCHMARK_DRIVER_BIN` | `<bin> --workspace <dir> --attempt <n> --model-config <id>`; stdin = the 4-key projection; stdout = NDJSON DriverEvents | `codeflow-driver.ts` (a real `codeflow exec` run per attempt, instrumented by `runtime/extensions/benchmark-ledger`) |
+| `CODEFLOW_BENCHMARK_DRIVER_BIN` | `<bin> --workspace <dir> --attempt <n> --model-config <id>`; stdin = the 4-key projection; stdout = NDJSON DriverEvents | `codeflow-driver.ts` (a real `codeflow exec` run per attempt, instrumented by `runtime/extensions/telemetry-ledger`) |
 | `CODEFLOW_BENCHMARK_REPO_CLONE_BIN` | `<bin> <repo> <base_commit> <workspaceDir>` | `repo-clone.sh` (GitHub clone + checkout, HEAD verified) |
 | `CODEFLOW_BENCHMARK_HARNESS_BIN` | `<bin> --predictions <file> --run-id <id> --instance <id>` | `swebench-harness.sh` (official SWE-bench harness at the pinned commit; exit 127 = unavailable) |
 | `CODEFLOW_BENCHMARK_DATASET_FETCH_BIN` | `<bin> <hub-id>`; stdout = one snapshot document | `hub-fetch.ts` (HuggingFace datasets server, design-pinned Verified revision) |

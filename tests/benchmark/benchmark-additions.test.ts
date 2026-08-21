@@ -7,7 +7,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { cleanupTmpDirs, loadBenchmarkModule, makeTmpDir } from "./helpers";
-import type { DriverEvent, DriverRound } from "../../../runtime/lib/benchmark/driver";
+import type { DriverEvent, DriverRound } from "../../../benchmark/lib/driver";
 
 afterEach(cleanupTmpDirs);
 

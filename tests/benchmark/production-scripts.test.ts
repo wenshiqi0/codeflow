@@ -1,6 +1,6 @@
 /**
  * Developer tests for the PRODUCTION seam defaults under
- * runtime/scripts/benchmark — the live boundary the acceptance suite replaces
+ * benchmark/scripts — the live boundary the acceptance suite replaces
  * with process fakes (TESTPLAN "Not covered here").
  *
  * These pin only the deterministic offline behaviors of the production
@@ -24,7 +24,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { REPO } from "./helpers";
 
-const SCRIPTS = path.join(REPO, "runtime", "scripts", "benchmark");
+const SCRIPTS = path.join(REPO, "benchmark", "scripts");
 
 function runScript(
 	command: string[],

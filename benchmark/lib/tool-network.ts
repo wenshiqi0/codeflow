@@ -10,7 +10,7 @@
  * subprocess, a bun/undici fetch) with zero parsing of tool arguments.
  *
  * Mechanism — environment variables, the one egress control stock HTTP
- * clients already honor, applied by runtime/scripts/benchmark/
+ * clients already honor, applied by benchmark/scripts/
  * codeflow-driver.ts to the env of its spawned Codeflow tree:
  *
  *  - every proxy variable (HTTP(S)_PROXY / ALL_PROXY, upper- and lowercase)
@@ -38,9 +38,10 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { configuredProviderProfiles } from "../../extensions/provider-profiles";
+import { configuredProviderProfiles } from "../../runtime/extensions/provider-profiles";
 
-const RUNTIME_DIR = path.resolve(import.meta.dir, "..", "..");
+const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
+const RUNTIME_DIR = path.join(REPO_ROOT, "runtime");
 const RUNTIME_MODELS_PATH = path.join(RUNTIME_DIR, "models.json");
 export const BENCHMARK_MODELS_PATH_ENV = "CODEFLOW_BENCHMARK_MODELS_PATH";
 

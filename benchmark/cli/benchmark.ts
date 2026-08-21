@@ -12,7 +12,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { writeJsonAtomic } from "../lib/paths";
+import { writeJsonAtomic } from "../../runtime/lib/paths";
 import {
 	type BenchmarkBudgets,
 	BenchmarkBudgetError,
@@ -25,7 +25,7 @@ import {
 	parseBudgetOverrides,
 	readFixtureModelName,
 	runBenchmark,
-} from "../lib/benchmark";
+} from "../lib";
 
 const USAGE = `usage: codeflow benchmark <command> [options]
 
@@ -56,7 +56,7 @@ run options:
                                     simulated clock (no model/docker/network)
 
 real mode (no --fixture) spawns external commands; each has an
-overrideable seam and a production default under runtime/scripts/benchmark:
+overrideable seam and a production default under benchmark/scripts:
   CODEFLOW_BENCHMARK_DRIVER_BIN       the Codeflow process
   CODEFLOW_BENCHMARK_REPO_CLONE_BIN   workspace provisioning at base_commit
   CODEFLOW_BENCHMARK_HARNESS_BIN      the official SWE-bench evaluator
@@ -294,7 +294,7 @@ function loadFixtureRun(fixtureDir: string): {
  * Real mode (the default): one spawned Codeflow process per instance attempt,
  * repo@base_commit workspaces via the clone seam, the official harness via the
  * harness seam, hub ids resolved via the fetch seam. Production defaults live
- * under runtime/scripts/benchmark (the live boundary); the four env seams let
+ * under benchmark/scripts (the live boundary); the four env seams let
  * the acceptance tests substitute process-level fakes offline.
  */
 async function runRealMode(inputs: {

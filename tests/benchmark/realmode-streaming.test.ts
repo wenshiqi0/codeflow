@@ -14,7 +14,7 @@
  *
  * Evidence strategy (process-level, no `.codeflow/runs/` reads): the fake
  * driver's `stream` mode speaks the PRODUCTION event protocol of
- * runtime/scripts/benchmark/codeflow-driver.ts — rounds carry usage only,
+ * benchmark/scripts/codeflow-driver.ts — rounds carry usage only,
  * every terminated tool call is its own standalone `tool_calls` event — and
  * the nested process itself observes the runner-written attempt ledgers
  * (usage.jsonl / tool-calls.jsonl one dir above its workspace) before each

@@ -30,7 +30,7 @@ import type {
 	DriverToolCall,
 } from "./driver";
 import type { ModelVisibleInstance } from "./dataset";
-import type { AttemptUsage, AttemptUsageCost } from "./tokens";
+import type { AttemptUsage, AttemptUsageCost } from "../../runtime/lib/observability/model-usage";
 
 export class BenchmarkFixtureError extends Error {
 	constructor(message: string) {

@@ -2,12 +2,12 @@
 # Fake inner `codeflow` binary for the PRODUCTION driver-script tests
 # (tests/benchmark/driver-streaming.test.ts).
 #
-# runtime/scripts/benchmark/codeflow-driver.ts spawns the real thing as
+# benchmark/scripts/codeflow-driver.ts spawns the real thing as
 #   bash <bin> exec "<prompt>"
 # with cwd = the attempt workspace and the staging ledger dir in
 # CODEFLOW_BENCHMARK_DRIVER_LEDGER_DIR. This fake speaks that exact spawn form
 # (selected via CODEFLOW_BENCHMARK_CODEFLOW_BIN) and appends rows in the same
-# schema runtime/extensions/benchmark-ledger writes, so the tests can prove the
+# schema runtime/extensions/telemetry-ledger writes, so the tests can prove the
 # production driver tails the ledgers WHILE this process is alive and forwards
 # SIGTERM to it — offline, no model, no network.
 #
@@ -52,7 +52,7 @@ usage_row() { # $1=role $2=model $3=total_tokens
 }
 
 tool_row() { # $1=kind $2=call_id $3=status ("-" for null) [$4=provider] [$5=model]
-	# Mirrors runtime/extensions/benchmark-ledger: every staging tool row
+	# Mirrors runtime/extensions/telemetry-ledger: every staging tool row
 	# carries DIRECT provider/model attribution from the emitting round.
 	local status="null"
 	[ "$3" != "-" ] && status="\"$3\""

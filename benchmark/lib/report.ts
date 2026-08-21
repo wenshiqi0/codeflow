@@ -20,7 +20,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { nowIso } from "../paths";
+import { nowIso } from "../../runtime/lib/paths";
 import type { BenchmarkManifest, CaseAttemptRecord, CaseFile } from "./artifacts";
 import {
 	BENCHMARK_MANIFEST_SCHEMA_VERSION,
@@ -29,18 +29,18 @@ import {
 import { BENCHMARK_CASE_SCHEMA_VERSION } from "./artifacts";
 import { DEFAULT_BENCHMARK_BUDGETS, type BudgetName } from "./budgets";
 import { readPredictions } from "./predictions";
-import { readAttemptUsageRecords } from "./tokens";
-import { readToolCallRecords } from "./tool-calls";
+import { readAttemptUsageRecords } from "../../runtime/lib/observability/model-usage";
+import { readToolCallRecords } from "../../runtime/lib/observability/tool-execution";
 import type { BenchmarkVerdict } from "./driver";
 import {
 	readHandoffStateProjections,
 	type HandoffStateProjection,
-} from "../observability/handoff-state";
+} from "../../runtime/lib/observability/handoff-state";
 import {
 	emptyHandoffObservabilitySummary,
 	type HandoffObservabilitySummary,
-} from "../observability/summary";
-import type { ContextGrowthSummary, WasteSummary } from "../observability/usage-analysis";
+} from "../../runtime/lib/observability/summary";
+import type { ContextGrowthSummary, WasteSummary } from "../../runtime/lib/observability/usage-analysis";
 
 export const BENCHMARK_REPORT_SCHEMA_VERSION = 2;
 

@@ -11,7 +11,7 @@
 import type { BenchmarkBudgets, BenchmarkClock } from "./budgets";
 import type { FailedModelAttempt } from "./metrics";
 import type { ModelVisibleInstance } from "./dataset";
-import type { AttemptUsage } from "./tokens";
+import type { AttemptUsage } from "../../runtime/lib/observability/model-usage";
 
 export interface DriverToolCall {
 	call_id: string;

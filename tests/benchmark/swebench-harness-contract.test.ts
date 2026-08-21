@@ -3,7 +3,7 @@
  * SWE-bench/SWE-bench harness commit 7a21e05772954cc81471ae19d56f436cecf43c54
  * (docs/benchmark-design.md §2, §9; docs/benchmark-contract.md §1.7).
  *
- * Subject: runtime/scripts/benchmark/swebench-harness.sh — the production
+ * Subject: benchmark/scripts/swebench-harness.sh — the production
  * default behind CODEFLOW_BENCHMARK_HARNESS_BIN. Verdict authority is the
  * official evaluator (design §9): the wrapper may only translate what the
  * PINNED harness commit actually does, so every expected value here is
@@ -49,7 +49,7 @@ import { baseEnv, cleanupTmpDirs, loadBenchmarkModule, makeTmpDir, REPO } from "
 
 afterEach(cleanupTmpDirs);
 
-const WRAPPER = path.join(REPO, "runtime", "scripts", "benchmark", "swebench-harness.sh");
+const WRAPPER = path.join(REPO, "benchmark", "scripts", "swebench-harness.sh");
 const FAKES = path.join(REPO, "tests", "benchmark", "fakes");
 const HARNESS_COMMIT = "7a21e05772954cc81471ae19d56f436cecf43c54";
 const VERIFIED_DATASET = "SWE-bench/SWE-bench_Verified";

@@ -1,6 +1,6 @@
 /**
  * In-process fake HuggingFace Hub — the offline counterpart for exercising
- * the PRODUCTION dataset fetch script `runtime/scripts/benchmark/hub-fetch.ts`
+ * the PRODUCTION dataset fetch script `benchmark/scripts/hub-fetch.ts`
  * (fakes/README.md §5).
  *
  * Serves, on 127.0.0.1 only:

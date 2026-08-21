@@ -17,7 +17,7 @@
  * - marathon: emit budget-sized rounds forever (REAL-13 kill supervision)
  * - silent:   write partial work, then emit nothing forever (REAL-20 proves
  *             wall-time supervision does not depend on another event)
- * - stream:   the PRODUCTION event protocol from runtime/scripts/benchmark/
+ * - stream:   the PRODUCTION event protocol from benchmark/scripts/
  *             codeflow-driver.ts — rounds carry NO tool_calls; every tool
  *             call arrives as its own standalone `tool_calls` event. Before
  *             each emission the process OBSERVES the runner-written attempt
@@ -261,7 +261,7 @@ if (mode === "silent") {
 }
 
 if (mode === "stream") {
-	// The production protocol (runtime/scripts/benchmark/codeflow-driver.ts):
+	// The production protocol (benchmark/scripts/codeflow-driver.ts):
 	// a `round` event carries usage only — NO attached tool_calls — and every
 	// tool call that terminates is its own standalone `tool_calls` event, so
 	// tool-call budgets supervise the live process without waiting for the

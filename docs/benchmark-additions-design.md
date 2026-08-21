@@ -5,7 +5,7 @@
 
 ## 0. 架构边界
 
-PR #7 的 `benchmark-ledger` 不是 benchmark 专属数据层；它采集的是 Codeflow runtime 的通用行为事实。Benchmark 只是 observability facts 的一个消费者。
+原 `benchmark-ledger` 已更名为 `telemetry-ledger`。它不是 benchmark 专属数据层，而是 Codeflow runtime 的通用行为事实采集；Benchmark 只是 observability facts 的一个消费者。
 
 ```text
 Runtime observability
@@ -17,12 +17,13 @@ Benchmark harness
   pass@N / dispersion / SWE-bench verdicts
 ```
 
-当前实现采用渐进边界：
+当前实现边界：
 
-- `runtime/lib/observability/` 承接 handoff projection、timing 与 usage analysis；
-- usage/tool 的既有 ledger 暂保留在 `runtime/lib/benchmark/`，但 schema 语义已按 observability contract 扩展；
-- SWE-bench dataset、evaluator、runner、multi-attempt 统计仍在 benchmark 层；
-- 目录 pure-move 与 `benchmark-ledger` → `telemetry-ledger` rename 作为后续独立 PR，不与行为变化混合。
+- `runtime/lib/observability/` 承接 model usage、tool execution、handoff projection、timing 与 usage analysis；
+- `runtime/extensions/telemetry-ledger/` 是 runtime 内部 instrumentation；
+- `benchmark/` 承接 SWE-bench dataset、driver、evaluator、runner、multi-attempt 统计与 report；
+- `runtime/bin/codeflow` 只保留 benchmark thin dispatch；
+- 目录 pure-move 与 rename 在本 PR 内使用独立 commit 表达，行为改动与搬迁不混在同一 commit。
 
 所有 telemetry 遵守：
 

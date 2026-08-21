@@ -45,8 +45,8 @@ async function bench(): Promise<any> {
 	return loadBenchmarkModule();
 }
 
-const LEDGER_EXT = path.join(REPO, "runtime", "extensions", "benchmark-ledger", "index.ts");
-const DRIVER_SCRIPT = path.join(REPO, "runtime", "scripts", "benchmark", "codeflow-driver.ts");
+const LEDGER_EXT = path.join(REPO, "runtime", "extensions", "telemetry-ledger", "index.ts");
+const DRIVER_SCRIPT = path.join(REPO, "benchmark", "scripts", "codeflow-driver.ts");
 const FAKE_INNER = path.join(REPO, "tests", "benchmark", "fakes", "inner-codeflow.sh");
 
 // --------------------------------------------------------------------------
@@ -257,7 +257,7 @@ function fireToolEnd(
 }
 
 /**
- * Load the REAL benchmark-ledger extension, wire it to a fake pi under the
+ * Load the REAL telemetry-ledger extension, wire it to a fake pi under the
  * given benchmark env, and run the scripted event sequence synchronously
  * inside that env (the extension reads attribution env lazily per row).
  */
@@ -356,7 +356,7 @@ describe("ATTR: the tool-call contract carries provider/model attribution", () =
 // EXT — the real extension stamps rows with the emitting context
 // --------------------------------------------------------------------------
 
-describe("EXT: benchmark-ledger attributes tool calls to the emitting model", () => {
+describe("EXT: telemetry-ledger attributes tool calls to the emitting model", () => {
 	test("EXT-1 root role rows carry the assistant response's provider/model next to role attribution", async () => {
 		const ledger = path.join(makeTmpDir(), "staging");
 		await withExtension(ledger, { CODEFLOW_AGENT_ROLE: "planner", CODEFLOW_AGENT_DEPTH: "0" }, (handlers) => {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # PATH-injected `python3` stand-in for offline tests of the official
-# evaluator wrapper (runtime/scripts/benchmark/swebench-harness.sh).
+# evaluator wrapper (benchmark/scripts/swebench-harness.sh).
 # Tests symlink this file as `python3` inside a stub bin dir (see
 # tests/benchmark/fakes/README.md §7).
 #

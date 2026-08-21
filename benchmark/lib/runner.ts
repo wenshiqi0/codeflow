@@ -22,7 +22,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { writeJsonAtomic } from "../paths";
+import { writeJsonAtomic } from "../../runtime/lib/paths";
 import {
 	BenchmarkDatasetError,
 	datasetSourceKind,
@@ -47,8 +47,8 @@ import {
 	appendJsonlRow,
 	ATTEMPT_USAGE_SCHEMA_VERSION,
 	type AttemptUsageRecord,
-} from "./tokens";
-import { appendToolCallRecord, TOOL_CALL_SCHEMA_VERSION, type ToolCallRecord } from "./tool-calls";
+} from "../../runtime/lib/observability/model-usage";
+import { appendToolCallRecord, TOOL_CALL_SCHEMA_VERSION, type ToolCallRecord } from "../../runtime/lib/observability/tool-execution";
 import {
 	buildAttemptMetrics,
 	FAILED_ATTEMPT_SCHEMA_VERSION,
@@ -75,7 +75,7 @@ import {
 	HANDOFF_STATE_PROJECTION_SCHEMA_VERSION,
 	scanHandoffStates,
 	type HandoffStateProjection,
-} from "../observability/handoff-state";
+} from "../../runtime/lib/observability/handoff-state";
 import {
 	BENCHMARK_CASE_SCHEMA_VERSION,
 	BENCHMARK_MANIFEST_SCHEMA_VERSION,

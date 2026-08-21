@@ -4,7 +4,7 @@
  * paginated follow-up — so revision resolution and row retrieval cannot race.
  *
  * These are business tests of the PRODUCTION fetch script
- * `runtime/scripts/benchmark/hub-fetch.ts` (the default behind the
+ * `benchmark/scripts/hub-fetch.ts` (the default behind the
  * CODEFLOW_BENCHMARK_DATASET_FETCH_BIN seam), exercised fully offline:
  *
  *  - the script must honor the offline datasets-server base
@@ -41,7 +41,7 @@ import {
 	type RealmodeWorld,
 } from "./realmode-world";
 
-const HUB_FETCH_SCRIPT = path.join(REPO, "runtime", "scripts", "benchmark", "hub-fetch.ts");
+const HUB_FETCH_SCRIPT = path.join(REPO, "benchmark", "scripts", "hub-fetch.ts");
 const HUB_ID = "SWE-bench/SWE-bench_Verified";
 const SHA_40 = /^[0-9a-f]{40}$/;
 /** A second, distinct, perfectly valid dataset state (the moved head). */

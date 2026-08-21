@@ -1,4 +1,4 @@
-import type { AttemptUsageRecord } from "../benchmark/tokens";
+import type { AttemptUsageRecord } from "./model-usage";
 import type { HandoffStateProjection } from "./handoff-state";
 
 export interface WasteSummary {

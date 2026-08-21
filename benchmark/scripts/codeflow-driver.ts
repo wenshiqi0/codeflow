@@ -13,7 +13,7 @@
  *     repo@base_commit workspace, a FRESH Codeflow run id/session (run-scoped
  *     env is stripped), and run artifacts redirected OUTSIDE the workspace
  *     (attempt dir), so the extracted patch stays exactly the model's work;
- *  2. the benchmark-ledger extension (runtime/extensions/benchmark-ledger)
+ *  2. the telemetry-ledger extension (runtime/extensions/telemetry-ledger)
  *     appends attributed usage rows, privacy-safe tool-call rows, and failed
  *     provider attempts to a staging ledger under the attempt dir — real
  *     instrumentation, not transcript parsing;
@@ -41,9 +41,10 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { toolNetworkWallEnv } from "../../lib/benchmark/tool-network";
+import { toolNetworkWallEnv } from "../lib/tool-network";
 
-const RUNTIME_DIR = path.resolve(import.meta.dir, "..", "..");
+const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
+const RUNTIME_DIR = path.join(REPO_ROOT, "runtime");
 const CODEFLOW_BIN =
 	process.env.CODEFLOW_BENCHMARK_CODEFLOW_BIN?.trim() || path.join(RUNTIME_DIR, "bin", "codeflow");
 

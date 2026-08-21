@@ -10,7 +10,7 @@ stand-in) runs it with a REAL local python3 when the wrapper invokes
 
 It reproduces only the pinned commit's OBSERVABLE contract — the CLI surface,
 the predictions field requirements, the report location, and the report
-shape — so the wrapper (`runtime/scripts/benchmark/swebench-harness.sh`) can
+shape — so the wrapper (`benchmark/scripts/swebench-harness.sh`) can
 be tested offline against what that exact commit actually does.
 
 Ground truth (SWE-bench/SWE-bench @ 7a21e05772954cc81471ae19d56f436cecf43c54):

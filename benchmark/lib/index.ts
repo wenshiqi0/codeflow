@@ -47,7 +47,7 @@ export {
 	readToolCallRecords,
 	type ToolCallSummary,
 	summarizeToolCalls,
-} from "./tool-calls";
+} from "../../runtime/lib/observability/tool-execution";
 
 export {
 	ATTEMPT_USAGE_SCHEMA_VERSION,
@@ -58,7 +58,7 @@ export {
 	readAttemptUsageRecords,
 	type TokenUsageSummary,
 	summarizeTokenUsage,
-} from "./tokens";
+} from "../../runtime/lib/observability/model-usage";
 
 export {
 	FAILED_ATTEMPT_SCHEMA_VERSION,
@@ -71,14 +71,14 @@ export {
 export {
 	type WallBreakdown,
 	summarizeWallBreakdown,
-} from "../observability/timing";
+} from "../../runtime/lib/observability/timing";
 
 export {
 	type WasteSummary,
 	type ContextGrowthSummary,
 	summarizeWaste,
 	summarizeContextGrowth,
-} from "../observability/usage-analysis";
+} from "../../runtime/lib/observability/usage-analysis";
 
 export {
 	type DriverToolCall,
@@ -166,4 +166,4 @@ export {
 	readHandoffStateProjections,
 	type HandoffObservabilitySummary,
 	summarizeHandoffStates,
-} from "../observability/handoff-state";
+} from "../../runtime/lib/observability/handoff-state";

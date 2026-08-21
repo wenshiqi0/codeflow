@@ -66,7 +66,7 @@ import {
 	type RealmodeWorld,
 } from "./realmode-world";
 
-const DRIVER_SCRIPT = path.join(REPO, "runtime", "scripts", "benchmark", "codeflow-driver.ts");
+const DRIVER_SCRIPT = path.join(REPO, "benchmark", "scripts", "codeflow-driver.ts");
 const FAKE_INNER = path.join(REPO, "tests", "benchmark", "fakes", "inner-codeflow.sh");
 const ROLE_NET_DRIVER = path.join(REPO, "tests", "benchmark", "fakes", "role-net-driver.ts");
 const HUB_ID = "SWE-bench/SWE-bench_Verified";

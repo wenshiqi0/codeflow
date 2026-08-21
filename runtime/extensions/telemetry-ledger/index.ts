@@ -5,7 +5,7 @@
  *
  * Inert unless CODEFLOW_BENCHMARK_DRIVER_LEDGER_DIR is set — normal runs load
  * this extension and it does nothing. The benchmark driver script
- * (runtime/scripts/benchmark/codeflow-driver.ts) sets the variable for every
+ * (benchmark/scripts/codeflow-driver.ts) sets the variable for every
  * role process of the attempt's Codeflow run (depth-0 planner and delegated
  * children alike, via inherited env), so rounds are attributed by
  * role/provider/model/goal-lane exactly as the run's own usage ledger does
@@ -29,8 +29,8 @@
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { appendToolCallRecord, type ToolCallRecord } from "../../lib/benchmark/tool-calls";
-import { appendAttemptUsageRecord, type AttemptUsageRecord } from "../../lib/benchmark/tokens";
+import { appendToolCallRecord, type ToolCallRecord } from "../../lib/observability/tool-execution";
+import { appendAttemptUsageRecord, type AttemptUsageRecord } from "../../lib/observability/model-usage";
 
 const LEDGER_DIR_ENV = "CODEFLOW_BENCHMARK_DRIVER_LEDGER_DIR";
 

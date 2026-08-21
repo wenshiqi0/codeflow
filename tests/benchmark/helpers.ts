@@ -14,7 +14,7 @@ import * as path from "node:path";
 
 export const REPO = path.resolve(import.meta.dir, "..", "..");
 export const CODEFLOW_BIN = path.join(REPO, "runtime", "bin", "codeflow");
-export const BENCHMARK_MODULE = path.join(REPO, "runtime", "lib", "benchmark", "index.ts");
+export const BENCHMARK_MODULE = path.join(REPO, "benchmark", "lib", "index.ts");
 export const CONTRACT = "docs/benchmark-contract.md";
 export const FIXTURES = path.join(import.meta.dir, "fixtures");
 export const SNAPSHOT = path.join(FIXTURES, "verified-snapshot.json");

@@ -1,5 +1,5 @@
-import type { AttemptUsageRecord } from "../benchmark/tokens";
-import type { ToolCallRecord } from "../benchmark/tool-calls";
+import type { AttemptUsageRecord } from "./model-usage";
+import type { ToolCallRecord } from "./tool-execution";
 
 export interface WallBreakdown {
 	tool_execution_seconds: number;
