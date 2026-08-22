@@ -92,7 +92,14 @@ export {
 	type BenchmarkEvaluator,
 } from "./driver";
 
-export { caseDirName, prepareBenchmarkWorkspace, extractPatch } from "./workspace";
+export {
+	caseDirName,
+	prepareBenchmarkWorkspace,
+	seedBenchmarkWorkspaceHygiene,
+	extractPatch,
+	extractPatchDetailed,
+	type PatchExtraction,
+} from "./workspace";
 
 export { newBenchmarkRunId, newEvaluationRunId } from "./ids";
 

@@ -59,6 +59,10 @@ export interface CaseAttemptRecord {
 	started_at: string;
 	ended_at: string;
 	metrics: AttemptMetrics;
+	/** Present in case files written by hygiene-aware runners. */
+	patch_hygiene?: {
+		stripped_binary_paths: string[];
+	};
 }
 
 export interface CaseFile {

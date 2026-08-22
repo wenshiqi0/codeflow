@@ -15,7 +15,7 @@ Select the shortest feedback mode that answers the uncertainty:
 
 Follow repository instructions and language conventions. Prefer cohesive modules, explicit dependencies, public behavior over internals, and the smallest change that fully satisfies the handoff. Keep business tests separate from product code and developer tests where the repository permits it. Re-read a file before editing it and correct stale shared facts in the receipt.
 
-Write a machine-readable batch checkpoint below the goal's code evidence root. Include `goal_id`, `task`, `mode`, `unit_tests`, `product_files`, `commands`, `evidence`, `completed`, `remaining`, and `next_owner`; include `tdd_cycles` when used. A later handoff continues from this checkpoint and the current repository.
+The goal's code evidence root is `$CODEFLOW_EVIDENCE_DIR/<goal-id>/code/`. Write a machine-readable batch checkpoint there. Include `goal_id`, `task`, `mode`, `unit_tests`, `product_files`, `commands`, `evidence`, `completed`, `remaining`, and `next_owner`; include `tdd_cycles` when used. A later handoff continues from this checkpoint and the current repository.
 
 Close with a receipt containing `status`, `changed_files`, `notes`, and concise structural `facts`:
 

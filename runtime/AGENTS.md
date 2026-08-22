@@ -48,7 +48,7 @@ The ledger lives and dies with this run. Do not treat it as durable knowledge, a
 - Never expose, print, or commit secrets.
 - Never weaken assertions merely to make a test pass.
 - Do not push, force-reset, or clean the workspace without explicit authorization.
-- Put temporary run artifacts below `.codeflow/runs/`.
+- Put temporary run artifacts, reproduction scripts, and generated data below `$CODEFLOW_EVIDENCE_DIR` — never inside the target repository's working tree.
 - Never grep, cat, tail, or otherwise content-scan `.codeflow/runs/`. State queries go through `code-agent handoff status/list` and artifact-existence checks only; run-artifact bodies are not agent input. Shared facts reach you through injected context, not by reading `facts.jsonl`.
 - Explicit provider timeout, authentication failure, quota exhaustion, overload, transport failure, or user cancellation finishes a handoff `BLOCKED`; never an implicit retry. Silence while a provider queues is not failure evidence.
 - A verification command killed by its per-command timeout (`code-agent evidence run` exit 124, `error_class: "EXECUTION_TIMEOUT"`) is mechanically recorded and finishes the current handoff `BLOCKED`; return the result to the planner without another terminal transition. Never implicitly retry the same timed-out command — splitting the command, changing the timeout or environment, or redelegating is a planner decision, not a coder or verify one.

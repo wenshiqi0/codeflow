@@ -69,6 +69,12 @@ export function roleMayDelegate(role: string | undefined, depth: number): boolea
 	return result;
 }
 
+/** Absolute evidence root for the current run; absent outside a Codeflow run. */
+export function currentEvidenceDir(): string | undefined {
+	const paths = currentRun();
+	return paths ? path.resolve(paths.evidence) : undefined;
+}
+
 function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	const currentScript = process.argv[1];
 	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
@@ -183,6 +189,8 @@ export async function runRoleChild(
 		CODEFLOW_AGENT_ROLE: role,
 		CODEFLOW_AGENT_DEPTH: "1",
 	};
+	const evidenceDir = currentEvidenceDir();
+	if (evidenceDir) childEnv.CODEFLOW_EVIDENCE_DIR = evidenceDir;
 	if (handoffId) childEnv.CODEFLOW_HANDOFF_ID = handoffId;
 	else delete childEnv.CODEFLOW_HANDOFF_ID;
 	if (goal) {

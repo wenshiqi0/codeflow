@@ -84,6 +84,11 @@ export interface BenchmarkReport {
 		verdict_flip_rate: number | null;
 	} | null;
 	budget_terminations: { model_rounds: number; tool_calls: number; total_tokens: number; wall_seconds: number; none: number };
+	patch_hygiene: {
+		attempts_with_stripped_binary_patches: number;
+		stripped_binary_path_count: number;
+		stripped_binary_paths: string[];
+	};
 	model_rounds: { total: number; median: number; p90: number; primary: number; support: number; failed_attempts: number };
 	tool_calls: { total: number; median: number; p90: number };
 	tokens: { total: number; median: number; p90: number };
@@ -557,6 +562,9 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 	for (const attempt of attempts) {
 		budgetTerminations[attempt.terminated_by ?? "none"]++;
 	}
+	const strippedBinaryPaths = attempts.flatMap(
+		(attempt) => attempt.patch_hygiene?.stripped_binary_paths ?? [],
+	);
 
 	const roundsPerAttempt = attempts.map((attempt) => attempt.metrics.model_rounds_total);
 	const callsPerAttempt = attempts.map((attempt) => attempt.metrics.tool_calls_total);
@@ -655,6 +663,13 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 		},
 		dispersion,
 		budget_terminations: budgetTerminations,
+		patch_hygiene: {
+			attempts_with_stripped_binary_patches: attempts.filter(
+				(attempt) => (attempt.patch_hygiene?.stripped_binary_paths.length ?? 0) > 0,
+			).length,
+			stripped_binary_path_count: strippedBinaryPaths.length,
+			stripped_binary_paths: [...new Set(strippedBinaryPaths)].sort(),
+		},
 		model_rounds: {
 			total: roundsTotal,
 			median: median(roundsPerAttempt),

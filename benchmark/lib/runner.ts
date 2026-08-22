@@ -64,7 +64,12 @@ import type {
 	DriverToolCall,
 	PredictionEntry,
 } from "./driver";
-import { caseDirName, extractPatch, prepareBenchmarkWorkspace } from "./workspace";
+import {
+	caseDirName,
+	extractPatchDetailed,
+	prepareBenchmarkWorkspace,
+	seedBenchmarkWorkspaceHygiene,
+} from "./workspace";
 import { appendPredictionEntry, appendPredictionLine } from "./predictions";
 import { newAttemptRunId, newBenchmarkRunId, newEvaluationRunId } from "./ids";
 import { FIXTURE_DRIVER_TAG } from "./fixtures";
@@ -281,6 +286,7 @@ async function runInstanceAttempt(
 	try {
 		if (context.provisionWorkspace !== null) {
 			context.provisionWorkspace(projectModelVisibleInstance(instance), workspaceDir);
+			seedBenchmarkWorkspaceHygiene(workspaceDir);
 		} else {
 			prepareBenchmarkWorkspace(workspaceDir);
 		}
@@ -448,7 +454,10 @@ async function runInstanceAttempt(
 
 	// A stop never discards work: extract whatever the workspace holds. A
 	// workspace that could not be provisioned has nothing to extract.
-	const patch = workspaceReady ? extractPatch(workspaceDir) : "";
+	const extraction = workspaceReady
+		? extractPatchDetailed(workspaceDir)
+		: { patch: "", strippedBinaryPaths: [] as string[] };
+	const patch = extraction.patch;
 	const prediction: PredictionEntry = {
 		instance_id: instance.instance_id,
 		model_name_or_path: context.modelNameOrPath,
@@ -501,6 +510,9 @@ async function runInstanceAttempt(
 		started_at: startedAt,
 		ended_at: endedAt,
 		metrics,
+		patch_hygiene: {
+			stripped_binary_paths: extraction.strippedBinaryPaths,
+		},
 	};
 	return { prediction, record: attemptRecord };
 }

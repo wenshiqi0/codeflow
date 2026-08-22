@@ -19,7 +19,7 @@ For each case record:
 
 Prefer the repository's established test layout, with business tests distinct from product code and developer unit tests. Polling and state-machine tests inject short `poll_interval` and `max_wait` values so a focused run completes within 30–60 seconds. After the first unexpected timeout, run the single named test and inspect the protocol/state transition before extending a harness timeout.
 
-Write a non-empty test-index artifact under the goal's test evidence root. On repair, preserve assertion intent and record the mistaken assumption plus exact correction. On review, assess the business tests, developer tests, diff, and verify receipts as one evidence story; route requested product changes to coder.
+The goal's test evidence root is `$CODEFLOW_EVIDENCE_DIR/<goal-id>/test/`. Write a non-empty test-index artifact there. On repair, preserve assertion intent and record the mistaken assumption plus exact correction. On review, assess the business tests, developer tests, diff, and verify receipts as one evidence story; route requested product changes to coder.
 
 Finish with:
 
