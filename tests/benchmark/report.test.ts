@@ -386,6 +386,12 @@ describe("report shape discipline", () => {
 			.update([...ids].sort().join("\n"))
 			.digest("hex");
 		expect(report.comparison_keys.instance_set_digest).toBe(digest);
+		expect(report.collaboration).toEqual({
+			recall_operations: 0,
+			explore_operations: 0,
+			redundant_discovery_rate: null,
+			index_cards: { total: 0, semantic: 0, fallback: 0 },
+		});
 	});
 
 	test("no composite score exists anywhere in the top level", async () => {

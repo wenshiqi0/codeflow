@@ -111,11 +111,22 @@ export interface BenchmarkReport {
 		per_attempt_hit_rate: { median: number | null; p90: number | null };
 	};
 	tool_calls_per_model_round: number | null;
+	collaboration: {
+		recall_operations: number;
+		explore_operations: number;
+		redundant_discovery_rate: number | null;
+		index_cards: {
+			total: number;
+			semantic: number;
+			fallback: number;
+		};
+	};
 	breakdowns: {
 		by_role: Record<string, BreakdownTotals>;
 		by_model: Record<string, BreakdownTotals>;
 		by_lane: Record<string, BreakdownTotals>;
 		by_tool: Record<string, number>;
+		by_operation: Record<string, number>;
 	};
 	wall_time: {
 		total_seconds: number;
@@ -616,9 +627,54 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 		.map((attempt) => attempt.metrics.tokens.cache_hit_rate as number);
 
 	const byTool: Record<string, number> = {};
+	const byOperation: Record<string, number> = {};
 	for (const attempt of attempts) {
 		for (const [tool, count] of Object.entries(attempt.metrics.tool_calls_by_tool)) {
 			byTool[tool] = (byTool[tool] ?? 0) + count;
+		}
+		for (const [operation, count] of Object.entries(attempt.metrics.tool_calls_by_operation ?? {})) {
+			byOperation[operation] = (byOperation[operation] ?? 0) + count;
+		}
+	}
+	const recallOperations = ["goal_list", "goal_show", "handoff_index", "handoff_recall", "evidence_log"]
+		.reduce((sum, kind) => sum + (byOperation[kind] ?? 0), 0);
+	const exploreOperations = byOperation.explore ?? 0;
+	const discoveryDenominator = recallOperations + exploreOperations;
+	const indexCards = { total: 0, semantic: 0, fallback: 0 };
+	for (const caseFile of cases) {
+		const caseDir = path.join(outDir, "cases", caseFile.instance_id.replace(/\//g, "__"));
+		for (const attempt of caseFile.attempts) {
+			const goalIndexRoots = path.join(
+				caseDir,
+				"attempts",
+				String(attempt.attempt),
+				"codeflow-runs",
+			);
+			if (!fs.existsSync(goalIndexRoots)) continue;
+			for (const runEntry of fs.readdirSync(goalIndexRoots, { withFileTypes: true })) {
+				if (!runEntry.isDirectory() || runEntry.name.startsWith("_")) continue;
+				const goalsRoot = path.join(goalIndexRoots, runEntry.name, "goals");
+				if (!fs.existsSync(goalsRoot)) continue;
+				for (const goalEntry of fs.readdirSync(goalsRoot, { withFileTypes: true })) {
+					if (!goalEntry.isDirectory()) continue;
+					const indexRoot = path.join(goalsRoot, goalEntry.name, "index");
+					if (!fs.existsSync(indexRoot)) continue;
+					for (const cardFile of fs.readdirSync(indexRoot)) {
+						if (!cardFile.endsWith(".json")) continue;
+						try {
+							const card = JSON.parse(fs.readFileSync(path.join(indexRoot, cardFile), "utf8")) as {
+								fallback?: unknown;
+								generator?: { kind?: unknown };
+							};
+							indexCards.total++;
+							if (card.generator?.kind === "zipper" && card.fallback !== true) indexCards.semantic++;
+							else indexCards.fallback++;
+						} catch {
+							// A malformed derived card must not break authoritative report rebuilding.
+						}
+					}
+				}
+			}
 		}
 	}
 	const breakdownInput: LedgerBreakdownInput = {
@@ -723,11 +779,19 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 			},
 		},
 		tool_calls_per_model_round: roundsTotal > 0 ? callsTotal / roundsTotal : null,
+		collaboration: {
+			recall_operations: recallOperations,
+			explore_operations: exploreOperations,
+			redundant_discovery_rate:
+				discoveryDenominator > 0 ? exploreOperations / discoveryDenominator : null,
+			index_cards: indexCards,
+		},
 		breakdowns: {
 			by_role: breakdownInput.byRole,
 			by_model: breakdownInput.byModel,
 			by_lane: breakdownInput.byLane,
 			by_tool: byTool,
+			by_operation: byOperation,
 		},
 		wall_time: {
 			total_seconds: wallPerAttempt.reduce((sum, value) => sum + value, 0),

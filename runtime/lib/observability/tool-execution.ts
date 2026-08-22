@@ -37,10 +37,23 @@ export const TOOL_CALL_RECORD_FIELDS: readonly string[] = [
 	"lane",
 	"provider",
 	"model",
+	"operation_kind",
 ];
 
 export type ToolCallRecordKind = "requested" | "result";
 export type ToolCallTerminalStatus = "succeeded" | "failed" | "rejected";
+export type ToolOperationKind =
+	| "goal_list"
+	| "goal_show"
+	| "handoff_index"
+	| "handoff_recall"
+	| "evidence_log"
+	| "evidence_run"
+	| "explore"
+	| "edit"
+	| "execute"
+	| "ceremony"
+	| "other";
 
 export interface ToolCallRecord {
 	schema_version: 1;
@@ -64,11 +77,26 @@ export interface ToolCallRecord {
 	provider: string;
 	/** Model of the assistant response that emitted the call — never inferred from the role. */
 	model: string;
+	/** Privacy-safe operation classification; never command text or arguments. */
+	operation_kind?: ToolOperationKind;
 }
 
 const ALLOWED_KEYS = new Set<string>(TOOL_CALL_RECORD_FIELDS);
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set(["succeeded", "failed", "rejected"]);
 const NULLABLE_STRINGS = ["handoff_id", "goal_id", "lane"] as const;
+const OPERATION_KINDS: ReadonlySet<string> = new Set([
+	"goal_list",
+	"goal_show",
+	"handoff_index",
+	"handoff_recall",
+	"evidence_log",
+	"evidence_run",
+	"explore",
+	"edit",
+	"execute",
+	"ceremony",
+	"other",
+]);
 
 /** Violation messages; an empty array means the record is privacy-safe and well-formed. */
 export function validateToolCallRecord(record: unknown): string[] {
@@ -127,6 +155,9 @@ export function validateToolCallRecord(record: unknown): string[] {
 	if (typeof row.model !== "string" || row.model.length === 0) {
 		violations.push("model must be a non-empty string (the emitting context's model)");
 	}
+	if (row.operation_kind !== undefined && !OPERATION_KINDS.has(String(row.operation_kind))) {
+		violations.push("operation_kind must be a closed operation classification");
+	}
 	return violations;
 }
 
@@ -183,6 +214,7 @@ export interface ToolCallSummary {
 	/** Requested, no terminal result before process end. */
 	incomplete: number;
 	by_tool: Record<string, number>;
+	by_operation: Record<string, number>;
 }
 
 /**
@@ -192,13 +224,14 @@ export interface ToolCallSummary {
  * did not).
  */
 export function summarizeToolCalls(records: ToolCallRecord[]): ToolCallSummary {
-	const byId = new Map<string, { tool: string; terminal: string | null }>();
+	const byId = new Map<string, { tool: string; terminal: string | null; operationKind: string }>();
 	for (const record of records) {
 		const existing = byId.get(record.call_id);
 		if (existing === undefined) {
 			byId.set(record.call_id, {
 				tool: record.tool,
 				terminal: record.kind === "result" ? record.status : null,
+				operationKind: record.operation_kind ?? "other",
 			});
 			continue;
 		}
@@ -214,9 +247,12 @@ export function summarizeToolCalls(records: ToolCallRecord[]): ToolCallSummary {
 		rejected: 0,
 		incomplete: 0,
 		by_tool: {},
+		by_operation: {},
 	};
 	for (const call of byId.values()) {
 		summary.by_tool[call.tool] = (summary.by_tool[call.tool] ?? 0) + 1;
+		summary.by_operation[call.operationKind] =
+			(summary.by_operation[call.operationKind] ?? 0) + 1;
 		switch (call.terminal) {
 			case "succeeded":
 				summary.succeeded++;

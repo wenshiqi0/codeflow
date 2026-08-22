@@ -67,6 +67,35 @@ function asRecord(value: unknown): Record<string, unknown> {
 	return (typeof value === "object" && value !== null ? value : {}) as Record<string, unknown>;
 }
 
+function commandText(input: unknown): string {
+	const command = asRecord(input).command;
+	return typeof command === "string" ? command : "";
+}
+
+function operationKind(tool: string, input: unknown): ToolCallRecord["operation_kind"] {
+	if (tool === "edit" || tool === "write") return "edit";
+	if (tool === "task" || tool === "goal" || tool === "task_group") return "ceremony";
+	if (tool === "read") return "explore";
+	if (tool !== "bash") return "other";
+
+	const command = commandText(input);
+	if (/^code-agent\s+goal\s+list(?:\s|$)/.test(command)) return "goal_list";
+	if (/^code-agent\s+goal\s+show(?:\s|$)/.test(command)) return "goal_show";
+	if (/^code-agent\s+handoff\s+index(?:\s|$)/.test(command)) return "handoff_index";
+	if (/^code-agent\s+handoff\s+(?:get|body|receipt)(?:\s|$)/.test(command)) {
+		return "handoff_recall";
+	}
+	if (/^code-agent\s+evidence\s+log(?:\s|$)/.test(command)) return "evidence_log";
+	if (/^code-agent\s+evidence\s+run(?:\s|$)/.test(command)) return "evidence_run";
+	if (/(^|\s)(?:pytest|py\.test|bun|npm|pnpm|yarn|go|cargo|make)(?:\s|$)/.test(command)) {
+		return "execute";
+	}
+	if (/(^|\s)(?:git|grep|rg|find|fd|ls|cat|head|tail|sed|awk)(?:\s|$)/.test(command)) {
+		return "explore";
+	}
+	return "other";
+}
+
 /** Direct provider/model attribution of one assistant response. */
 interface EmittingContext {
 	provider: string;
@@ -116,6 +145,7 @@ export default function (pi: ExtensionAPI): void {
 	let lastEmitting: EmittingContext = UNKNOWN_CONTEXT;
 	/** call_id -> the context that EMITTED that call (result rows keep it). */
 	const callEmitting = new Map<string, EmittingContext>();
+	const callOperations = new Map<string, ToolCallRecord["operation_kind"]>();
 	/** 1-based turn attribution when Pi emitted a turn_start event. */
 	let currentTurn: number | null = null;
 
@@ -204,6 +234,8 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("tool_call", (event) => {
 		const emitting = lastEmitting;
 		callEmitting.set(event.toolCallId, emitting);
+		const operation = operationKind(event.toolName, event.input);
+		callOperations.set(event.toolCallId, operation);
 		const row: ToolCallRecord = {
 			schema_version: 1,
 			kind: "requested",
@@ -211,6 +243,7 @@ export default function (pi: ExtensionAPI): void {
 			tool: event.toolName,
 			status: null,
 			...attributedRow(new Date().toISOString(), emitting),
+			operation_kind: operation,
 		};
 		appendToolCallRecord(toolFile, row);
 	});
@@ -220,6 +253,8 @@ export default function (pi: ExtensionAPI): void {
 		// call, even if later responses (or their absence) moved the pointer.
 		const emitting = callEmitting.get(event.toolCallId) ?? lastEmitting;
 		callEmitting.delete(event.toolCallId);
+		const operation = callOperations.get(event.toolCallId) ?? "other";
+		callOperations.delete(event.toolCallId);
 		const row: ToolCallRecord = {
 			schema_version: 1,
 			kind: "result",
@@ -227,6 +262,7 @@ export default function (pi: ExtensionAPI): void {
 			tool: event.toolName,
 			status: event.isError ? "failed" : "succeeded",
 			...attributedRow(new Date().toISOString(), emitting),
+			operation_kind: operation,
 		};
 		appendToolCallRecord(toolFile, row);
 	});

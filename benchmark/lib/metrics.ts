@@ -69,6 +69,7 @@ export interface AttemptMetrics {
 		incomplete: number;
 	};
 	tool_calls_by_tool: Record<string, number>;
+	tool_calls_by_operation: Record<string, number>;
 	/** Null when model_rounds_total === 0. */
 	tool_calls_per_model_round: number | null;
 	tokens: TokenUsageSummary;
@@ -110,6 +111,7 @@ export function buildAttemptMetrics(input: AttemptMetricsInput): AttemptMetrics 
 			incomplete: tools.incomplete,
 		},
 		tool_calls_by_tool: tools.by_tool,
+		tool_calls_by_operation: tools.by_operation,
 		tool_calls_per_model_round: rounds > 0 ? tools.total / rounds : null,
 		tokens: summarizeTokenUsage(input.usageRecords),
 		wall_seconds: input.wallSeconds,

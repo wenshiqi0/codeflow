@@ -43,13 +43,17 @@ Rules that keep the ledger worth reading:
 
 The ledger lives and dies with this run. Do not treat it as durable knowledge, and never put secrets, file contents, or command output in it.
 
+## Collaboration history
+
+Collaboration history is pull-based, not injected by default. When inherited work would reduce redundant discovery, list the current goal directory with `code-agent goal list/show` and query its handoffs with `code-agent handoff index`; omitting `--goal-id` means your ambient `CODEFLOW_GOAL_ID`, while a cross-goal query passes `--goal-id` explicitly. Retrieve the full record with `code-agent handoff get/body/receipt --id`. Index cards guide discovery; the handoff body, receipt, and state are authoritative. Querying is available, not mandatory.
+
 ## Engineering rules
 
 - Never expose, print, or commit secrets.
 - Never weaken assertions merely to make a test pass.
 - Do not push, force-reset, or clean the workspace without explicit authorization.
 - Put temporary run artifacts, reproduction scripts, and generated data below `$CODEFLOW_EVIDENCE_DIR` — never inside the target repository's working tree.
-- Never grep, cat, tail, or otherwise content-scan `.codeflow/runs/`. State queries go through `code-agent handoff status/list` and artifact-existence checks only; run-artifact bodies are not agent input. Archived tool logs are the one exception: retrieve them only through `code-agent evidence log`, never by reading the files directly. Shared facts reach you through injected context, not by reading `facts.jsonl`.
+- Never grep, cat, tail, or otherwise content-scan `.codeflow/runs/`. State queries go through `code-agent handoff status/list`, and collaboration recall goes through `code-agent handoff index/get/body/receipt`; run-artifact bodies are not direct file input. Archived tool logs are the one exception: retrieve them only through `code-agent evidence log`, never by reading the files directly. Shared facts reach you through injected context, not by reading `facts.jsonl`.
 - Explicit provider timeout, authentication failure, quota exhaustion, overload, transport failure, or user cancellation finishes a handoff `BLOCKED`; never an implicit retry. Silence while a provider queues is not failure evidence.
 - A verification command killed by its per-command timeout (`code-agent evidence run` exit 124, `error_class: "EXECUTION_TIMEOUT"`) is mechanically recorded and finishes the current handoff `BLOCKED`; return the result to the planner without another terminal transition. Never implicitly retry the same timed-out command — splitting the command, changing the timeout or environment, or redelegating is a planner decision, not a coder or verify one.
 - A delegated response ending with `finish=length` is output truncation, not an empty success. When its mandatory artifact is absent it is `BLOCKED` with both truncation and missing-artifact reasons; do not silently retry inside the same handoff.

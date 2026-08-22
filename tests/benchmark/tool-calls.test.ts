@@ -110,7 +110,7 @@ describe("counting semantics", () => {
 });
 
 describe("ledger privacy and attribution", () => {
-	test("the allowed field set is exactly id/name/status/timestamps/attribution incl. provider/model", async () => {
+	test("the allowed field set is exactly id/name/status/timestamps/attribution/classification", async () => {
 		const mod = await bench();
 		expect([...mod.TOOL_CALL_RECORD_FIELDS].sort()).toEqual([
 			"at",
@@ -121,6 +121,7 @@ describe("ledger privacy and attribution", () => {
 			"kind",
 			"lane",
 			"model",
+			"operation_kind",
 			"provider",
 			"role",
 			"run_id",
@@ -128,6 +129,14 @@ describe("ledger privacy and attribution", () => {
 			"status",
 			"tool",
 		]);
+	});
+
+	test("operation classification is a closed enum, never command prose", async () => {
+		const mod = await bench();
+		expect(mod.validateToolCallRecord(row("c1", "result", { operation_kind: "handoff_recall" }))).toEqual([]);
+		expect(
+			mod.validateToolCallRecord(row("c1", "result", { operation_kind: "rm -rf /" })).join(" "),
+		).toContain("operation_kind must be a closed operation classification");
 	});
 
 	test("provider and model are required, non-empty strings (§7 by provider/model)", async () => {

@@ -53,4 +53,14 @@ describe("capability prompt contracts", () => {
 		expect(planning).toContain("under `$CODEFLOW_EVIDENCE_DIR/`");
 		expect(architecture).toContain("$CODEFLOW_EVIDENCE_DIR/architecture/");
 	});
+
+	test("collaboration history is goal-scoped, pull-based, and authoritative recall", () => {
+		const agents = fs.readFileSync(path.join(ROOT, "runtime/AGENTS.md"), "utf8");
+		expect(agents).toContain("## Collaboration history");
+		expect(agents).toContain("omitting `--goal-id` means your ambient `CODEFLOW_GOAL_ID`");
+		expect(agents).toContain("cross-goal query passes `--goal-id` explicitly");
+		expect(agents).toContain("Index cards guide discovery");
+		expect(agents).toContain("body, receipt, and state are authoritative");
+		expect(agents).toContain("Querying is available, not mandatory");
+	});
 });
