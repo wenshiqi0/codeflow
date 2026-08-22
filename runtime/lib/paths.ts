@@ -89,6 +89,9 @@ export class RunPaths {
 	goalContractPath(goalId: string): string {
 		return path.join(this.goalDir(goalId), "contract.json");
 	}
+	collaborationIndexDir(goalId: string): string {
+		return path.join(this.goalDir(goalId), "index");
+	}
 	statePath(handoffId: string): string {
 		return path.join(this.handoffDir(handoffId), "state.json");
 	}

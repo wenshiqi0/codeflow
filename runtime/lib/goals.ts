@@ -113,6 +113,7 @@ export function goalContracts(paths: RunPaths): GoalContract[] {
 	return fs
 		.readdirSync(paths.goals, { withFileTypes: true })
 		.filter((entry) => entry.isDirectory())
+		.filter((entry) => !entry.name.startsWith("_"))
 		.map((entry) => loadGoal(paths, entry.name))
 		.sort((left, right) => left.id.localeCompare(right.id));
 }

@@ -26,8 +26,14 @@ import {
 } from "../lib/handoff";
 import { materialize, render } from "../lib/facts";
 import { ledgerPath } from "../lib/facts";
-import { goalViews } from "../lib/goals";
-import { DEFAULT_RUNS_DIR, RunPaths } from "../lib/paths";
+import { goalView, goalViews, loadGoal } from "../lib/goals";
+import {
+	listHandoffIndex,
+	recallHandoff,
+	DEFAULT_HANDOFF_INDEX_LIMIT,
+	MAX_HANDOFF_INDEX_LIMIT,
+} from "../lib/collaboration-index";
+import { DEFAULT_RUNS_DIR, readJson, RunPaths } from "../lib/paths";
 
 interface Args {
 	positional: string[];
@@ -35,7 +41,7 @@ interface Args {
 	booleans: Set<string>;
 }
 
-const BOOLEAN_FLAGS = new Set(["active"]);
+const BOOLEAN_FLAGS = new Set(["active", "unlaned"]);
 
 function parseArgs(argv: string[]): Args {
 	const positional: string[] = [];
@@ -222,6 +228,49 @@ async function runHandoff(command: string, args: Args): Promise<number> {
 			return 0;
 		}
 
+		case "receipt": {
+			const id = resolveHandoffId(args);
+			const state = handoffStatus(paths, id);
+			if (Array.isArray(state)) throw new CliError(`handoff not found: ${id}`);
+			const file = paths.receiptPath(id);
+			if (!fs.existsSync(file)) {
+				emit({
+					handoff_id: id,
+					receipt: null,
+					state: {
+						status: state.status,
+						result: state.result ?? null,
+						blocked_reasons: (state.blocked as { reasons?: string[] } | undefined)?.reasons ?? [],
+					},
+				});
+				return 0;
+			}
+			emit(readJson(file), true);
+			return 0;
+		}
+
+		case "index": {
+			const limit = integer(args, "limit") ?? DEFAULT_HANDOFF_INDEX_LIMIT;
+			if (limit < 1 || limit > MAX_HANDOFF_INDEX_LIMIT) {
+				throw new CliError(`--limit must be between 1 and ${MAX_HANDOFF_INDEX_LIMIT}`);
+			}
+			emit(listHandoffIndex(paths, {
+				goalId: one(args, "goal-id"),
+				unlaned: args.booleans.has("unlaned"),
+				lane: one(args, "lane"),
+				status: one(args, "status"),
+				role: one(args, "role"),
+				query: one(args, "query"),
+				limit,
+			}), true);
+			return 0;
+		}
+
+		case "get": {
+			emit(recallHandoff(paths, resolveHandoffId(args)), true);
+			return 0;
+		}
+
 		case "list": {
 			emit(handoffList(paths, args.booleans.has("active")), true);
 			return 0;
@@ -246,8 +295,24 @@ async function runHandoff(command: string, args: Args): Promise<number> {
 		default:
 			throw new CliError(
 				`unknown handoff subcommand: ${command}; expected open, start, finish, body, ` +
-					"status, list, run-start, or runner-exited",
+					"index, get, receipt, status, list, run-start, or runner-exited",
 			);
+	}
+}
+
+function runGoal(command: string, args: Args, paths: RunPaths): number {
+	switch (command) {
+		case "list": {
+			emit(goalViews(paths), true);
+			return 0;
+		}
+		case "show": {
+			const id = requireFlag(args, "id");
+			emit(goalView(paths, loadGoal(paths, id)), true);
+			return 0;
+		}
+		default:
+			throw new CliError(`unknown goal subcommand: ${command ?? "(none)"}; expected list or show`);
 	}
 }
 
@@ -299,6 +364,10 @@ export async function main(argv: string[]): Promise<number> {
 			case "facts":
 				if (!command) throw new CliError("facts requires a subcommand");
 				return runFacts(command, args);
+
+			case "goal":
+				if (!command) throw new CliError("goal requires a subcommand");
+				return runGoal(command, args, resolvePaths(args));
 
 			default:
 				throw new CliError(`unknown group: ${group}; expected handoff, agents, or facts`);

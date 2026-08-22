@@ -40,7 +40,9 @@ usage() {
 usage: code-agent <command> [options]
 
   delegate --role <role> [--handoff-file <file>]   run a role in this run
-  handoff open|start|finish|body|status|list       handoff state machine
+  handoff open|start|finish|body|receipt|index|get|status|list
+                                                   handoff state and collaboration recall
+  goal list|show                                   goal directory and derived joins
   facts render|list                                this run's fact ledger
   evidence run|receipt                             execute and aggregate command evidence
   check source [paths...]                          source safety check
@@ -52,7 +54,7 @@ EOF
 }
 
 case "${1:-}" in
-  handoff|facts)
+  handoff|facts|goal)
     exec bun "$CLI_DIR/handoff.ts" "$@"
     ;;
   roster)
