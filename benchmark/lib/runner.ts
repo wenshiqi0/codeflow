@@ -49,6 +49,7 @@ import {
 	type AttemptUsageRecord,
 } from "../../runtime/lib/observability/model-usage";
 import { appendToolCallRecord, TOOL_CALL_SCHEMA_VERSION, type ToolCallRecord } from "../../runtime/lib/observability/tool-execution";
+import type { ToolOperationKind } from "../../runtime/lib/observability/tool-execution";
 import {
 	buildAttemptMetrics,
 	FAILED_ATTEMPT_SCHEMA_VERSION,
@@ -186,12 +187,14 @@ function toolCallRow(
 	call_id: string,
 	tool: string,
 	status: ToolCallRecord["status"],
+	operationKind?: ToolOperationKind,
 ): ToolCallRecord {
 	return {
 		schema_version: TOOL_CALL_SCHEMA_VERSION as 1,
 		kind: status === null ? "requested" : "result",
 		call_id,
 		tool,
+		...(operationKind === undefined ? {} : { operation_kind: operationKind }),
 		status,
 		at,
 		run_id: base.run_id,
@@ -232,7 +235,14 @@ function appendToolCalls(
 ): void {
 	for (const call of calls) {
 		const requestedAt = call.requested_at ?? defaultAt;
-		const requested = toolCallRow(attribution, requestedAt, call.call_id, call.tool, null);
+		const requested = toolCallRow(
+			attribution,
+			requestedAt,
+			call.call_id,
+			call.tool,
+			null,
+			call.operation_kind,
+		);
 		appendToolCallRecord(toolFile, requested);
 		toolRecords.push(requested);
 		if (call.status !== "incomplete") {
@@ -242,6 +252,7 @@ function appendToolCalls(
 				call.call_id,
 				call.tool,
 				call.status as "succeeded" | "failed" | "rejected",
+				call.operation_kind,
 			);
 			appendToolCallRecord(toolFile, result);
 			toolRecords.push(result);

@@ -59,6 +59,10 @@ import type {
 } from "./driver";
 import type { ModelVisibleInstance } from "./dataset";
 import type { AttemptUsage, AttemptUsageCost } from "../../runtime/lib/observability/model-usage";
+import {
+	OPERATION_KINDS,
+	type ToolOperationKind,
+} from "../../runtime/lib/observability/tool-execution";
 
 export const BENCHMARK_DRIVER_BIN_ENV = "CODEFLOW_BENCHMARK_DRIVER_BIN";
 export const BENCHMARK_HARNESS_BIN_ENV = "CODEFLOW_BENCHMARK_HARNESS_BIN";
@@ -168,6 +172,12 @@ function parseToolCalls(value: unknown): DriverToolCall[] | null {
 		if (!isObject(raw)) return null;
 		const callId = nonEmptyString(raw.call_id);
 		const tool = nonEmptyString(raw.tool);
+		const rawOperationKind = optionalString(raw.operation_kind);
+		const operationKind =
+			rawOperationKind !== null && OPERATION_KINDS.includes(rawOperationKind as ToolOperationKind)
+				? (rawOperationKind as ToolOperationKind)
+				: null;
+		if (raw.operation_kind !== undefined && operationKind === null) return null;
 		const status = nonEmptyString(raw.status);
 		const requestedAt = optionalString(raw.requested_at);
 		const resultAt = optionalString(raw.result_at);
@@ -185,6 +195,7 @@ function parseToolCalls(value: unknown): DriverToolCall[] | null {
 		calls.push({
 			call_id: callId,
 			tool,
+			...(operationKind === null ? {} : { operation_kind: operationKind }),
 			status: status as DriverToolCall["status"],
 			...(requestedAt === null ? {} : { requested_at: requestedAt }),
 			...(raw.result_at === undefined ? {} : { result_at: resultAt }),

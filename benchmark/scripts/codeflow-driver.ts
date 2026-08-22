@@ -255,6 +255,7 @@ function streamLedgers(): number {
 					{
 						call_id: row.call_id,
 						tool: row.tool,
+						operation_kind: (requested ?? row).operation_kind,
 						status: row.status,
 						requested_at: requested?.at ?? row.at,
 						result_at: row.at,
@@ -313,6 +314,7 @@ for (const row of pendingRequested.values()) {
 				{
 					call_id: row.call_id,
 					tool: row.tool,
+					operation_kind: row.operation_kind,
 					status: "incomplete",
 					requested_at: row.at,
 					result_at: null,

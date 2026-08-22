@@ -2,15 +2,23 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import {
+	cleanupTmpDirs,
+	loadBenchmarkModule,
+	makeTmpDir,
+	SNAPSHOT,
+} from "../benchmark/helpers";
 
 const LEDGER_EXT = path.resolve(
 	import.meta.dir,
 	"../../runtime/extensions/telemetry-ledger/index.ts",
 );
 let ledger: string;
+const temporaryDirs: string[] = [];
 
 afterEach(() => {
 	fs.rmSync(ledger, { recursive: true, force: true });
+	for (const dir of temporaryDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
 async function fire(calls: Array<{ id: string; tool: string; command?: string }>) {
@@ -77,5 +85,60 @@ describe("privacy-safe collaboration operation telemetry", () => {
 		expect(requested.get("read")).toMatchObject({ operation_kind: "explore" });
 		expect(output).not.toContain("--grep SECRET");
 		expect(output).not.toContain("code-agent handoff");
+	});
+
+	test("benchmark runner preserves operation classifications in attempt ledgers", async () => {
+		const mod = await loadBenchmarkModule();
+		const outDir = makeTmpDir("codeflow-operation-runner-");
+		temporaryDirs.push(outDir);
+		await mod.runBenchmark({
+			dataset: SNAPSHOT,
+			instances: ["demo/demo-1001"],
+			outDir,
+			driver: {
+				startAttempt() {
+					return (async function* () {
+						yield {
+							type: "round",
+							round: {
+								role: "coder",
+								provider: "fixture",
+								model: "fixture-model",
+								usage: {
+									input: 1,
+									output: 1,
+									reasoning: 0,
+									cache_read: 0,
+									cache_write: 0,
+									total_tokens: 2,
+									cost: null,
+								},
+							},
+						};
+						yield {
+							type: "tool_calls",
+							role: "coder",
+							provider: "fixture",
+							model: "fixture-model",
+							calls: [{
+								call_id: "recall",
+								tool: "bash",
+								operation_kind: "handoff_recall",
+								status: "succeeded",
+							}],
+						};
+					})();
+				},
+			},
+			evaluator: { async evaluate() { return "resolved"; } },
+			clock: { now: () => 0 },
+			codeflowCommit: "0".repeat(40),
+		});
+		const rows = fs.readFileSync(path.join(outDir, "cases", "demo__demo-1001", "attempts", "1", "tool-calls.jsonl"), "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line));
+		expect(rows).toHaveLength(2);
+		expect(rows.every((row) => row.operation_kind === "handoff_recall")).toBe(true);
 	});
 });

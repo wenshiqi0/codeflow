@@ -139,6 +139,26 @@ describe("ledger privacy and attribution", () => {
 		).toContain("operation_kind must be a closed operation classification");
 	});
 
+	test("driver events preserve the source operation classification", async () => {
+		const mod = await bench();
+		const event = mod.parseDriverEvent({
+			type: "tool_calls",
+			role: "coder",
+			provider: "fixture",
+			model: "fixture-coder",
+			calls: [{
+				call_id: "c1",
+				tool: "bash",
+				operation_kind: "handoff_recall",
+				status: "succeeded",
+			}],
+		});
+		expect(event).toMatchObject({
+			type: "tool_calls",
+			calls: [{ call_id: "c1", operation_kind: "handoff_recall" }],
+		});
+	});
+
 	test("provider and model are required, non-empty strings (§7 by provider/model)", async () => {
 		const mod = await bench();
 		expect(mod.validateToolCallRecord(row("c1", "result"))).toEqual([]);

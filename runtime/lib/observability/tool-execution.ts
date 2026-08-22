@@ -84,7 +84,7 @@ export interface ToolCallRecord {
 const ALLOWED_KEYS = new Set<string>(TOOL_CALL_RECORD_FIELDS);
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set(["succeeded", "failed", "rejected"]);
 const NULLABLE_STRINGS = ["handoff_id", "goal_id", "lane"] as const;
-const OPERATION_KINDS: ReadonlySet<string> = new Set([
+export const OPERATION_KINDS: readonly ToolOperationKind[] = [
 	"goal_list",
 	"goal_show",
 	"handoff_index",
@@ -96,7 +96,8 @@ const OPERATION_KINDS: ReadonlySet<string> = new Set([
 	"execute",
 	"ceremony",
 	"other",
-]);
+] as const;
+const OPERATION_KIND_SET: ReadonlySet<string> = new Set(OPERATION_KINDS);
 
 /** Violation messages; an empty array means the record is privacy-safe and well-formed. */
 export function validateToolCallRecord(record: unknown): string[] {
@@ -155,7 +156,7 @@ export function validateToolCallRecord(record: unknown): string[] {
 	if (typeof row.model !== "string" || row.model.length === 0) {
 		violations.push("model must be a non-empty string (the emitting context's model)");
 	}
-	if (row.operation_kind !== undefined && !OPERATION_KINDS.has(String(row.operation_kind))) {
+	if (row.operation_kind !== undefined && !OPERATION_KIND_SET.has(String(row.operation_kind))) {
 		violations.push("operation_kind must be a closed operation classification");
 	}
 	return violations;

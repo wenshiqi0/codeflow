@@ -12,10 +12,13 @@ import type { BenchmarkBudgets, BenchmarkClock } from "./budgets";
 import type { FailedModelAttempt } from "./metrics";
 import type { ModelVisibleInstance } from "./dataset";
 import type { AttemptUsage } from "../../runtime/lib/observability/model-usage";
+import type { ToolOperationKind } from "../../runtime/lib/observability/tool-execution";
 
 export interface DriverToolCall {
 	call_id: string;
 	tool: string;
+	/** Privacy-safe source-ledger classification; never command text. */
+	operation_kind?: ToolOperationKind;
 	status: "succeeded" | "failed" | "rejected" | "incomplete";
 	/** Source-clock request timestamp; required for credible B1 timing. */
 	requested_at?: string;
