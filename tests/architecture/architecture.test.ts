@@ -35,7 +35,7 @@ describe("runtime architecture boundaries", () => {
 		const context = read("runtime/extensions/codeflow-context/index.ts");
 		const guard = read("runtime/extensions/host-guard/policy.ts");
 		expect(sharedRules).toContain("$PI_CODING_AGENT_DIR");
-		expect(sharedRules).toContain("read-only during a business run");
+		expect(sharedRules).toContain("read-only during a run");
 		expect(run).toContain("PI_CODING_AGENT_DIR: RUNTIME_DIR");
 		expect(launcher).toContain("PI_CODING_AGENT_DIR: RUNTIME_DIR");
 		expect(context).not.toContain("delete process.env.PI_CODING_AGENT_DIR");
@@ -47,12 +47,7 @@ describe("runtime architecture boundaries", () => {
 	test("internal capability prompts are references rather than discoverable skills", () => {
 		expect(exists("runtime/skills")).toBe(false);
 		const capabilities = [
-			"architecture.md",
-			"planning.md",
-			"testing.md",
-			"implementation.md",
-				"verification.md",
-				"supervision.md",
+			"worker.md",
 				"output-compression.md",
 		];
 		for (const name of capabilities) {

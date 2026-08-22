@@ -49,7 +49,7 @@ export function assertResumeStopped(paths: RunPaths): ResumableAttempt {
  *
  * The latest execution attempt must have both its business terminal event and
  * runner exit after its most recent start/resume event. This prevents two
- * depth-0 planners from sharing one run while the earlier process is draining.
+ * root workers from sharing one run while the earlier process is draining.
  */
 export function loadResumeSource(runsDir: string, runId: string): ResumeSource {
 	if (!RUN_ID_PATTERN.test(runId)) throw new ResumeError(`invalid run id: ${runId}`);

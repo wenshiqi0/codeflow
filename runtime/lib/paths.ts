@@ -8,7 +8,7 @@
  * └── <run-id>/
  *     ├── handoffs/<handoff-id>/   handoff.md, state.json, receipt.json, title.txt
  *     ├── goals/<goal-id>/        immutable goal contracts; no goal state machine
- *     ├── pi-sessions/              goal/lane session files
+ *     ├── pi-sessions/              goal/thread session files
  *     ├── active/<handoff-id>      sentinel per in-flight handoff
  *     ├── events/                  the outer loop's only listening surface
  *     ├── tmp/                     staging; rename into events/ delivers

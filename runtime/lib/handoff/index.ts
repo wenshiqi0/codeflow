@@ -73,14 +73,7 @@ export const TITLE_BUDGET = 80;
 
 const DEFAULT_STALE_SECONDS = 600;
 
-/**
- * Fields a role must supply. `verify` carries more because its receipt is
- * the run's only execution evidence: a verdict without the command and exit
- * code cannot be audited.
- */
-const RECEIPT_REQUIRED_BY_ROLE: Record<string, readonly string[]> = {
-	"verify": ["status", "command", "exit_code"],
-};
+/** Every worker receipt is auditable as a JSON object with a terminal status. */
 const RECEIPT_REQUIRED_BASE: readonly string[] = ["status"];
 
 const RECEIPT_FIELD_TYPES: Record<string, "string" | "number" | "boolean" | "array"> = {
@@ -312,7 +305,6 @@ function emitHandoffEvent(
 
 function validateEntry(
 	entry: unknown,
-	role: string,
 	index: number,
 	paths: RunPaths,
 	handoffId: string,
@@ -323,11 +315,11 @@ function validateEntry(
 	}
 	const record = entry as Record<string, unknown>;
 
-	const required = RECEIPT_REQUIRED_BY_ROLE[role] ?? RECEIPT_REQUIRED_BASE;
+	const required = RECEIPT_REQUIRED_BASE;
 	const missing = required.filter((field) => !(field in record));
 	if (missing.length > 0) {
 		throw new CliError(
-			`receipt entry ${index} for role ${role} is missing required field(s): ${missing.join(", ")}`,
+			`receipt entry ${index} is missing required field(s): ${missing.join(", ")}`,
 		);
 	}
 
@@ -356,7 +348,7 @@ function validateEntry(
 		}
 	}
 
-	if (role === "verify" && "failure_class" in record) {
+	if ("failure_class" in record) {
 		const failureClass = record.failure_class;
 		if (
 			typeof failureClass !== "string" ||
@@ -396,7 +388,6 @@ function validateEntry(
 
 function validateReceipt(
 	file: string,
-	role: string,
 	status: string,
 	paths: RunPaths,
 	handoffId: string,
@@ -436,7 +427,7 @@ function validateReceipt(
 			throw new CliError("a batch receipt must contain at least one entry");
 		}
 		const validated = entries.map((entry, index) =>
-			validateEntry(entry, role, index, paths, handoffId, spills),
+			validateEntry(entry, index, paths, handoffId, spills),
 		);
 		const aggregateStatus = validated.every((entry) => entry.status === "PASS")
 			? "PASS"
@@ -451,7 +442,7 @@ function validateReceipt(
 		}
 		receipt.receipts = validated;
 	} else {
-		receipt = validateEntry(receipt, role, 0, paths, handoffId, spills);
+		receipt = validateEntry(receipt, 0, paths, handoffId, spills);
 	}
 	return { receipt, spills };
 }
@@ -705,7 +696,6 @@ export function finishHandoff(paths: RunPaths, options: FinishOptions): FinishRe
 	if (options.receipt) {
 		const validated = validateReceipt(
 			options.receipt,
-			state.role,
 			options.status,
 			paths,
 			handoffId,
@@ -904,7 +894,7 @@ export function runResume(
 	// The previous attempt's start sequence is immutable, so an exclusive file
 	// is an atomic, permanent claim on exactly that attempt. A second process
 	// cannot pass the lifecycle check and race this one into another root
-	// planner; a later completed attempt has a different start sequence.
+	// root worker; a later completed attempt has a different start sequence.
 	const claims = path.join(paths.runDir, ".resume-claims");
 	const claim = path.join(claims, String(attempt.startSeq));
 	fs.mkdirSync(claims, { recursive: true });

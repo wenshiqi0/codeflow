@@ -1,60 +1,56 @@
-# Codeflow Agent Instructions
+# Codeflow Worker Contract
 
-Worker-only shared contract. Role policy is in `roles.json`; exact role prompts are in `references/capabilities/`. The observe loop belongs to the outer coordinator.
+This contract is shared by every Codeflow worker. The handoff defines the work; this file defines the mechanical boundaries that make work auditable.
 
-## Runtime location
+## Runtime and workspaces
 
-`$PI_CODING_AGENT_DIR` is the Codeflow runtime root; its parent is the installed Codeflow Skill root. Both may be inspected when Codeflow behavior itself needs diagnosis, but they are host-owned and read-only during a business run. Do not edit them or confuse them with the target product repository.
+`$PI_CODING_AGENT_DIR` is the Codeflow runtime and is read-only during a run. `$CODEFLOW_PROJECT_DIR` is the target project workspace, and `$CODEFLOW_EVIDENCE_DIR` is the run evidence workspace; both are writable for their intended files. Run state under the current run directory is mechanical state and is never edited directly.
 
-## Handoff contract
+Never expose, print, or commit secrets. Never push, force-reset, or clean the workspace without explicit authorization.
 
-Coordination happens in handoffs: one unit of work from a delegator to a receiver, who maintains its state until terminal. Planner authors a concise outcome contract; vague requests are invalid.
+## Handoffs
 
-State changes and queries are programmatic; requirement expression goes through models. `code-agent handoff open/start/finish/status/list` owns every transition (`open` -> `running` -> `done(PASS|FAIL)` or `blocked(reason)`), sequences, receipt validation, and events. Models write handoff bodies, receipt narratives, and diagnoses. Never hand-write `state.json`, event files, `active/` sentinels, or liveness records; never claim liveness in prose. Scope conflicts persist as `scope_conflicts` in `state.json`.
+A handoff is one unit of work from a delegator to a receiver. `code-agent handoff open/start/finish/status/list` owns every state transition, receipt validation, sequence, and event. A receiver writes handoff prose and receipt data through the CLI, never `state.json`, event files, active sentinels, or liveness records.
 
-A `PASS` or `FAIL` needs a validated receipt file: `code-agent handoff finish --id "$CODEFLOW_HANDOFF_ID" --status <STATUS> --receipt <file> --artifact <path> --summary "<one line>"`. A final message is not a receipt. `BLOCKED` needs no receipt file; the enum is the receipt. `blocked.reason` is one of `CONTEXT_BUDGET_EXCEEDED`, `DELEGATION_ARTIFACT_MISSING`, `EXECUTION_TIMEOUT`, `OUTPUT_TRUNCATED`, `PROVIDER_FAILURE`, `USER_CANCELLED`. Pass `--blocked-reason` more than once when several apply.
+A terminal `PASS` or `FAIL` requires a validated JSON receipt. `BLOCKED` requires one or more closed blocked reasons and no receipt file. A root `PASS` additionally requires a non-empty JSON root receipt and a non-empty closure artifact. Summaries are one line.
 
-If `handoff finish` is rejected by CLI validation — for example invalid receipt JSON, a missing fact path, or an empty artifact — the handoff is still non-terminal. Read the exact CLI error, repair only that mechanical defect, and call `handoff finish` once more in this same handoff. If the second call is also rejected, stop and report the rejection honestly; do not keep retrying. This repair rule does not apply to business failures, test failures, provider failures, or execution timeouts.
+If `handoff finish` rejects a receipt or artifact, the handoff remains non-terminal. Read the exact CLI error, repair that mechanical defect, and call finish once more. If the second call is rejected, stop and report both rejections. Business failures, command failures, provider failures, and execution timeouts are not CLI-validation failures.
+
+## Evidence recorder
+
+Execute evidence-bearing commands through the recorder rather than an unrecorded shell:
+
+```bash
+code-agent evidence run --id <id> [--timeout-ms <ms>] -- <command> [args...]
+code-agent evidence receipt --output <receipt.json>
+code-agent evidence log <id> [--head N] [--tail N] [--grep <pattern>]
+```
+
+A nonzero child exit is `FAIL`. A command that cannot start is `RUNNER_BLOCKED`. A command killed by its recorder timeout is `RUNNER_BLOCKED` with `error_class: "EXECUTION_TIMEOUT"` and exit code 124. The recorder owns the child process tree, writes complete bounded logs, and preserves earlier sibling records.
+
+After an execution timeout, the registered handoff is already terminal `BLOCKED`. Return the structured result to the delegator without another terminal transition and without an implicit retry of the identical command.
+
+Command receipts contain the command, integer exit code, and status. Batch receipts contain one entry per command, and batch `PASS` requires every entry to pass. Preserve complete stdout and stderr through the recorder; do not copy unbounded command output into a handoff body.
 
 ## Shared facts
 
-You run in a fresh process with no memory of earlier roles. What you do get is the `<shared_facts>` block in your injected context: locators earlier roles in this run confirmed and recorded. Read it before searching. If it already names the file you need, go straight there instead of grepping for it.
+Read the injected shared-fact ledger before redundant discovery. A fact locator identifies where a claim came from, not that a file still has the same content; reread a file before changing it.
 
-Trust a fact's locator, but re-read a file before you change it — the fact proves where something was, not that it is still shaped the way you assume.
+Receipts may contribute at most 12 concise facts. Each fact needs a repository-relative `path` (optionally `line`), a `symbol`, or a literal `value`; paths are mechanically verified. Record established locations and conventions, not work narratives. A correction supersedes the earlier fact and states why. Never place secrets, file contents, or command output in the fact ledger.
 
-Contribute what the next role would otherwise have to rediscover by adding a `facts` array to your receipt:
+## Collaboration recall
 
-```json
-{
-  "status": "PASS",
-  "facts": [
-    {"claim": "route registration entry", "path": "src/router.ts", "line": 42},
-    {"claim": "test framework", "value": "vitest"}
-  ]
-}
-```
+Collaboration history is pull-based. `code-agent handoff index` reads the ambient goal context; a cross-goal query passes `--goal-id`, and ungrouped history is the default when no ambient goal exists. `code-agent handoff get/body/receipt` retrieves an exact record. Index cards guide discovery; the handoff body, receipt, and state are authoritative.
 
-Rules that keep the ledger worth reading:
+Never grep, cat, tail, or otherwise content-scan `.codeflow/runs/`. Archived tool logs are retrieved only with `code-agent evidence log`.
 
-- Every fact needs a locator: a real repository-relative `path` (optionally with `line`), a `symbol`, or a literal `value`. The CLI verifies paths exist and rejects the whole finish if one does not.
-- Record established locations and conventions, not your process. "Checked three files" is not a fact.
-- At most 12 facts per handoff, each claim one short line.
-- Found an injected fact to be wrong? Append a correction rather than arguing in prose: `{"supersedes": "f1", "claim": "...", "path": "...", "reason": "why it changed"}`. History is never rewritten; the superseded fact simply stops being shown.
+## Product-work discipline
 
-The ledger lives and dies with this run. Do not treat it as durable knowledge, and never put secrets, file contents, or command output in it.
-
-## Collaboration history
-
-Collaboration history is pull-based, not injected by default. When inherited work would reduce redundant discovery, list the current goal directory with `code-agent goal list/show` and query its handoffs with `code-agent handoff index`; omitting `--goal-id` means your ambient `CODEFLOW_GOAL_ID`, while a cross-goal query passes `--goal-id` explicitly. Retrieve the full record with `code-agent handoff get/body/receipt --id`. Index cards guide discovery; the handoff body, receipt, and state are authoritative. Querying is available, not mandatory.
-
-## Engineering rules
-
-- Never expose, print, or commit secrets.
-- Never weaken assertions merely to make a test pass.
-- Do not push, force-reset, or clean the workspace without explicit authorization.
-- Put temporary run artifacts, reproduction scripts, and generated data below `$CODEFLOW_EVIDENCE_DIR` — never inside the target repository's working tree.
-- Never grep, cat, tail, or otherwise content-scan `.codeflow/runs/`. State queries go through `code-agent handoff status/list`, and collaboration recall goes through `code-agent handoff index/get/body/receipt`; run-artifact bodies are not direct file input. Archived tool logs are the one exception: retrieve them only through `code-agent evidence log`, never by reading the files directly. Shared facts reach you through injected context, not by reading `facts.jsonl`.
-- Explicit provider timeout, authentication failure, quota exhaustion, overload, transport failure, or user cancellation finishes a handoff `BLOCKED`; never an implicit retry. Silence while a provider queues is not failure evidence.
-- A verification command killed by its per-command timeout (`code-agent evidence run` exit 124, `error_class: "EXECUTION_TIMEOUT"`) is mechanically recorded and finishes the current handoff `BLOCKED`; return the result to the planner without another terminal transition. Never implicitly retry the same timed-out command — splitting the command, changing the timeout or environment, or redelegating is a planner decision, not a coder or verify one.
-- A delegated response ending with `finish=length` is output truncation, not an empty success. When its mandatory artifact is absent it is `BLOCKED` with both truncation and missing-artifact reasons; do not silently retry inside the same handoff.
+- Re-read a file before editing it.
+- Do not weaken an assertion merely to make a test pass.
+- Keep a failing command's observed result distinct from its expected result.
+- Record a mistaken assumption and the exact correction when repairing evidence or tests.
+- Put temporary artifacts, reproduction scripts, and generated data under `$CODEFLOW_EVIDENCE_DIR`, not the target repository.
 - Run `code-agent check source` after implementation edits and before test execution.
+- Inspect the final diff for unrelated changes, missing boundaries, unsafe behavior, and secrets before finishing.
+- In the receipt, state only conclusions supported by the handoff body, repository evidence, or recorded command evidence.

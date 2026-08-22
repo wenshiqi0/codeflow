@@ -16,7 +16,6 @@ export const ALLOWED_KEYS = new Set([
 	"prompt",
 	"tools",
 	"needs_project_rules",
-	"goal_lane",
 	"internal",
 ]);
 
@@ -26,7 +25,6 @@ export interface RoleDefinition {
 	prompt: string;
 	tools?: string[];
 	needs_project_rules?: false | "shared" | "full";
-	goal_lane?: "test" | "code" | "verify";
 	internal?: boolean;
 }
 
@@ -43,7 +41,6 @@ export interface ResolvedRole {
 	promptPath: string;
 	tools: string[];
 	needsProjectRules: false | "shared" | "full";
-	goalLane?: "test" | "code" | "verify";
 	internal: boolean;
 }
 
@@ -94,9 +91,6 @@ function loadRegistry(registryFile: string): RoleRegistry {
 		}
 		if (value.needs_project_rules !== undefined && value.needs_project_rules !== false && value.needs_project_rules !== "shared" && value.needs_project_rules !== "full") {
 			fail(`role ${role}: needs_project_rules must be false, shared, or full`);
-		}
-		if (value.goal_lane !== undefined && !/^(?:test|code|verify)$/.test(String(value.goal_lane))) {
-			fail(`role ${role}: goal_lane must be test, code, or verify`);
 		}
 		roles[role] = value as unknown as RoleDefinition;
 	}
@@ -157,7 +151,6 @@ export function resolveRole(registryFile: string, role: string): ResolvedRole | 
 		promptPath,
 		tools: (definition.tools ?? []).map((tool) => tool.trim()),
 		needsProjectRules: definition.needs_project_rules ?? "full",
-		goalLane: definition.goal_lane,
 		internal: definition.internal === true,
 	};
 }

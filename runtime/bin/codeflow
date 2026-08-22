@@ -7,7 +7,7 @@
 # to this file while the working directory becomes the target repository root.
 #
 # This binary speaks exec/resume/ls/sub/memo/audit/stop and nothing else. The
-# mechanical verbs a role needs (handoff, facts, check, roster, delegate) live
+# mechanical verbs a worker needs (handoff, facts, check, roster, delegate) live
 # in `code-agent`, which is not on a user PATH. Two vocabularies with no overlap
 # mean the ring boundary is enforced by which binary is reachable, not by a
 # paragraph asking an agent to behave. There is also no passthrough default: an
@@ -30,7 +30,7 @@ usage: codeflow <command> [options]
   resume <run-id>                   resume a fully stopped run with the same run id
   ls                                list runs: id, status, duration, requirement
   sub <run-id> [--since <seq>]      subscribe to a run's event stream
-  goals <run-id>                   show derived goal joins
+  goals <run-id>                   show goal grouping statistics
   usage <run-id>                   show per-turn and total model usage
   memo <run-id> "<text>"            append to a run's requirement
   audit <run-id> [--force]          gated audit of a blocked or stale run

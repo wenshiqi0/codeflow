@@ -1,5 +1,5 @@
 /**
- * Pi extension that registers the planner-facing goal/task/task_group tools.
+ * Pi extension that registers process-scoped organization tools.
  */
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -132,8 +132,7 @@ export default function (pi: ExtensionAPI) {
 		name: "goal",
 		label: "Goal",
 		description:
-			"Create an immutable goal contract. The goal has no state machine; " +
-			"progress is derived by joining its test/code/verify handoffs.",
+			"Create an immutable goal grouping contract. A goal has no state machine or mechanical join gate.",
 		parameters: GoalParams,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ToolResult<unknown>> {
@@ -167,7 +166,7 @@ export default function (pi: ExtensionAPI) {
 		parameters: TaskParams,
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx): Promise<ToolResult<TaskDetails>> {
-			const agent = "planner";
+			const agent = "worker";
 			const details: TaskDetails = { exitCode: 1, stderr: "" };
 
 			let goal: GoalTaskRef | null = null;
@@ -259,7 +258,7 @@ export default function (pi: ExtensionAPI) {
 						};
 						continue;
 					}
-					const agent = "planner";
+					const agent = "worker";
 					let goal: GoalTaskRef | null = null;
 					try {
 						assertTaskPrompt(task.prompt);

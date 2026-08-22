@@ -73,8 +73,8 @@ export function resolveRunsDir(
 }
 
 /**
- * `exec` must give its depth-0 planner the same terminal contract as every
- * delegated role. Without this root handoff, the planner prompt asks it to run
+ * `exec` must give its depth-0 worker the same terminal contract as every
+ * delegated worker. Without this root handoff, the shared worker prompt has no
  * `handoff finish` with no handoff id, and the observe loop can never receive
  * a business-terminal `run_finished` event.
  */
@@ -184,26 +184,25 @@ function parseRoot(argv: string[], command: "exec" | "resume"): ParsedRun | { er
 	const prompt: string[] = [];
 	for (const token of argv) {
 		if (token === "--role" || token === "--agent") {
-			return { error: `${token} is a delegate-only role option; ${command} always starts the planner` };
+				return { error: `${token} is a delegate-only role option; ${command} always starts the root worker` };
 		}
 		if (token === "--handoff-file") {
 			return { error: `${token} is delegate-only; handoff state belongs to code-agent delegate` };
 		}
 		if (token === "--print") {
-			return { error: `--print is delegate-only; ${command} starts the planner and follows the run` };
+			return { error: `--print is delegate-only; ${command} starts the root worker and follows the run` };
 		}
 		if (token.startsWith("--")) return { error: `unknown ${command} option: ${token}` };
 		prompt.push(token);
 	}
-	return { role: "planner", prompt: prompt.join(" "), printOnly: false, handoffFile: undefined };
+	return { role: "worker", prompt: prompt.join(" "), printOnly: false, handoffFile: undefined };
 }
 
 /**
  * `entry` only changes how arguments are validated and reported.
  *
- * `exec` takes a requirement and always drives the planner: choosing the role
- * is the planner's job, not the caller's. `delegate` takes an explicit role
- * because that is precisely the decision the planner is making.
+	 * `exec` takes a requirement and always drives the root worker. `delegate`
+	 * is the inner mechanical launcher used by the task tool.
  */
 export async function run(
 	argv: string[],
@@ -218,7 +217,7 @@ export async function run(
 		if (args.prompt.trim() === "") {
 			return fail(entry === "exec" ? "exec requires a requirement" : "resume requires a prompt", entry);
 		}
-		args.role ??= "planner";
+		args.role ??= "worker";
 	}
 	if (!args.role) return fail("delegate requires --role ROLE", "delegate");
 
@@ -317,7 +316,7 @@ export async function run(
 	const rootObservation: RootOutputObservation = { stdoutTail: "", stderrTail: "" };
 	child = Bun.spawn(
 		buildArgv(resolved, args.prompt, EXTENSIONS, {
-			id: `${runId}-planner`,
+			id: `${runId}-worker`,
 			dir: paths.piSessions,
 		}),
 		{
@@ -369,7 +368,7 @@ export async function run(
 			.trim()
 			.slice(-2_000);
 		console.error(
-			`codeflow ${entry}: planner exited with code ${code}${tail ? `; diagnostic tail:\n${tail}` : ""}`,
+			`codeflow ${entry}: worker exited with code ${code}${tail ? `; diagnostic tail:\n${tail}` : ""}`,
 		);
 	}
 
@@ -408,7 +407,7 @@ async function resume(argv: string[]): Promise<number> {
 		const source = loadResumeSource(runsDir, argv[0]);
 		const prompt =
 			`Resume Codeflow run ${source.runId} after an external correction. ` +
-			"Continue its existing immutable goals and latest lane state; preserve completed evidence and do not recreate satisfied work.\n\n" +
+			"Continue its existing immutable goals and latest grouped state; preserve completed evidence and do not recreate satisfied work.\n\n" +
 			`Original requirement:\n${source.requirement}`;
 		return await run([prompt], "resume", { resume: source });
 	} catch (error) {

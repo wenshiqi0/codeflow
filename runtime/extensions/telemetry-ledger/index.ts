@@ -6,7 +6,7 @@
  * Inert unless CODEFLOW_BENCHMARK_DRIVER_LEDGER_DIR is set — normal runs load
  * this extension and it does nothing. The benchmark driver script
  * (benchmark/scripts/codeflow-driver.ts) sets the variable for every
- * role process of the attempt's Codeflow run (depth-0 planner and delegated
+ * worker process of the attempt's Codeflow run (root and delegated
  * children alike, via inherited env), so rounds are attributed by
  * role/provider/model/goal-thread exactly as the run's own usage ledger does
  * (design §6/§14: reuse the existing usage/attribution machinery — one

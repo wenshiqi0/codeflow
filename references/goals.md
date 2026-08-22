@@ -1,16 +1,6 @@
-# Goals and capability lanes
+# Goals and threads
 
-A goal is one observable outcome carved from the requirement. Its contract is immutable metadata; status is derived from terminal handoffs.
-
-```text
-test lane    -> tester
-code lane    -> coder
-verify lane  -> verify
-```
-
-## Contract
-
-Location:
+A goal is an immutable grouping label for related handoffs and collaboration history. It carries no mutable state and no mechanical completion gate.
 
 ```text
 .codeflow/runs/code/<run-id>/goals/<goal-id>/contract.json
@@ -22,21 +12,17 @@ Fields:
 - `id`;
 - `goal`;
 - `definition_of_done`;
-- `created_at`;
-- lane ownership for test, code, and verify.
+- `created_at`.
 
-Lane sessions persist across handoffs for context continuity. Handoffs remain independently terminal. Keep one active handoff per lane.
+`definition_of_done` is documentation for people and workers. A goal view reports handoff counts and status distributions only.
 
-## Derived join
+## Threads
 
-Read current goal views with:
+`goalSessionId(runId, goalId, thread)` names a persistent worker session:
 
-```bash
-codeflow goals <run-id>
-```
+- same goal and thread continue the session;
+- a different thread starts a fresh session;
+- one active handoff is allowed per goal/thread pair;
+- a task without `goal_id` runs in `_ungrouped`.
 
-The view joins goal contracts with handoffs carrying the same `goal_id` and lane. `join.satisfied` is true only when the latest handoff in each required lane is `PASS`. Status is derived from handoff state and receipts, never written back to the goal.
-
-A root handoff cannot finish `PASS` while any goal join is unsatisfied. A planner that sees that mechanical rejection must either delegate the missing lane, revise the goal with a new immutable contract, or close the root with the observed non-PASS outcome.
-
-Changing a goal requires a new immutable contract, conventionally `<goal-id>-r2`, with a supersedes note.
+Root `PASS` depends on the root receipt and closure artifact, not on grouped handoff states.

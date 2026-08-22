@@ -1,5 +1,5 @@
 /**
- * Shell-free command execution and receipt aggregation for verify handoffs.
+ * Shell-free command execution and receipt aggregation for worker handoffs.
  *
  * A model-written pipeline can accidentally report the status of `tail` or
  * `tee` instead of the command under test. This module executes the supplied

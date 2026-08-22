@@ -2,14 +2,14 @@
  * Validate, apply, and re-verify test-only patches.
  *
  * The test patch is the mechanism that makes test-first real rather than
- * aspirational. `tester` produces it, `coder` applies it mechanically,
+ * aspirational. a worker produces it, another worker applies it mechanically,
  * and nobody may edit it in between — so this module enforces two things:
  *
  * 1. **A test patch touches only tests.** If implementation could ride along
  *    inside the patch, "the test proves the behaviour was missing" stops being
  *    true, because the same diff could have added the behaviour.
  * 2. **The applied tests do not change afterwards.** `apply` records a lock of
- *    per-file fingerprints; `verify` re-checks them. Weakening an assertion
+ *    per-file fingerprints; the applying worker re-checks them. Weakening an assertion
  *    after RED is the cheapest way to fake a GREEN, and it is exactly what a
  *    model under pressure will reach for.
  *
@@ -178,7 +178,7 @@ export function validatePatch(project: string, patchArg: string): CheckResult {
 	const resolved = path.resolve(project, patchArg);
 
 	// Confining patches to the run directory keeps an arbitrary file on disk
-	// from being applied as if tester had produced it.
+	// from being applied as if the producing worker had produced it.
 	if (!fs.existsSync(resolved) || !resolved.startsWith(runRoot + path.sep)) {
 		throw new PatchError("patch must be a file below .codeflow/runs/test-patches/");
 	}

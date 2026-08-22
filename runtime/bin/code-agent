@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Inner-ring CLI: the mechanical plane a role process is allowed to touch.
+# Inner-ring CLI: the mechanical plane a worker process is allowed to touch.
 #
 # This script is deliberately not installed on a user PATH. It is reachable
 # only from inside a run, because `codeflow` prepends this directory to the PATH
@@ -39,17 +39,17 @@ usage() {
   cat <<'EOF'
 usage: code-agent <command> [options]
 
-  delegate --role <role> [--handoff-file <file>]   run a role in this run
+  delegate --role worker [--handoff-file <file>]   run a worker in this run
   handoff open|start|finish|body|receipt|index|get|status|list
                                                    handoff state and collaboration recall
-  goal list|show                                   goal directory and derived joins
+  goal list|show                                   goal grouping and statistics
   facts render|list                                this run's fact ledger
   evidence run|receipt                             execute and aggregate command evidence
   check source [paths...]                          source safety check
   check patch <patch>                              validate a test patch
   verify patch <patch>                             verify an applied test patch
   apply patch <patch>                              apply a validated test patch
-  roster                                           roles, depth, heartbeat, scope
+  roster                                           workers, heartbeat, scope
 EOF
 }
 
@@ -70,7 +70,7 @@ case "${1:-}" in
     exec bun "$CLI_DIR/evidence.ts" "$@"
     ;;
   # `check`/`apply`/`verify` group the two mechanical pre-commit gates under one
-  # verb, so a role has a single entry point to remember.
+  # verb, so a worker has a single entry point to remember.
   check)
     case "${2:-}" in
       source)

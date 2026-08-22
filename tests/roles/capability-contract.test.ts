@@ -2,65 +2,68 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const ROOT = path.resolve(import.meta.dir, "../..");
-const capabilities = path.join(ROOT, "references/capabilities");
+const REPO = path.resolve(import.meta.dir, "../..");
 
-function prompt(name: string): string {
-	return fs.readFileSync(path.join(capabilities, name), "utf8");
+function read(relative: string): string {
+	return fs.readFileSync(path.join(REPO, relative), "utf8");
 }
 
-describe("capability prompt contracts", () => {
-	test("tester uses the recorder, one node id, and delegates full regression", () => {
-		const testing = prompt("testing.md");
-		expect(testing).toContain("code-agent evidence run --id <case-id>");
-		expect(testing).toContain("exactly one test node id");
-		expect(testing).not.toContain("On review, assess the business tests");
-		expect(testing).toContain("Full regression belongs to `verify`, at most once per goal");
+describe("universal worker prompt", () => {
+	test("the prompt is factual and organization is tool-conditional", () => {
+		const worker = read("references/capabilities/worker.md");
+		expect(worker).toContain("Methods for software work include");
+		expect(worker).toContain("direct implementation");
+		expect(worker).toContain("test-driven development");
+		expect(worker).toContain("Delegation tools, when present in your toolset");
+		expect(worker).toContain("Use of these\ntools is optional.");
 	});
 
-	test("verify owns post-implementation evidence review and assertion intent", () => {
-		const verification = prompt("verification.md");
-		const planning = prompt("planning.md");
-		expect(verification).toContain(
-			"including whether business assertions still express the tester's recorded intent",
+	test("model-visible worker static text contains no position or preference vocabulary", () => {
+		const files = [
+			"references/capabilities/worker.md",
+			"runtime/AGENTS.md",
+			...fs
+				.readdirSync(path.join(REPO, "references/work-methods"))
+				.filter((file) => file.endsWith(".md"))
+				.map((file) => path.join("references/work-methods", file)),
+		];
+		for (const file of files) {
+			const text = read(file);
+			expect(text).not.toMatch(/depth/i);
+			expect(text).not.toMatch(/\b(?:should|prefer|encourage|recommended|best)\b/i);
+		}
+		const taskExtension = fs.readFileSync(
+			path.join(REPO, "runtime/extensions/codeflow-task/index.ts"),
+			"utf8",
 		);
-		expect(planning).toContain(
-			"post-implementation evidence review -> `verify`; re-engage `tester` only for disputed assertion intent",
-		);
+		const descriptions = [...taskExtension.matchAll(/description:\s*\n?\s*"([^"]+)"/g)]
+			.map((match) => match[1])
+			.join("\n");
+		expect(descriptions).not.toMatch(/depth/i);
+		expect(descriptions).not.toMatch(/\b(?:should|prefer|encourage|recommended|best)\b/i);
 	});
 
-	test("planner splits context-budget events and stops satisfied-goal loops", () => {
-		const planning = prompt("planning.md");
-		expect(planning).toContain(
-			"`CONTEXT_BUDGET_EXCEEDED` from a lane means the work unit was too large",
-		);
-		expect(planning).toContain(
-			"Once a goal's join is satisfied, do not open further lane handoffs for it",
-		);
+	test("mechanical evidence discipline is shared by every worker", () => {
+		const agents = read("runtime/AGENTS.md");
+		expect(agents).toContain("code-agent evidence run --id <id>");
+		expect(agents).toContain("A nonzero child exit is `FAIL`");
+		expect(agents).toContain("Do not weaken an assertion merely to make a test pass.");
+		expect(agents).toContain("execution timeout");
+		expect(agents).toContain("second call is rejected");
+		expect(agents).toContain("root receipt");
+		expect(agents).toContain("closure artifact");
 	});
 
 	test("archived tool logs are retrievable only through the bounded CLI channel", () => {
-		const agents = fs.readFileSync(path.join(ROOT, "runtime/AGENTS.md"), "utf8");
-		expect(agents).toContain(
-			"Archived tool logs are the one exception: retrieve them only through `code-agent evidence log`",
-		);
-		expect(agents).toContain("never by reading the files directly");
+		const agents = read("runtime/AGENTS.md");
+		expect(agents).not.toContain("below `.codeflow/runs/`");
+		expect(agents).toContain("code-agent evidence log");
+		expect(agents).toContain("body, receipt, and state are authoritative");
 	});
 
 	test("all generated evidence prompts point outside the target repository", () => {
-		const planning = prompt("planning.md");
-		const architecture = prompt("architecture.md");
-		expect(planning).toContain("under `$CODEFLOW_EVIDENCE_DIR/`");
-		expect(architecture).toContain("$CODEFLOW_EVIDENCE_DIR/architecture/");
-	});
-
-	test("collaboration history is goal-scoped, pull-based, and authoritative recall", () => {
-		const agents = fs.readFileSync(path.join(ROOT, "runtime/AGENTS.md"), "utf8");
-		expect(agents).toContain("## Collaboration history");
-		expect(agents).toContain("omitting `--goal-id` means your ambient `CODEFLOW_GOAL_ID`");
-		expect(agents).toContain("cross-goal query passes `--goal-id` explicitly");
-		expect(agents).toContain("Index cards guide discovery");
-		expect(agents).toContain("body, receipt, and state are authoritative");
-		expect(agents).toContain("Querying is available, not mandatory");
+		const agents = read("runtime/AGENTS.md");
+		expect(agents).toContain("$CODEFLOW_EVIDENCE_DIR");
+		expect(agents).toContain("not the target repository");
 	});
 });

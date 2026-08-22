@@ -9,7 +9,7 @@
  * fresh process per handoff, which is what keeps a RED proof honest — but it
  * also means each role rediscovers the repository from scratch. Facts that an
  * earlier role confirmed and recorded in its receipt are injected here, so
- * coder does not re-derive what planner already established.
+ * a later worker does not re-derive what an earlier worker established.
  *
  * Injection is always a visible message. Nothing steers a role that a human
  * reading the transcript cannot see.
@@ -283,7 +283,7 @@ export default function (pi: ExtensionAPI) {
 
 	// Compaction is never acceptable: a silently summarized handoff produces
 	// confident claims about work whose evidence is gone. A role that runs out
-	// of context must fail loudly so the planner can split the work instead.
+	// of context must fail loudly so the root worker can split the work instead.
 	pi.on("session_before_compact", (event) => {
 		pi.appendEntry(COMPACT_INTERCEPTED_TYPE, {
 			reason: event.reason,

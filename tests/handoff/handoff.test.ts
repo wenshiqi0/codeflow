@@ -558,8 +558,8 @@ describe("receipt validation", () => {
 		expect(finishWith({ status: "FAIL" })).toThrow(CliError);
 	});
 
-	test("verify must supply command and exit_code", () => {
-		expect(finishWith({ status: "PASS" }, "verify")).toThrow(CliError);
+	test("command evidence fields are optional but typed", () => {
+		expect(finishWith({ status: "PASS" })).not.toThrow();
 	});
 
 	test("verify with full evidence is accepted", () => {
@@ -568,7 +568,7 @@ describe("receipt validation", () => {
 		).not.toThrow();
 	});
 
-	test("verify failure classes are closed", () => {
+	test("failure classes are closed", () => {
 		expect(
 			finishWith(
 				{ status: "PASS", command: "bun test", exit_code: 0, failure_class: "RED" },
@@ -577,7 +577,7 @@ describe("receipt validation", () => {
 		).toThrow(CliError);
 	});
 
-	test("expected RED requires its evidence flags to agree", () => {
+	test("EXPECTED_FAIL requires its evidence flag", () => {
 		expect(
 			finishWith(
 				{
@@ -619,7 +619,7 @@ describe("receipt validation", () => {
 		).toThrow(CliError);
 	});
 
-	test("a verify batch accepts clean PASS entries without failure_class", () => {
+	test("a batch accepts clean PASS entries without failure_class", () => {
 		expect(
 			finishWith(
 				{

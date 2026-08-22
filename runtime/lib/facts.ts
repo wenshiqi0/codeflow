@@ -2,14 +2,14 @@
  * Run-scoped shared fact ledger.
  *
  * Isolating roles buys independence at a real cost: every fresh process
- * rediscovers what an earlier one already confirmed. The planner grep-walks
- * its way to `src/router.ts:42`, then coder starts blank and walks the same
+ * rediscovers what an earlier one already confirmed. One worker grep-walks
+ * its way to `src/router.ts:42`, then another worker starts blank and walks the same
  * path again. This ledger carries those confirmed facts across the isolation
  * boundary without carrying the context that produced them.
  *
  * It holds one flow's working consensus, not durable knowledge. Scope is the
  * run: a new plan starts a new ledger, and anything worth keeping crosses over
- * as prose in the planner's final report, never by inheriting this file.
+ * as prose in the root worker's final report, never by inheriting this file.
  *
  * Three properties make it trustworthy enough to read without re-verifying:
  *

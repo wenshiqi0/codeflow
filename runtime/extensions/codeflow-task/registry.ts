@@ -206,7 +206,7 @@ export function reconcileHandoff(
 			// A child that regained control may have finished itself BLOCKED with
 			// a more precise reason than can be reconstructed from its clean
 			// process exit. Preserve the immutable state verdict in the pointer
-			// returned to the planner instead of replacing it with a synthetic
+			// returned to the delegating worker instead of replacing it with a synthetic
 			// DELEGATION_ARTIFACT_MISSING.
 			reasons: recorded.status === "blocked" ? recorded.blockedReasons ?? reasons : [],
 			receipt: receiptPresent ? handoff.receiptPath : null,

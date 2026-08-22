@@ -1,56 +1,10 @@
 {
   "roles": {
-    "architect": {
-      "description": "Shapes architecture direction, reversibility, boundaries, and fitness functions.",
+    "worker": {
+      "description": "Peer executor; the handoff defines the work.",
       "model": "zhipuai-coding-plan/glm-5.3",
-      "prompt": "references/capabilities/architecture.md",
-      "needs_project_rules": "full"
-    },
-    "coder": {
-      "description": "Owns technical discovery, developer tests, implementation, diagnosis, and code evolution.",
-      "model": "zhipuai-coding-plan/glm-5.3",
-      "prompt": "references/capabilities/implementation.md",
-      "needs_project_rules": "shared",
-      "goal_lane": "code"
-    },
-    "planner": {
-      "description": "Frames observable goals, assigns specialist ownership, and closes the run.",
-      "model": "zhipuai-coding-plan/glm-5.3",
-      "prompt": "references/capabilities/planning.md",
-      "tools": [
-        "read",
-        "write",
-        "bash",
-        "goal",
-        "task",
-        "task_group"
-      ],
-      "needs_project_rules": "full"
-    },
-    "supervisor": {
-      "description": "Performs only deterministic checks named by a handoff.",
-      "model": "deepseek/deepseek-v4-flash",
-      "prompt": "references/capabilities/supervision.md",
-      "tools": [
-        "read",
-        "write",
-        "bash"
-      ],
-      "needs_project_rules": false
-    },
-    "tester": {
-      "description": "Owns product contracts, business cases, executable business tests, and assertion intent.",
-      "model": "zhipuai-coding-plan/glm-5.3",
-      "prompt": "references/capabilities/testing.md",
-      "needs_project_rules": "shared",
-      "goal_lane": "test"
-    },
-    "verify": {
-      "description": "Creates independent execution evidence and classifies what it proves.",
-      "model": "deepseek/deepseek-v4-flash",
-      "prompt": "references/capabilities/verification.md",
-      "needs_project_rules": false,
-      "goal_lane": "verify"
+      "prompt": "references/capabilities/worker.md",
+      "needs_project_rules": "shared"
     },
     "zipper": {
       "description": "Semantically compresses oversized Bash output while preserving actionable evidence.",
