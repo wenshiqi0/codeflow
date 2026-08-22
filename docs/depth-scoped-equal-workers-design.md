@@ -1,514 +1,299 @@
-# Design F — Depth-Scoped Equal Workers
+# Design F v2 — Depth-Scoped Equal Workers（修订版）
 
-状态：待评审
+状态：已评审定向，待实现
 基线：`codex/collaboration-corpus-v3`（Design C + Design E v3 已实现）
-证据基线：astropy__astropy-7166 有效 run
-（`bench-20260822-194904-0efc`，官方 resolved、自然收尾、112 rounds）
+证据基线：astropy__astropy-7166 有效 run（bench-20260822-194904-0efc，
+官方 resolved、自然收尾、112 rounds）——E v3 全量落地后总轮次仅从 115
+降到 112：协同语料、索引卡、召回全部就位而轮次不动，证明仪式下限是
+**机械的**（lane join 强制每 goal 三次 PASS），prompt 层优化触碰不到。
+这是本设计必要性的最硬证据。
 分支建议：`codex/depth-scoped-equal-workers`
+本版修订依据三条已拍板决策（v1 全文见分支历史）：
 
-## 0. 结论
+1. **goal 退化为任务分组**；
+2. **对 round 和 token 不做任何机械 cap 限制**；
+3. **提示词全面清理，且提示词中不出现任何 depth 词汇**——depth 只存在
+   于代码层。
 
-Codeflow 不应该用“人员编制”建模。
+模型路由确认推迟为独立设计（后续会回到视野），本版全部 worker 固定
+GLM-5.3，zipper 固定内部模型。
 
-当前 `planner / tester / coder / verify / architect` 的角色配置把四种不同的
-概念耦合在一起：
+## 0. 结论（承 v1，不变）
 
-```text
-组织能力
-工作方法
-模型选择
-机械安全边界
-```
-
-Design F 将它们拆开：
+Codeflow 不用"人员编制"建模。四概念解耦：
 
 ```text
-organization capability -> depth
-work methods            -> worker knowledge
-model                   -> global worker default
+organization capability -> depth（代码层 gating，prompt 不可见）
+work methods            -> worker knowledge（中性目录）
+model                   -> global worker default（路由推迟）
 safety                  -> exact runtime/run-state boundary
 ```
 
-没有 coordinator 身份。`depth === 0` 的 worker 获得组织工具；它可以组织
-其他 worker，也可以选择单人直接完成。组织工具是能力，不是流程，也不是
-职位。
+没有 coordinator 身份。depth-0 worker 获得组织工具，可组织也可 solo。
+所有 worker 平权：read/write/edit/bash + code-agent CLI + 协同召回。
 
-## 1. 证据
+## 1. 决策一：goal 退化为任务分组
 
-7166 暴露了三类问题。
+### 1.1 语义
 
-### 1.1 角色流程造成动作放大
+goal 从"带三 lane join 的验收契约"退化为**纯分组标签**：
 
-有效 run 的角色轮次：
+- 保留：immutable id + goal 描述 + definition_of_done（**纯文档**，
+  供人与 worker 阅读，不参与任何机械判定）；幂等重建校验保留；
+- 删除：`GOAL_LANES`、`GoalLaneContract`、contract 的 `lanes` 字段、
+  `goalView` 的 join 计算、`assertRootPassGoalJoins`（root PASS 不再
+  被任何 join 阻塞）；
+- `goalSessionId(runId, goalId, lane)` → `goalSessionId(runId, goalId,
+  thread)`：thread 是委派方自由命名的会话标识（`[a-z0-9-]`），同名续
+  session、新名 fresh。lane 枚举删除；
+- `assertGoalLaneAvailable` → `assertThreadAvailable`：同 goal 同
+  thread 单活跃 handoff（防同 session 并发写，机制语义不变）。
 
-```text
-planner  20
-tester   39
-coder    20
-verify   33
-```
+### 1.2 goal 剩下的两个真实职责
 
-该任务本身很小：issue 已经指出 `inspect.isfunction` 对 property 为 false，
-最终产品修复只有一行条件扩展。
+1. **协同语料的第一层目录**（E v3 已实现的 goal-scoped recall：worker
+   在当前 goal 上下文查询 handoff 不需要传 goal id，跨 goal 显式
+   `--goal-id`）——这是 goal 退化后仍然存在的全部理由之一；
+2. **session 归属的命名空间**（thread 挂在 goal 下）。
 
-固定 `tester -> coder -> verify` 仪式使一个简单任务天然变成多个 handoff。
-对于该任务，一个 depth-0 worker 直接定位、写 focused regression、修复并
-验证，可能是同等或更小的动作。
+`goalView` 退化为纯统计视图（per-goal handoff 计数、状态分布），供
+观察面与 benchmark 报告使用，无任何判定语义。
 
-### 1.2 工具权限误伤目标工作区
+### 1.3 root closure 语义
 
-Pi session 中反复出现：
+root PASS 的机械要求收敛为 handoff 审计契约：summary、非空 JSON root receipt、
+与非空 closure artifact（这是 Design F 的新增 root closure 要求；goal 不参与判定）。goal 是否"完成"由 depth-0
+worker 在 root receipt 中陈述并对其负责——这与"没有 coordinator 身份、
+组织工具的使用是可选的"一致：一个不创建任何 goal 的 solo run 本来
+就没有 join 可言，有 goal 的 run 也不应例外。
 
-```text
-Codeflow runtime is read-only during a run
-```
+**可观测性补偿**（记录事实，不设门）：receipt 机械追加一个推导字段
+`acceptance_context: fresh | producer`——终态 PASS 的 handoff，其
+session 是否产出过本 goal 的 changed_files。推导来源为 handoff start/finish
+两次机械采集的 workspace changed-file set，不读取模型自报字段；结果写入
+独立 telemetry，可同步进 receipt 的机械扩展字段。纯推导、零判断、不阻塞
+任何转移。benchmark 报告按此分组统计 resolved 率；自验收与独立验收
+的正确性差异从此是数据问题，不是哲学问题。若 20+ case 后两组无显著
+差异，该字段降级为普通遥测；若有，再议是否需要机制（届时有据）。
 
-影响：
+## 2. 决策二：撤销一切 round/token 机械 cap
 
-```text
-tester edit 测试文件
-coder edit 产品文件
-verify write 临时验证脚本
-planner write root receipt / closure artifact
-```
+### 2.1 撤销清单
 
-随后 worker 通过 Bash + Python/heredoc 绕过。结果是：
+| 项 | 现状 | 处置 |
+|---|---|---|
+| C4.2 per-handoff round cap | usage-ledger 扩展在 `before_provider_request` 数轮、到 cap 发 BLOCKED + abort | **整体删除**（扩展中 cap 逻辑、`resolveHandoffRoundCap`、roles.json 全部 `handoff_round_cap` 键、`CODEFLOW_HANDOFF_ROUND_CAP` env） |
+| D3 cap 预告 | 设计中未实现 | 作废 |
+| benchmark `model_rounds` / `tool_calls` / `fresh_tokens` / `total_tokens` 预算轴 | 达标即停止推理、提取 patch | **全部降级为纯观测指标**：照常计量、进报告、参与对照，但不终止 attempt |
+| benchmark `wall_seconds` | 5400s 安全停 | **唯一保留的终止轴**（基础设施安全，不是对模型的预算；挂死的 run 必须能死） |
+| agent-watchdog（stream idle / bash timeout） | 900s / 15min | 保留——这是**活性**检测（区分挂死与工作中），不是预算 cap |
+| evidence 12min per-command timeout | 保留 | 同上，单命令挂死检测 |
 
-1. 目标工作本来可以直接使用审计过的 write/edit 工具；
-2. guard 变成过度拦截；
-3. Bash 绕过削弱工具级审计；
-4. root closure 多花多轮推断 evidence 目录。
+### 2.2 依据
 
-根因是 host guard 把 runtime 父目录和嵌套的 benchmark workspace 都视作
-host runtime，而不是精确保护 runtime 与 run metadata。
+7166 的 cap 数据：三条 lane 首个 handoff **全部**触发 cap——cap 已
+不是异常保护而是常态检查点，每次触发硬 abort 丢掉当轮 receipt/facts，
+制造 `DELEGATION_ARTIFACT_MISSING`，再逼出 split 仪式。cap 在扭曲
+轨迹，不是在保护预算。
 
-### 1.3 测试优先被写成了流程
+原则化：**收敛必须来自结构（协同语料召回 + solo path + 干净的工具
+面），而不是来自断头台**。一个因为结构问题而漫游的 worker，被 cap
+砍断只会把漫游成本变成"漫游成本 + 重启成本"。若实验中出现真失控
+轨迹，那是结构缺陷的证据，修结构；wall_seconds 与 watchdog 兜底
+基础设施安全。
 
-之前的 tester prompt 把“写测试”和“只写测试”提升为角色职责：
+### 2.3 连带修订
 
-```text
-tester 只写测试
-coder 才实现
-verify 才执行
-```
+- Design D 的 D1（total 3M→9M）作废——不再有 token 终止轴，无所谓
+  上限值；`cache_replay_dominated` 保留为纯比例遥测：
+  `cache_read / total_tokens >= 0.9 && fresh_tokens / total_tokens <= 0.1`；
+  不再依赖终止原因。
+- `budgetTerminatedBy` 只判 wall_seconds；既有预算测试改写为观测
+  语义（照常累计、不触发终止）；
+- 报告新增 per-attempt 全量消耗透明表（rounds/tool_calls/fresh/
+  total/cache），排名与对照全部用观测值。
 
-这推翻了更基本的原则：
+## 3. 决策三：prompt 全面清理，depth 不入 prompt
 
-```text
-TDD、diagnosis-first、characterization、direct implementation
-都是 worker 的方法选择，不是角色身份。
-```
+### 3.1 原则
 
-一个 worker 可以单人走 TDD，也可以直接诊断并修复；除非任务本身要求交付
-测试，系统不应指定方法。
+depth 是**代码层机制**（组织工具在 `depth === 0` 注册，depth>0 不
+注册），worker 对它的感知途径是**工具在不在工具集里**，而不是被
+告知"你在什么位置"。prompt 中出现 "depth" 词汇即测试失败（F-T13）。
 
-## 2. Runtime model
+这比 v1 更干净：v1 的 §3.1 组织描述开头是 "This process is at
+depth 0"——违反本决策，删除。
 
-### 2.1 Depth-scoped organization
+### 3.2 唯一的 worker prompt（全体 worker 逐字节相同）
 
-```text
-worker
-├── depth 0
-│   ├── 拥有 goal / task / task_group
-│   └── 可 solo，也可组织其他 worker
-└── depth > 0
-    └── 只处理当前 handoff
-```
-
-规则：
-
-```text
-organization tools are gated by depth, not by role
-```
-
-Depth 0 不是 coordinator。它只是当前具有组织能力的 worker。它可以完全不使用
-组织工具，直接完成工作并机械 finish root handoff。
-
-Depth > 0 不注册组织工具，避免递归失控、预算归属断裂和任务树爆炸。若工作
-过大，它向 depth 0 返回 split request；是否继续拆分由 depth 0 决定。
-
-### 2.2 Equal workers
-
-所有 worker 具有相同基础能力：
-
-```text
-read
-write
-edit
-bash
-code-agent CLI
-collaboration index recall
-```
-
-不按 role 配置 tools，不按 role 禁止 edit/write/bash。
-
-Handoff 可以声明交付物、边界和验收证据，但不通过剥夺基础工具来规定流程。
-独立验证通过 fresh context 与任务契约实现，而不是把某个 worker 降级成
-只读角色。
-
-### 2.3 Model policy
-
-当前阶段：
-
-```text
-all workers, including depth 0 -> zhipuai-coding-plan/glm-5.3
-zipper -> zipper 自身固定模型
-```
-
-Depth 0 不选择模型，handoff 不携带模型，roles registry 不做业务角色到模型
-的映射。zipper 是程序保障的内部压缩层，不是业务 worker。
-
-模型选择、路由和成本优化后续单独设计，不混入 Design F。
-
-## 3. Prompt model
-
-### 3.1 Depth-0 organization description
-
-Depth 0 得到一段中性描述，说明常见软件协同组织形式。它不鼓励、不推荐、
-不排序、不设置默认路径，也不使用“应该”“最好”“优先”等偏好词。
-
-建议内容：
+`references/capabilities/worker.md`（替换全部身份 prompt）：
 
 ```md
-## Organization
+# Worker
 
-This process is at depth 0. The `goal`, `task`, and `task_group` tools are
-available at this depth. Their use is optional.
+You are a Codeflow worker. The handoff you received defines your work:
+outcome, context, boundaries, evidence. Your shared contract and the
+collaboration corpus carry everything else you are entitled to know.
 
-Forms of software work include:
-
-- direct completion by the depth-0 worker;
-- separated specification, implementation, and evaluation;
-- parallel ownership of disjoint modules or invariants;
-- implementation followed by review;
-- investigation before change.
-
-A handoff states its outcome, relevant context, boundaries, and evidence.
-Other forms exist.
-```
-
-这段是事实描述，不是管理指令。单人直接完成与多人拆分是并列形式。
-
-### 3.2 Worker method description
-
-工作方法属于所有 worker，不属于 tester/coder/verify。
-
-建议 worker prompt 中的方法目录保持同样中性：
-
-```md
 ## Work methods
 
-Methods for software work include:
+Methods for software work include: direct implementation;
+diagnosis-first work; test-driven development; characterization before
+change; scratch reproduction; benchmark-driven optimization;
+investigation without change; implementation followed by self-review.
+A worker may use, combine, adapt, or omit these according to the task.
+Unless the handoff states a required deliverable or evidence form,
+none is mandatory.
 
-- direct implementation;
-- diagnosis-first work;
-- test-driven development;
-- characterization before change;
-- scratch reproduction;
-- benchmark-driven optimization;
-- investigation without change;
-- implementation followed by self-review.
+## Organization
 
-A worker may use, combine, adapt, or omit these methods according to the task.
-Unless the handoff states a required deliverable or evidence form, none is
-mandatory.
+Delegation tools, when present in your toolset, open handoffs to other
+workers. Forms of software work include: direct completion; separated
+specification, implementation, and evaluation; parallel ownership of
+disjoint modules or invariants; implementation followed by review;
+investigation before change. A handoff states its outcome, relevant
+context, boundaries, and evidence. Other forms exist. Use of these
+tools is optional.
 ```
 
-TDD 等单人工作模式保留为 worker 的能力选择。它们与 depth 0 的组织能力是
-正交概念：
+要点：
 
-```text
-depth 0 + solo + TDD
-depth 0 + delegation
-depth > 0 + TDD
-depth > 0 + diagnosis-first
+- Organization 段以 "when present in your toolset" 为条件事实——同
+  一份 prompt 对 depth-0 与 depth-1 都真（后者工具集里没有这些工具，
+  该段自然空转），**prompt 不因位置而分叉**；
+- 全文无 should/prefer/encourage/recommended/best（F-T14）；solo 与
+  拆分是并列形式；
+- planning.md / testing.md / implementation.md / verification.md /
+  architecture.md / supervision.md 退役。其中的机械纪律（recorder
+  用法、timeout 处置、nonzero-exit-is-FAIL、断言不弱化、receipt
+  conclusions 契约）并入 `runtime/AGENTS.md`——它们本来就该是所有
+  人的纪律；方法论内容改造为中性 work-method references
+  （`references/work-methods/*.md`，只描述方法与常见证据形态，不
+  声明身份、不推荐）。
+
+### 3.3 registry
+
+```json
+{
+  "roles": {
+    "worker": {
+      "description": "Peer executor; the handoff defines the work.",
+      "model": "zhipuai-coding-plan/glm-5.3",
+      "prompt": "references/capabilities/worker.md",
+      "needs_project_rules": "shared"
+    },
+    "zipper": { "…": "internal，固定内部模型，不变" }
+  }
+}
 ```
 
-### 3.3 Capability references
+- planner/tester/coder/verify/architect/supervisor 条目删除；
+- `delegates` 权限键删除（组织工具注册只看 depth）；
+- 无 `handoff_round_cap` 键（决策二）；
+- role→model 映射消失；模型路由留待独立设计。
 
-现有 `testing.md / implementation.md / verification.md` 不再作为角色身份
-prompt。可迁移为工作方法参考：
+## 4. Host guard 精确化（承 v1 F1，不变）
 
-```text
-references/work-methods/test-driven.md
-references/work-methods/diagnosis-first.md
-references/work-methods/characterization.md
-references/work-methods/reproduction.md
-references/work-methods/benchmark.md
-references/work-methods/review.md
-```
+保护 runtime source 与 run metadata（handoffs/goals/events/
+pi-sessions/ledgers/state/receipt/secrets），允许
+`CODEFLOW_PROJECT_DIR` 与 `CODEFLOW_EVIDENCE_DIR`。root 与 delegated worker
+启动时都必须注入这两个绝对路径；canonical path
+判定，嵌套 benchmark workspace 不因位于 `.codeflow` 下而误拒。
+7166 中 worker 被误伤只读后以 bash heredoc 绕过、削弱工具级审计的
+问题由此修复。此项独立于平权论证成立，**最先落地**。
 
-每个参考文档只描述：
+## 5. Implementation slices（修订）
 
-```text
-方法是什么
-通常包含哪些步骤
-哪些证据形态常见
-```
+| slice | 内容 | 依赖 |
+|---|---|---|
+| F1 host guard 精确化 | §4 | 无（纯 bug 修复，先行） |
+| F2 cap 全撤 | §2 撤销清单 + benchmark 预算降级为观测 | 无 |
+| F3 goal 退化 | §1 goals.ts 手术 + thread 化 + root closure 语义 + acceptance_context 推导字段 | 无 |
+| F4 depth-gated 组织工具 | goal/task/task_group 注册条件 `depth === 0`；`delegates` 键退役；task 签名 `(prompt, goal_id?, thread?)`，`agent`/`lane` 参数删除；`goal_id`
+省略时进入 `_ungrouped` scope，thread 缺省 fresh | F3 |
+| F5 prompt 收缩 | worker.md + AGENTS.md 纪律合并 + work-method references + 身份 prompt 退役 + registry 收缩 | F4 |
+| F6 观察面词汇迁移 | SKILL.md 角色词汇、B3/B4 报告 by_role → by_goal/by_thread/by_depth 分解 | F5 |
 
-不描述：
+## 6. 测试点（锁定）
 
-```text
-你是 tester/coder/verifier
-必须采用该方法
-推荐该方法
-该方法优于其他方法
-```
-
-## 4. Handoff contract
-
-Handoff 描述结果与证据，不描述流程。
-
-推荐形态：
-
-```md
-Outcome:
-Make InheritDocstrings propagate docstrings for property overrides.
-
-Known context:
-The issue says the current metaclass uses inspect.isfunction, which is false
-for properties.
-
-Boundaries:
-The final benchmark diff must remain inside the target repository workspace.
-
-Evidence:
-Convince the next reader that property behavior changed and existing function
-behavior did not regress.
-```
-
-不推荐：
-
-```md
-先写测试
-只许改测试
-再交给 coder
-必须跑单个 test node id
-必须由 verify 跑全量回归
-```
-
-只有当任务本身要求某个交付物时，例如“交付一个 regression test”或“提供
-fresh-process verification”，该交付物才是 handoff 要求；这不是系统预设
-流程。
-
-## 5. Safety model
-
-### 5.1 保留机械边界
-
-以下仍是平台硬规则：
-
-```text
-不能修改 Codeflow runtime source
-不能直接写 handoff/state/receipt
-不能污染 run metadata
-不能读取或输出 secrets
-benchmark 中不能访问外部答案、gold patch 或 evaluator-only data
-状态转移必须通过 code-agent
-handoff 必须 mechanical finish
-```
-
-这些规则不限制工作方法，只保证系统可审计、可复现、安全。
-
-### 5.2 Host guard 精确化
-
-保护：
-
-```text
-runtime source
-handoffs/
-goals/
-events/
-pi-sessions/
-usage ledgers
-state.json
-receipt.json
-secrets
-host config
-```
-
-允许：
-
-```text
-CODEFLOW_PROJECT_DIR
-CODEFLOW_EVIDENCE_DIR
-benchmark attempt workspace
-```
-
-必须使用 canonical path 判断，不能把 runtime 父目录或整个 `.codeflow`
-树一刀切为只读。目标 workspace 嵌套在 run 输出目录下时，仍应允许
-write/edit。
-
-Root worker 与 delegated worker 都应获得：
-
-```text
-CODEFLOW_PROJECT_DIR=<target workspace>
-CODEFLOW_EVIDENCE_DIR=<absolute evidence dir>
-```
-
-## 6. Registry migration
-
-目标 registry 只保留：
-
-```text
-worker
-zipper
-```
-
-`worker`：
-
-```text
-model = zhipuai-coding-plan/glm-5.3
-prompt = universal worker
-tools = universal worker tools
-```
-
-`zipper`：
-
-```text
-internal = true
-固定内部模型
-不参与业务 handoff
-```
-
-不再为业务任务配置：
-
-```text
-planner
-tester
-coder
-verify
-architect
-```
-
-兼容阶段可保留旧 role label 作为 telemetry label，但不再让 label 决定
-tools、model、prompt、goal lane 或 authority。
-
-## 7. Implementation slices
-
-### F1 — 精确 host guard
-
-1. canonicalize path；
-2. 保护 exact runtime 与 run metadata；
-3. allow `CODEFLOW_PROJECT_DIR` / `CODEFLOW_EVIDENCE_DIR`；
-4. 给 root worker 注入上述环境变量；
-5. 保持 secrets/runtime/run-state 硬边界。
-
-验收：worker 在 benchmark workspace 中可直接 write/edit；直接修改 runtime
-与 run metadata 仍被拒绝。
-
-### F2 — depth-gated organization tools
-
-1. `goal/task/task_group` 注册条件改为 `depth === 0`；
-2. 删除 `roles.json` 的 `delegates` 权限来源；
-3. depth 0 可选择不使用组织工具并直接 finish；
-4. depth > 0 的 split request 返回 depth 0。
-
-验收：没有 coordinator role；solo root path 无 goal/task 也能合法 PASS。
-
-### F3 — universal worker prompt
-
-1. 引入 universal worker prompt；
-2. depth 0 附加中性 organization description；
-3. 所有 worker 可见中性 work-method catalog；
-4. 替换 tester/coder/verify 身份 prompt。
-
-验收：prompt 不含强制测试优先、角色分工、推荐或偏好词。
-
-### F4 — work-method references
-
-1. 将 testing/implementation/verification capability prompt 改造为
-   work-method references；
-2. 内容只描述方法与证据形态；
-3. worker 可按任务自行选择。
-
-### F5 — registry simplification
-
-1. 业务 role 配置退役；
-2. worker/zipper 保留；
-3. 所有 worker 使用 GLM 5.3；
-4. zipper 保持内部固定模型。
-
-## 8. Tests
-
-### Depth and organization
+### F2 cap 撤销
 
 | # | 断言 |
 |---|---|
-| F-T1 | depth 0 注册 goal/task/task_group；depth 1 不注册 |
-| F-T2 | role label 不影响组织工具注册 |
-| F-T3 | depth 0 不调用组织工具、直接修改并 finish root 是合法路径 |
-| F-T4 | depth 1 无组织工具 |
+| F-T1 | usage-ledger 不再含 cap 逻辑：注入任意多 assistant usage 不产生 BLOCKED、不 abort（旧 round-cap 测试反转） |
+| F-T2 | roles.json 无 `handoff_round_cap` 键；`CODEFLOW_HANDOFF_ROUND_CAP` 被忽略（读它的代码已删除，grep 级断言） |
+| F-T3 | `budgetTerminatedBy`：rounds/tool_calls/fresh/total 任意超额 → null；仅 wall_seconds 超额 → `wall_seconds` |
+| F-T4 | 预算超额的 attempt 照常提取 patch、提交 prediction、请求 verdict；报告消耗表含全部观测值 |
+| F-T5 | watchdog stream-idle / bash timeout / evidence 12min 行为不变（活性检测回归锁） |
 
-### Equal capability
-
-| # | 断言 |
-|---|---|
-| F-T5 | worker registry 无业务 role 工具差异 |
-| F-T6 | 所有 worker 使用 GLM 5.3 |
-| F-T7 | zipper 是 internal 且不进入业务 handoff |
-| F-T8 | handoff 不携带 model 选择 |
-
-### Prompt neutrality
+### F3 goal 退化
 
 | # | 断言 |
 |---|---|
-| F-T9 | depth-0 organization prompt 不含 should/prefer/encourage/recommended |
-| F-T10 | work-method prompt 不含 should/prefer/encourage/recommended |
-| F-T11 | TDD、direct implementation、diagnosis-first 是并列方法 |
-| F-T12 | prompt 不声明 tester/coder/verify 身份职责 |
+| F-T6 | defineGoal 产出无 lanes 字段；definition_of_done 保留为纯文档；旧格式 contract 读取 → 明确 schema 错误（fail loud 无静默迁移） |
+| F-T7 | root handoff finish PASS 在零 goal、有 goal 未"完成"两种情况下均不被 join 拒绝（assertRootPassGoalJoins 已删除） |
+| F-T8 | 同 goal 同 thread 续 session；新 thread fresh；`assertThreadAvailable` 拒绝同 thread 并发 |
+| F-T9a | goal-scoped recall（E v3）在退化后照常工作：当前 goal 查询免 goal id、跨 goal 显式 `--goal-id`（协同目录职责回归锁） |
+| F-T9b | receipt 的 acceptance_context 推导：产出过 changed_files 的 session 终态 PASS → `producer`；否则 `fresh`；字段不阻塞任何转移 |
 
-### Host guard
+### F4/F5 depth 与 prompt
 
 | # | 断言 |
 |---|---|
-| F-T13 | `CODEFLOW_PROJECT_DIR` 下 write/edit 允许 |
-| F-T14 | `CODEFLOW_EVIDENCE_DIR` 下 write/edit 允许 |
-| F-T15 | runtime source 写入拒绝 |
-| F-T16 | handoff/state/receipt 直接写入拒绝 |
-| F-T17 | nested benchmark workspace 不因位于 `.codeflow` 下而被误拒 |
+| F-T10 | depth 0 注册 goal/task/task_group；depth 1 不注册；与 role label 无关 |
+| F-T11 | depth 0 不用组织工具直接 finish root 是合法 PASS 路径 |
+| F-T12 | task 签名无 `agent`/`lane` 参数（硬删非忽略）；`thread` 缺省 fresh |
+| F-T13 | worker.md 对全部 worker 逐字节相同；全部模型可见静态文本（worker.md、work-methods/*、AGENTS.md、tool description、context template）不含 "depth"（大小写不敏感 grep） |
+| F-T14 | 全部 prompt 不含 should/prefer/encourage/recommended/best；TDD 与 direct implementation 并列出现 |
+| F-T15 | planning/testing/implementation/verification/architecture/supervision.md 不存在；AGENTS.md 含 recorder 用法、nonzero-exit-is-FAIL、断言不弱化（纪律平权化回归锁） |
+| F-T16 | registry 恰含 worker/zipper；`resolveRole("tester")` → unknown role，错误消息列现役名单；`delegates` 键不被读取 |
 
-### Solo path
+### F1 host guard
 
 | # | 断言 |
-|---|---:
-| F-T18 | depth 0 可直接完成一个测试任务，不创建 goal/task |
-| F-T19 | root PASS 不因没有 goal而被拒绝 |
-| F-T20 | solo TDD 与 solo direct fix 都可用 |
+|---|---|
+| F-T17 | `CODEFLOW_PROJECT_DIR` / `CODEFLOW_EVIDENCE_DIR` 下 write/edit 允许；runtime source 与 run metadata 写入拒绝 |
+| F-T18 | 嵌套 benchmark workspace（位于 `.codeflow` 输出目录下）write/edit 允许（canonical path 判定） |
 
-## 9. 对照实验
+### 端到端
 
-1. `7166 ×3`
-   - baseline：Design E v3 多角色；
-   - F：depth-scoped equal worker；
-   - 比较 rounds、handoff count、official verdict、natural closure、patch size。
+| # | 断言 |
+|---|---|
+| F-T19 | offline fixture：solo 路径（零 goal 零 task，depth-0 直接修复并 finish）全链路 PASS |
+| F-T20 | offline fixture：组织路径（1 goal、2 thread、fresh 验收 handoff）PASS 且 acceptance_context=fresh 落 receipt |
+| F-T21 | B3/B4 报告在无 role 数据下正常产出；分解维度 by_goal/by_thread 可用 |
 
-2. `14539 ×3`
-   - 验证原本自然收尾的模板轨迹不退化。
+## 7. 对照实验（2×2 拆分，隔离结构与语气两个变量）
 
-3. 一个多模块复杂 case
-   - 验证 depth 0 在真正需要拆分时仍会使用组织工具。
+| 组 | 结构 | prompt |
+|---|---|---|
+| G1 基线 | E v3 多角色 + lane join + cap | 现有身份 prompt |
+| G2 | F 结构（depth + goal 退化 + 无 cap） | 现有身份 prompt 语气改写为可用的最小适配 |
+| G3 | F 结构 | 全中立 worker.md |
+| （G4 略） | 旧结构 + 中立 prompt 无意义，不跑 | — |
 
-统一验收：
+- case：7166 ×3 + 14539 ×3（模板防退化）+ 一个多模块复杂 case ×3
+  （验证 depth-0 在真需要拆分时会用组织工具）；
+- 指标：总轮次、handoff 数、官方 verdict、自然收尾率、patch 卫生、
+  重复发现率（E6 分类器）、acceptance_context 分布 × resolved 率、
+  全量消耗观测表；
+- 判读：G2 vs G1 隔离结构收益；G3 vs G2 隔离中立化影响——若 G3
+  劣于 G2，说明中立化过头（方法目录欠定），回调的是表达不是结构。
+
+统一验收：`bun test`、`bun run typecheck`、`git diff --check`、
+source safety、prompt 关键词锁（F-T13/14/15）。
+
+## 8. 设计原则（v2 终版）
 
 ```text
-bun test
-bun run typecheck
-git diff --check
-source safety
-```
-
-## 10. Design principles
-
-```text
-1. 没有 coordinator 身份；
-2. 组织能力由 depth 决定；
-3. 单人工作是并列形式，不是退化形式；
-4. 所有 worker 平权；
-5. 工作方法属于 worker，不属于角色；
-6. prompt 只描述事实，不鼓励、不推荐、不预设流程；
-7. handoff 描述 outcome/context/boundary/evidence；
-8. 所有业务 worker 使用 GLM 5.3；
-9. zipper 是内部程序保障层；
-10. host guard 精确保护 runtime 与 run state，不保护目标工作区；
-11. 模型路由后续单独设计。
+ 1. 没有 coordinator 身份；组织能力由 depth 决定，且 depth 只存在于代码层；
+ 2. prompt 不出现 depth、不出现角色身份、不出现偏好词；
+ 3. 单人工作是并列形式，不是退化形式；
+ 4. 所有 worker 平权、同 prompt、同工具面、同模型（路由另案）；
+ 5. 工作方法属于 worker；handoff 描述 outcome/context/boundary/evidence，不描述流程；
+ 6. goal 是任务分组 + 协同语料目录 + session 命名空间，无判定语义；
+ 7. 对 round 与 token 不设任何机械 cap；收敛来自结构，安全来自活性检测与 wall time；
+ 8. 自验收与独立验收作为事实被记录（acceptance_context），不作为门槛被强制；
+ 9. host guard 精确保护 runtime 与 run state，绝不误伤目标工作区；
+10. zipper 是内部程序保障层。
 ```
