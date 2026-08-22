@@ -6,6 +6,7 @@ import { GoalError } from "../../runtime/lib/goals";
 import { finishHandoff, openHandoff } from "../../runtime/lib/handoff";
 import { RunPaths } from "../../runtime/lib/paths";
 import {
+	assertThreadAvailable,
 	reconcileHandoff,
 	resolveGoalTask,
 } from "../../runtime/extensions/codeflow-task/registry";
@@ -74,31 +75,31 @@ describe("task registry", () => {
 		expect(MAX_CONCURRENCY).toBe(8);
 	});
 
-	test("resolves a goal lane, role contract, and persistent session id", () => {
+	test("resolves a goal thread and persistent session id", () => {
 		defineMovementGoal();
-		const goal = resolveGoalTask("tester", "movement-r1", "test");
+		const goal = resolveGoalTask("tester", "movement-r1", "implementation");
 		expect(goal).toMatchObject({
 			goalId: "movement-r1",
-			lane: "test",
-			sessionId: `${paths.runId}-movement-r1-test`,
+			thread: "implementation",
+			sessionId: `${paths.runId}-movement-r1-implementation`,
+			contract: { id: "movement-r1" },
 		});
-		expect(goal?.contract.lanes.test.role).toBe("tester");
 	});
 
-	test("lane continuations receive a bounded body pointer; first and unlaned handoffs do not", () => {
+	test("thread continuations receive a bounded body pointer; fresh threads do not", () => {
 		defineMovementGoal();
-		const goal = resolveGoalTask("coder", "movement-r1", "code");
+		const goal = resolveGoalTask("coder", "movement-r1", "implementation");
 		const full = "Outcome: implement movement\nIntent: preserve behavior\n";
 		const first = openHandoff(paths, {
 			role: "coder",
 			depth: 1,
 			body: full,
-			goalId: goal!.goalId,
-			lane: goal!.lane,
+			goalId: goal.goalId,
+			thread: goal.thread,
 		});
-		expect(childHandoffPrompt(full, first!.handoff_id, goal)).toBe(full);
+		expect(childHandoffPrompt(full, first.handoff_id, goal)).toBe(full);
 		finishHandoff(paths, {
-			handoffId: first!.handoff_id,
+			handoffId: first.handoff_id,
 			status: "BLOCKED",
 			blockedReasons: ["EXECUTION_TIMEOUT"],
 			summary: "split needed",
@@ -108,30 +109,43 @@ describe("task registry", () => {
 			role: "coder",
 			depth: 1,
 			body: full,
-			goalId: goal!.goalId,
-			lane: goal!.lane,
+			goalId: goal.goalId,
+			thread: goal.thread,
 		});
-		const pointer = childHandoffPrompt(full, second!.handoff_id, goal);
-		expect(pointer).toContain(`handoff ${second!.handoff_id} opened for goal movement-r1 lane code:`);
-		expect(pointer).toContain(`code-agent handoff body --id ${second!.handoff_id}`);
+		const pointer = childHandoffPrompt(full, second.handoff_id, goal);
+		expect(pointer).toContain(
+			`handoff ${second.handoff_id} opened for goal movement-r1 thread implementation:`,
+		);
+		expect(pointer).toContain(`code-agent handoff body --id ${second.handoff_id}`);
 		expect(pointer.length).toBeLessThan(400);
-		expect(childHandoffPrompt(full, second!.handoff_id, null)).toBe(full);
+		expect(childHandoffPrompt(full, second.handoff_id, null)).toBe(full);
 	});
 
-	test("rejects invalid lanes and lane ownership mismatches", () => {
-		defineMovementGoal();
-		expect(() => resolveGoalTask("tester", "movement-r1", "product")).toThrow("invalid goal lane: product");
-		expect(() => resolveGoalTask("coder", "movement-r1", "test")).toThrow(
-			"does not own goal movement-r1 lane test",
-		);
+	test("an omitted goal is ungrouped and an omitted thread is fresh", () => {
+		const first = resolveGoalTask("tester", undefined, undefined);
+		const second = resolveGoalTask("tester", undefined, undefined);
+		expect(first).toMatchObject({ goalId: "_ungrouped", contract: null });
+		expect(second.thread).not.toBe(first.thread);
+		expect(first.sessionId).toContain(`${paths.runId}-_ungrouped-`);
 	});
 
-	test("keeps architect outside goal lanes with an actionable correction", () => {
+	test("rejects invalid threads and refuses concurrent same-goal-thread work", () => {
 		defineMovementGoal();
-		expect(() => resolveGoalTask("architect", "movement-r1", "code")).toThrow(
-			"role architect owns no goal lane; delegate it without goal_id or lane",
+		expect(() => resolveGoalTask("tester", "movement-r1", "Invalid Thread")).toThrow(
+			"invalid task thread",
 		);
-		expect(resolveGoalTask("architect", undefined, undefined)).toBeNull();
+		const goal = resolveGoalTask("tester", "movement-r1", "implementation");
+		expect(() => assertThreadAvailable(goal)).not.toThrow();
+		openHandoff(paths, {
+			role: "tester",
+			depth: 1,
+			body: "Goal: active work\n",
+			goalId: goal.goalId,
+			thread: goal.thread,
+		});
+		expect(() => assertThreadAvailable(goal)).toThrow(
+			"thread implementation already has active handoff",
+		);
 	});
 
 	test("the task tool throws contract failures so Pi records isError true", async () => {
@@ -147,16 +161,16 @@ describe("task registry", () => {
 			task.execute(
 				"tool-call",
 				{
-					agent: "architect",
+					agent: "tester",
 					prompt: "decide a boundary",
 					goal_id: "movement-r1",
-					lane: "code",
+					thread: "Invalid Thread",
 				},
 				undefined,
 				undefined,
 				{ cwd: project },
 			),
-		).rejects.toThrow("role architect owns no goal lane");
+		).rejects.toThrow("invalid task thread");
 	});
 
 	test("reconciles a successful child without losing the watchdog marker import", () => {

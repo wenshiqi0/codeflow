@@ -180,7 +180,7 @@ function toolCallRow(
 		role: string;
 		handoff_id: string | null;
 		goal_id: string | null;
-		lane: string | null;
+		thread: string | null;
 		provider: string;
 		model: string;
 	},
@@ -203,7 +203,7 @@ function toolCallRow(
 		depth: 0,
 		handoff_id: base.handoff_id,
 		goal_id: base.goal_id,
-		lane: base.lane,
+		thread: base.thread,
 		provider: base.provider,
 		model: base.model,
 	};
@@ -227,7 +227,7 @@ function appendToolCalls(
 		role: string;
 		handoff_id: string | null;
 		goal_id: string | null;
-		lane: string | null;
+		thread: string | null;
 		provider: string;
 		model: string;
 	},
@@ -372,7 +372,7 @@ async function runInstanceAttempt(
 					turn: round.turn ?? null,
 					handoff_id: round.handoff_id ?? null,
 					goal_id: round.goal_id ?? null,
-					lane: round.lane ?? null,
+					thread: round.thread ?? null,
 					usage: round.usage,
 				};
 				appendAttemptUsageRecord(usageFile, usageRow);
@@ -383,7 +383,7 @@ async function runInstanceAttempt(
 					role: round.role,
 					handoff_id: round.handoff_id ?? null,
 					goal_id: round.goal_id ?? null,
-					lane: round.lane ?? null,
+					thread: round.thread ?? null,
 					// The round IS the emitting context for its attached calls.
 					provider: round.provider,
 					model: round.model,
@@ -412,7 +412,7 @@ async function runInstanceAttempt(
 					role: event.role,
 					handoff_id: event.handoff_id ?? null,
 					goal_id: event.goal_id ?? null,
-					lane: event.lane ?? null,
+					thread: event.thread ?? null,
 					provider: event.provider,
 					model: event.model,
 				}, at, event.calls);

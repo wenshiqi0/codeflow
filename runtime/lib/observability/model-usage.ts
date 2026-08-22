@@ -60,7 +60,7 @@ export interface AttemptUsageRecord {
 	turn: number | null;
 	handoff_id: string | null;
 	goal_id: string | null;
-	lane: string | null;
+	thread: string | null;
 	usage: AttemptUsage;
 }
 
@@ -77,7 +77,7 @@ const RECORD_KEYS_V2 = [
 	"turn",
 	"handoff_id",
 	"goal_id",
-	"lane",
+	"thread",
 	"usage",
 ] as const;
 const RECORD_KEYS_V1 = [
@@ -89,7 +89,7 @@ const RECORD_KEYS_V1 = [
 	"model",
 	"handoff_id",
 	"goal_id",
-	"lane",
+	"thread",
 	"usage",
 ] as const;
 const USAGE_KEYS = [
@@ -134,7 +134,7 @@ export function validateAttemptUsageRecord(record: unknown): string[] {
 			violations.push(`${key} must be a non-empty string`);
 		}
 	}
-	for (const key of ["handoff_id", "goal_id", "lane"] as const) {
+	for (const key of ["handoff_id", "goal_id", "thread"] as const) {
 		if (record[key] !== null && typeof record[key] !== "string") {
 			violations.push(`${key} must be a string or null`);
 		}

@@ -69,7 +69,7 @@ describe("privacy-safe collaboration operation telemetry", () => {
 	test("classifies recall, index, evidence, edit, and explore without serializing commands", async () => {
 		const output = await fire([
 			{ id: "goal", tool: "bash", command: "code-agent goal list" },
-			{ id: "index", tool: "bash", command: "code-agent handoff index --lane code" },
+			{ id: "index", tool: "bash", command: "code-agent handoff index --thread code" },
 			{ id: "recall", tool: "bash", command: "code-agent handoff get --id h1" },
 			{ id: "log", tool: "bash", command: "code-agent evidence log h1 --grep SECRET" },
 			{ id: "edit", tool: "edit" },

@@ -10,7 +10,7 @@ import { defineGoal, GoalError } from "../../lib/goals";
 import { currentRun } from "./shared";
 import { finishHandoff } from "../../lib/handoff";
 import {
-	assertGoalLaneAvailable,
+	assertThreadAvailable,
 	handoffHistory,
 	openHandoff,
 	reconcileHandoff,
@@ -56,21 +56,21 @@ const TaskParams = Type.Object({
 	prompt: Type.String({
 		minLength: 1,
 		maxLength: MAX_TASK_PROMPT_CHARS,
-		description: "Concise outcome handoff for the role; maximum 4000 characters",
+		description: "Outcome handoff for another worker; maximum 4000 characters",
 	}),
 	goal_id: Type.Optional(Type.String({
-		description: "Goal contract id; use only with tester/coder/verify and omit for architect",
+		description: "Existing goal contract id; omitted tasks run in the _ungrouped scope",
 	})),
-	lane: Type.Optional(Type.String({
-		description: "Goal lane: test, code, or verify; omit for architect, which owns no lane",
+	thread: Type.Optional(Type.String({
+		description: "Stable thread id: same goal and thread continue a session; omitted starts a fresh thread",
 	})),
 });
 
 const GoalParams = Type.Object({
 	id: Type.String({ description: "Stable goal id, for example movement-r1" }),
-	goal: Type.String({ description: "One observable goal pursued by this goal's agent group" }),
+	goal: Type.String({ description: "One observable outcome grouped under this goal" }),
 	definition_of_done: Type.Optional(Type.Array(Type.String(), {
-		description: "Human-readable completion conditions; join status comes from handoffs",
+		description: "Human-readable completion conditions; this field carries no mechanical gate",
 	})),
 });
 
@@ -81,13 +81,13 @@ const TaskGroupParams = Type.Object({
 			prompt: Type.String({
 				minLength: 1,
 				maxLength: MAX_TASK_PROMPT_CHARS,
-				description: "Concise outcome handoff for the role; maximum 4000 characters",
+				description: "Outcome handoff for another worker; maximum 4000 characters",
 			}),
 			goal_id: Type.Optional(Type.String({
-				description: "Goal contract id; omit for architect",
+				description: "Existing goal contract id; omitted tasks run in the _ungrouped scope",
 			})),
-			lane: Type.Optional(Type.String({
-				description: "Goal lane: test, code, or verify; omit for architect",
+			thread: Type.Optional(Type.String({
+				description: "Stable thread id: same goal and thread continue a session; omitted starts a fresh thread",
 			})),
 		}),
 	),
@@ -113,15 +113,15 @@ export function childHandoffPrompt(
 	if (!goal || !handoffId) return prompt;
 	const paths = currentRun();
 	if (!paths) return prompt;
-	const hasEarlierLaneHandoff = handoffHistory(paths).some(
+	const hasEarlierThreadHandoff = handoffHistory(paths).some(
 		(state) =>
 			state.handoff_id !== handoffId &&
 			state.goal_id === goal.goalId &&
-			state.lane === goal.lane,
+			state.thread === goal.thread,
 	);
-	if (!hasEarlierLaneHandoff) return prompt;
+	if (!hasEarlierThreadHandoff) return prompt;
 	const title = prompt.split("\n", 1)[0].slice(0, 160);
-	return `handoff ${handoffId} opened for goal ${goal.goalId} lane ${goal.lane}: ${title}\nRead the full contract with: code-agent handoff body --id ${handoffId}`;
+	return `handoff ${handoffId} opened for goal ${goal.goalId} thread ${goal.thread}: ${title}\nRead the full contract with: code-agent handoff body --id ${handoffId}`;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -166,9 +166,8 @@ export default function (pi: ExtensionAPI) {
 		name: "task",
 		label: "Task",
 		description:
-			"Delegate a task to a named Codeflow role. " +
-			"The role runs in an isolated pi child process with its own context. " +
-			"Architect is an unlaned advisory role: omit goal_id and lane when delegating to it.",
+			"Open a task handoff to another worker. " +
+			"The worker runs in an isolated pi child process. Same goal/thread continues a session; a new or omitted thread is fresh.",
 		parameters: TaskParams,
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx): Promise<ToolResult<TaskDetails>> {
@@ -178,13 +177,13 @@ export default function (pi: ExtensionAPI) {
 			let goal: GoalTaskRef | null = null;
 			try {
 				assertTaskPrompt(params.prompt);
-				goal = resolveGoalTask(agent, params.goal_id, params.lane);
-				if (goal) assertGoalLaneAvailable(goal);
+				goal = resolveGoalTask(agent, params.goal_id, params.thread);
+				if (goal) assertThreadAvailable(goal);
 			} catch (error) {
 				taskResolutionFailure(error);
 			}
 			details.goalId = goal?.goalId;
-			details.lane = goal?.lane;
+			details.thread = goal?.thread;
 			details.sessionId = goal?.sessionId;
 
 			const paths = currentRun();
@@ -234,7 +233,7 @@ export default function (pi: ExtensionAPI) {
 			"Run multiple independent Codeflow role tasks concurrently with bounded " +
 			"concurrency. Each task spawns an isolated pi child like the task tool. " +
 			"Results are reported as a JSON array in input order, one entry per task " +
-			"with agent, success, content, and exitCode.",
+			"with success, content, and exitCode.",
 		parameters: TaskGroupParams,
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx): Promise<ToolResult<unknown>> {
@@ -270,8 +269,8 @@ export default function (pi: ExtensionAPI) {
 					let goal: GoalTaskRef | null = null;
 					try {
 						assertTaskPrompt(task.prompt);
-						goal = resolveGoalTask(agent, task.goal_id, task.lane);
-						if (goal) assertGoalLaneAvailable(goal);
+						goal = resolveGoalTask(agent, task.goal_id, task.thread);
+						if (goal) assertThreadAvailable(goal);
 					} catch (error) {
 						if (!(error instanceof GoalError) && !(error instanceof TaskContractError)) {
 							taskResolutionFailure(error);

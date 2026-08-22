@@ -8,7 +8,7 @@
  * (benchmark/scripts/codeflow-driver.ts) sets the variable for every
  * role process of the attempt's Codeflow run (depth-0 planner and delegated
  * children alike, via inherited env), so rounds are attributed by
- * role/provider/model/goal-lane exactly as the run's own usage ledger does
+ * role/provider/model/goal-thread exactly as the run's own usage ledger does
  * (design §6/§14: reuse the existing usage/attribution machinery — one
  * assistant usage record is one model round, no transcript parsing).
  *
@@ -126,7 +126,7 @@ export default function (pi: ExtensionAPI): void {
 		emitting: EmittingContext,
 	): Pick<
 		ToolCallRecord,
-		"at" | "run_id" | "role" | "depth" | "handoff_id" | "goal_id" | "lane" | "provider" | "model"
+		"at" | "run_id" | "role" | "depth" | "handoff_id" | "goal_id" | "thread" | "provider" | "model"
 	> {
 		return {
 			at,
@@ -135,7 +135,7 @@ export default function (pi: ExtensionAPI): void {
 			depth: Number(env("CODEFLOW_AGENT_DEPTH") ?? "0") || 0,
 			handoff_id: optionalEnv("CODEFLOW_HANDOFF_ID"),
 			goal_id: optionalEnv("CODEFLOW_GOAL_ID"),
-			lane: optionalEnv("CODEFLOW_LANE"),
+			thread: optionalEnv("CODEFLOW_THREAD"),
 			provider: emitting.provider,
 			model: emitting.model,
 		};
@@ -208,7 +208,7 @@ export default function (pi: ExtensionAPI): void {
 			turn: currentTurn,
 			handoff_id: optionalEnv("CODEFLOW_HANDOFF_ID"),
 			goal_id: optionalEnv("CODEFLOW_GOAL_ID"),
-			lane: optionalEnv("CODEFLOW_LANE"),
+			thread: optionalEnv("CODEFLOW_THREAD"),
 			usage: {
 				input,
 				output,

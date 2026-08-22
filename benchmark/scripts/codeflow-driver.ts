@@ -53,7 +53,7 @@ const RUN_SCOPED_ENV_KEYS = [
 	"CODEFLOW_RUNS_DIR",
 	"CODEFLOW_HANDOFF_ID",
 	"CODEFLOW_GOAL_ID",
-	"CODEFLOW_LANE",
+	"CODEFLOW_THREAD",
 	"CODEFLOW_AGENT_ROLE",
 	"CODEFLOW_AGENT_DEPTH",
 ];
@@ -227,7 +227,7 @@ function streamLedgers(): number {
 					request_started_at: row.request_started_at ?? null,
 					handoff_id: row.handoff_id ?? null,
 				goal_id: row.goal_id ?? null,
-				lane: row.lane ?? null,
+				thread: row.thread ?? null,
 				usage: row.usage,
 			},
 		});
@@ -250,7 +250,7 @@ function streamLedgers(): number {
 			model: row.model,
 			handoff_id: row.handoff_id ?? null,
 			goal_id: row.goal_id ?? null,
-			lane: row.lane ?? null,
+			thread: row.thread ?? null,
 				calls: [
 					{
 						call_id: row.call_id,
@@ -309,7 +309,7 @@ for (const row of pendingRequested.values()) {
 		model: row.model,
 		handoff_id: row.handoff_id ?? null,
 		goal_id: row.goal_id ?? null,
-		lane: row.lane ?? null,
+		thread: row.thread ?? null,
 			calls: [
 				{
 					call_id: row.call_id,

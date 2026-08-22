@@ -5,6 +5,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomBytes } from "node:crypto";
 import {
 	BASH_TIMEOUT_ABORT_MARKER,
 	blockedReasons,
@@ -21,9 +22,10 @@ import {
 import {
 	type GoalContract,
 	GoalError,
-	type GoalLane,
+	THREAD_PATTERN,
 	goalSessionId,
 	loadGoal,
+	UNGROUPED_GOAL_ID,
 } from "../../lib/goals";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
 import { readRoleDefinition } from "../../lib/roles";
@@ -63,54 +65,55 @@ export class TaskContractError extends Error {}
 
 export interface GoalTaskRef {
 	goalId: string;
-	lane: GoalLane;
-	contract: GoalContract;
+	thread: string;
+	contract: GoalContract | null;
 	sessionId: string;
+}
+
+function freshThreadId(): string {
+	return `t-${randomBytes(6).toString("hex")}`;
 }
 
 export function resolveGoalTask(
 	agent: string,
 	goalId: string | undefined,
-	lane: string | undefined,
-): GoalTaskRef | null {
-	if (!goalId && !lane) return null;
-	const role = readRoleDefinition(ROLES_FILE, agent);
-	if (role && !role.goal_lane) {
-		throw new TaskContractError(
-			`role ${agent} owns no goal lane; delegate it without goal_id or lane`,
-		);
+	thread: string | undefined,
+): GoalTaskRef {
+	if (thread !== undefined && !THREAD_PATTERN.test(thread)) {
+		throw new TaskContractError(`invalid task thread: ${thread}`);
 	}
-	if (!goalId || !lane) throw new TaskContractError("goal_id and lane must be provided together");
-	if (!/^(?:test|code|verify)$/.test(lane)) throw new TaskContractError(`invalid goal lane: ${lane}`);
 	const paths = currentRun();
 	if (!paths) throw new Error("cannot use a goal task outside a Codeflow run");
-	const contract = loadGoal(paths, goalId);
-	const goalLane = lane as GoalLane;
-	if (contract.lanes[goalLane].role !== agent) {
-		throw new TaskContractError(
-			`role ${agent} does not own goal ${contract.id} lane ${goalLane}; expected ${contract.lanes[goalLane].role}`,
-		);
+	const resolvedThread = thread ?? freshThreadId();
+	if (!goalId) {
+		return {
+			goalId: UNGROUPED_GOAL_ID,
+			thread: resolvedThread,
+			contract: null,
+			sessionId: goalSessionId(process.env.CODEFLOW_RUN_ID ?? "", UNGROUPED_GOAL_ID, resolvedThread),
+		};
 	}
+	const contract = loadGoal(paths, goalId);
 	return {
 		goalId: contract.id,
-		lane: goalLane,
+		thread: resolvedThread,
 		contract,
-		sessionId: goalSessionId(process.env.CODEFLOW_RUN_ID ?? "", contract.id, goalLane),
+		sessionId: goalSessionId(process.env.CODEFLOW_RUN_ID ?? "", contract.id, resolvedThread),
 	};
 }
 
-export function assertGoalLaneAvailable(goal: GoalTaskRef): void {
+export function assertThreadAvailable(goal: GoalTaskRef): void {
 	const paths = currentRun();
 	if (!paths) return;
 	const active = handoffHistory(paths).find(
 		(state) =>
-			state.goal_id === goal.goalId &&
-			state.lane === goal.lane &&
-			(state.status === "open" || state.status === "running"),
-	);
+				state.goal_id === goal.goalId &&
+				state.thread === goal.thread &&
+				(state.status === "open" || state.status === "running"),
+		);
 	if (active) {
 		throw new TaskContractError(
-			`goal ${goal.goalId} lane ${goal.lane} already has active handoff ${active.handoff_id}`,
+				`goal ${goal.goalId} thread ${goal.thread} already has active handoff ${active.handoff_id}`,
 		);
 	}
 }
@@ -129,12 +132,12 @@ export function openHandoff(
 			body: prompt,
 			depth: 1,
 			parentId: process.env.CODEFLOW_HANDOFF_ID ?? null,
-			...(goal
-				? {
-					goalId: goal.goalId,
-					lane: goal.lane,
-				}
-				: {}),
+				...(goal
+					? {
+						goalId: goal.goalId === UNGROUPED_GOAL_ID ? undefined : goal.goalId,
+						thread: goal.thread,
+					}
+					: {}),
 		});
 		return {
 			handoffId: opened.handoff_id,

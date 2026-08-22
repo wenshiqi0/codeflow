@@ -25,10 +25,15 @@ import {
 import { appendFacts, FactError, ledgerPath, type FactRecord } from "../facts";
 import { deliverEvent, MAX_SUBJECT_CHARS, type DeliveredEvent } from "../events";
 import { nowIso, readJson, RunPaths, slug, writeJsonAtomic } from "../paths";
+import {
+	changedFilesDelta,
+	deriveAcceptanceContext,
+	workspaceChangedFiles,
+} from "../workspace-state";
 import { assertResumeStopped, ResumeError } from "../resume";
 import { nextSeq } from "../seq";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /**
  * The single top-level blocked enum. Free-text prose is not an acceptable
@@ -94,7 +99,7 @@ const GOAL_PATTERN = /^\s*(?:[-*]\s*)?(?:#+\s*)?Goal\s*:\s*(.+?)\s*$/i;
 const GOAL_HEADING = /^\s*#+\s*Goal\s*$/i;
 const SCOPE_PATTERN = /^\s*(?:[-*]\s*)?(?:#+\s*)?Scope\s*:\s*(.+?)\s*$/i;
 const GOAL_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
-const GOAL_LANE_PATTERN = /^(?:test|code|verify)$/;
+const THREAD_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** A mechanical rejection: illegal transition, bad schema, missing fact. */
 export class CliError extends Error {}
@@ -109,7 +114,10 @@ export interface HandoffState {
 	goal: string;
 	scope: string[];
 	goal_id?: string;
-	lane?: "test" | "code" | "verify";
+	thread?: string;
+	workspace_changed_files_start?: string[];
+	workspace_changed_files_finish?: string[];
+	acceptance_context?: "fresh" | "producer";
 	lineage: {
 		parent_handoff_id: string | null;
 		parent_run_id: string | null;
@@ -460,7 +468,7 @@ export interface OpenOptions {
 	title?: string | null;
 	scope?: string[];
 	goalId?: string;
-	lane?: "test" | "code" | "verify";
+	thread?: string;
 }
 
 export interface OpenResult {
@@ -475,7 +483,7 @@ export interface OpenResult {
 	receipt: string;
 	scope: string[];
 	goal_id?: string;
-	lane?: "test" | "code" | "verify";
+	thread?: string;
 	scope_conflicts: string[];
 	warning?: string;
 }
@@ -494,11 +502,8 @@ export function openHandoff(paths: RunPaths, options: OpenOptions): OpenResult {
 	if (options.goalId && !GOAL_ID_PATTERN.test(options.goalId)) {
 		throw new CliError(`invalid goal id: ${options.goalId}`);
 	}
-	if (options.lane && !GOAL_LANE_PATTERN.test(options.lane)) {
-		throw new CliError(`invalid goal lane: ${options.lane}`);
-	}
-	if (Boolean(options.goalId) !== Boolean(options.lane)) {
-		throw new CliError("goalId and lane must be provided together");
+	if (options.thread && !THREAD_PATTERN.test(options.thread)) {
+		throw new CliError(`invalid handoff thread: ${options.thread}`);
 	}
 
 	// Two active handoffs editing the same file produce a diff nobody
@@ -511,6 +516,7 @@ export function openHandoff(paths: RunPaths, options: OpenOptions): OpenResult {
 		}
 	}
 	const conflicts = scope.filter((entry) => heldBy.has(entry)).sort();
+	const initialWorkspaceChangedFiles = workspaceChangedFiles();
 
 	const seq = nextSeq(paths.handoffSeq);
 	const handoffId = `h${String(seq).padStart(5, "0")}-${slug(options.role)}`.slice(
@@ -531,7 +537,7 @@ export function openHandoff(paths: RunPaths, options: OpenOptions): OpenResult {
 		goal,
 		scope,
 		...(options.goalId ? { goal_id: options.goalId } : {}),
-		...(options.lane ? { lane: options.lane } : {}),
+		...(options.thread ? { thread: options.thread } : {}),
 		lineage: {
 			parent_handoff_id: options.parentId ?? null,
 			parent_run_id: options.parentRunId ?? (options.parentId ? paths.runId : null),
@@ -539,6 +545,7 @@ export function openHandoff(paths: RunPaths, options: OpenOptions): OpenResult {
 		},
 		opened_at: nowIso(),
 		scope_conflicts: conflicts,
+		workspace_changed_files_start: initialWorkspaceChangedFiles,
 	};
 	writeJsonAtomic(paths.statePath(handoffId), state);
 
@@ -559,7 +566,7 @@ export function openHandoff(paths: RunPaths, options: OpenOptions): OpenResult {
 		depth,
 		ref: `handoffs/${handoffId}/state.json`,
 		...(options.goalId ? { goal_id: options.goalId } : {}),
-		...(options.lane ? { lane: options.lane } : {}),
+		...(options.thread ? { thread: options.thread } : {}),
 	});
 
 	const result: OpenResult = {
@@ -572,10 +579,10 @@ export function openHandoff(paths: RunPaths, options: OpenOptions): OpenResult {
 		handoff_md: path.join(directory, "handoff.md"),
 		state: paths.statePath(handoffId),
 		receipt: paths.receiptPath(handoffId),
-	scope,
-	...(options.goalId ? { goal_id: options.goalId } : {}),
-	...(options.lane ? { lane: options.lane } : {}),
-	scope_conflicts: conflicts,
+		scope,
+		...(options.goalId ? { goal_id: options.goalId } : {}),
+		...(options.thread ? { thread: options.thread } : {}),
+		scope_conflicts: conflicts,
 	};
 	if (conflicts.length > 0) {
 		result.warning =
@@ -600,6 +607,7 @@ export function startHandoff(
 	if (state.status !== "running") {
 		state.status = "running";
 		state.started_at = nowIso();
+		state.workspace_changed_files_start = workspaceChangedFiles();
 	}
 	if (pid !== undefined) state.pid = pid;
 	writeJsonAtomic(paths.statePath(handoffId), state);
@@ -668,6 +676,10 @@ export function finishHandoff(paths: RunPaths, options: FinishOptions): FinishRe
 			`--receipt is required to finish delegated handoff ${handoffId} as ${options.status}`,
 		);
 	}
+	const isRoot = (state.depth ?? 0) === 0 && !state.lineage?.parent_handoff_id;
+	if (isRoot && options.status === "PASS" && !options.receipt) {
+		throw new CliError(`root PASS requires a non-empty JSON receipt for handoff ${handoffId}`);
+	}
 
 	const artifacts: string[] = [];
 	for (const entry of options.artifacts ?? []) {
@@ -681,6 +693,9 @@ export function finishHandoff(paths: RunPaths, options: FinishOptions): FinishRe
 			throw new CliError(`declared artifact does not exist: ${entry}`);
 		}
 		artifacts.push(entry);
+	}
+	if (isRoot && options.status === "PASS" && artifacts.length === 0) {
+		throw new CliError(`root PASS requires a non-empty closure artifact for handoff ${handoffId}`);
 	}
 
 	let receipt: Record<string, unknown> | null = null;
@@ -697,6 +712,22 @@ export function finishHandoff(paths: RunPaths, options: FinishOptions): FinishRe
 		);
 		receipt = validated.receipt;
 		spills = validated.spills;
+			if (options.status === "PASS") {
+				const after = workspaceChangedFiles();
+				const changedFiles = changedFilesDelta(state.workspace_changed_files_start, after);
+				const acceptanceContext = deriveAcceptanceContext(state.workspace_changed_files_start, after);
+				receipt.acceptance_context = acceptanceContext;
+				state.acceptance_context = acceptanceContext;
+				state.workspace_changed_files_finish = after;
+			appendAcceptanceContextTelemetry(paths, {
+				handoff_id: handoffId,
+				goal_id: state.goal_id ?? null,
+				thread: state.thread ?? null,
+				acceptance_context: acceptanceContext,
+					changed_files_delta: changedFiles,
+				observed_at: nowIso(),
+			});
+		}
 
 		// Shared facts are a side effect of a validated receipt, never a
 		// separate model-driven write. This runs before the state transition
@@ -757,7 +788,7 @@ export function finishHandoff(paths: RunPaths, options: FinishOptions): FinishRe
 		summary: options.summary,
 	};
 	if (state.goal_id) payload.goal_id = state.goal_id;
-	if (state.lane) payload.lane = state.lane;
+	if (state.thread) payload.thread = state.thread;
 	if (receipt !== null) payload.receipt_ref = `handoffs/${handoffId}/receipt.json`;
 	if (options.status === "BLOCKED") payload.reasons = [...reasons];
 	emitHandoffEvent(paths, handoffId, "handoff_finished", options.status, payload);
@@ -1108,4 +1139,23 @@ export function agentsList(paths: RunPaths): Record<string, unknown>[] {
 		return String(left.handoff_id ?? "").localeCompare(String(right.handoff_id ?? ""));
 	});
 	return rows;
+}
+
+interface AcceptanceContextTelemetry {
+	handoff_id: string;
+	goal_id: string | null;
+	thread: string | null;
+	acceptance_context: "fresh" | "producer";
+	changed_files_delta: string[];
+	observed_at: string;
+}
+
+function appendAcceptanceContextTelemetry(paths: RunPaths, row: AcceptanceContextTelemetry): void {
+	const directory = path.join(paths.runDir, "telemetry");
+	fs.mkdirSync(directory, { recursive: true });
+	fs.appendFileSync(
+		path.join(directory, "acceptance-context.jsonl"),
+		JSON.stringify(row) + "\n",
+		"utf8",
+	);
 }

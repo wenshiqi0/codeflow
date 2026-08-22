@@ -1,6 +1,7 @@
 /**
- * Goals are immutable contracts plus a read-only join over
- * handoffs. There is deliberately no goal state machine: handoff state,
+ * Immutable goal contracts and read-only grouping statistics.
+ *
+ * There is deliberately no goal state machine or join gate: handoff state,
  * receipts, and artifacts remain the only authoritative execution state.
  */
 
@@ -11,14 +12,10 @@ import { RunPaths, readJson, slug, writeJsonAtomic } from "./paths";
 import { deliverEvent, eventSummary } from "./events";
 
 export const GOAL_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
-export const GOAL_LANES = ["test", "code", "verify"] as const;
-export type GoalLane = (typeof GOAL_LANES)[number];
+export const THREAD_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+export const UNGROUPED_GOAL_ID = "_ungrouped";
 
 export class GoalError extends Error {}
-
-export interface GoalLaneContract {
-	role: string;
-}
 
 export interface GoalContract {
 	schema_version: 1;
@@ -26,7 +23,6 @@ export interface GoalContract {
 	goal: string;
 	definition_of_done: string[];
 	created_at: string;
-	lanes: Record<GoalLane, GoalLaneContract>;
 }
 
 export interface DefineGoalOptions {
@@ -44,8 +40,8 @@ export function defineGoal(
 	options: DefineGoalOptions,
 ): { goal_id: string; contract: string; idempotent: boolean } {
 	const goalId = slug(options.id);
-	if (!GOAL_ID_PATTERN.test(goalId)) {
-		throw new GoalError(`goal id must match ${GOAL_ID_PATTERN}: ${options.id}`);
+	if (!GOAL_ID_PATTERN.test(goalId) || goalId.startsWith("_")) {
+		throw new GoalError(`goal id must match ${GOAL_ID_PATTERN} and may not start with "_": ${options.id}`);
 	}
 	const goal = options.goal?.trim();
 	if (!goal) throw new GoalError("goal must be a non-empty string");
@@ -56,11 +52,6 @@ export function defineGoal(
 		goal,
 		definition_of_done: uniqueSorted((options.definitionOfDone ?? []).map((entry) => entry.trim()).filter(Boolean)),
 		created_at: new Date().toISOString(),
-		lanes: {
-			test: { role: "tester" },
-			code: { role: "coder" },
-			verify: { role: "verify" },
-		},
 	};
 
 	const file = paths.goalContractPath(goalId);
@@ -97,15 +88,26 @@ export function loadGoal(paths: RunPaths, goalId: string): GoalContract {
 	if (!fs.existsSync(file)) throw new GoalError(`unknown goal: ${goalId}`);
 	const contract = readJson<GoalContract>(file);
 	if (contract.schema_version !== 1) throw new GoalError(`unsupported goal contract schema: ${goalId}`);
+	if ("lanes" in contract) {
+		throw new GoalError(
+			`goal contract ${goalId} uses the retired lane schema; create a lane-free v1 contract`,
+		);
+	}
+	if (!contract.id || !contract.goal || !Array.isArray(contract.definition_of_done) || !contract.created_at) {
+		throw new GoalError(`goal contract ${goalId} is malformed`);
+	}
 	return contract;
 }
 
-export function goalSessionId(runId: string, goalId: string, lane: GoalLane): string {
-	if (!runId || !GOAL_ID_PATTERN.test(slug(goalId))) {
+export function goalSessionId(runId: string, goalId: string, thread: string): string {
+	const resolvedGoalId = goalId === UNGROUPED_GOAL_ID ? goalId : slug(goalId);
+	if (!runId || (resolvedGoalId !== UNGROUPED_GOAL_ID && !GOAL_ID_PATTERN.test(resolvedGoalId))) {
 		throw new GoalError(`invalid goal session run/goal: ${runId}/${goalId}`);
 	}
-	if (!GOAL_LANES.includes(lane)) throw new GoalError(`invalid goal lane: ${lane}`);
-	return `${runId}-${slug(goalId)}-${lane}`;
+	if (!THREAD_PATTERN.test(thread)) {
+		throw new GoalError(`invalid goal session thread: ${thread}`);
+	}
+	return `${runId}-${resolvedGoalId}-${thread}`;
 }
 
 export function goalContracts(paths: RunPaths): GoalContract[] {
@@ -118,14 +120,7 @@ export function goalContracts(paths: RunPaths): GoalContract[] {
 		.sort((left, right) => left.id.localeCompare(right.id));
 }
 
-export interface GoalLaneView {
-	role: string;
-	latest_handoff: {
-		id: string;
-		status: HandoffState["status"];
-		result: HandoffState["result"] | null;
-		blocked_reasons: string[];
-	} | null;
+export interface GoalThreadView {
 	handoff_count: number;
 	open_count: number;
 	pass_count: number;
@@ -137,11 +132,12 @@ export interface GoalView {
 	goal_id: string;
 	goal: string;
 	definition_of_done: string[];
-	lanes: Record<GoalLane, GoalLaneView>;
-	join: {
-		satisfied: boolean;
-		unsatisfied: string[];
-	};
+	handoff_count: number;
+	open_count: number;
+	pass_count: number;
+	fail_count: number;
+	blocked_count: number;
+	threads: Record<string, GoalThreadView>;
 }
 
 export function goalView(paths: RunPaths, contract: GoalContract): GoalView {
@@ -152,45 +148,34 @@ export function goalView(paths: RunPaths, contract: GoalContract): GoalView {
 	const states = handoffHistory(paths)
 		.filter((state) => state.goal_id === contract.id)
 		.sort((left, right) => handoffSequence(left.handoff_id) - handoffSequence(right.handoff_id));
-	const lanes = {} as Record<GoalLane, GoalLaneView>;
-	const unsatisfied: string[] = [];
-
-	for (const lane of GOAL_LANES) {
-		const laneContract = contract.lanes[lane];
-		const laneStates = states.filter((state) => state.lane === lane);
-		const latest = laneStates.at(-1) ?? null;
-		lanes[lane] = {
-			role: laneContract.role,
-			latest_handoff: latest
-				? {
-					id: latest.handoff_id,
-					status: latest.status,
-					result: latest.result ?? null,
-					blocked_reasons: [
-						...(((latest.blocked as { reasons?: unknown } | undefined)?.reasons ?? []) as string[]),
-					],
-				}
-				: null,
-			handoff_count: laneStates.length,
-			open_count: laneStates.filter((state) => state.status === "open" || state.status === "running").length,
-			pass_count: laneStates.filter((state) => state.status === "done" && state.result === "PASS").length,
-			fail_count: laneStates.filter((state) => state.status === "done" && state.result === "FAIL").length,
-			blocked_count: laneStates.filter((state) => state.status === "blocked").length,
+	const threads: Record<string, GoalThreadView> = {};
+	for (const state of states) {
+		const key = state.thread ?? "_unspecified";
+		const view = threads[key] ?? {
+			handoff_count: 0,
+			open_count: 0,
+			pass_count: 0,
+			fail_count: 0,
+			blocked_count: 0,
 		};
-		if (!latest || latest.status !== "done" || latest.result !== "PASS") {
-			unsatisfied.push(`${lane}: latest handoff PASS`);
-		}
+		view.handoff_count++;
+		if (state.status === "open" || state.status === "running") view.open_count++;
+		else if (state.status === "done" && state.result === "PASS") view.pass_count++;
+		else if (state.status === "done") view.fail_count++;
+		else view.blocked_count++;
+		threads[key] = view;
 	}
-
+	const count = (predicate: (state: HandoffState) => boolean): number => states.filter(predicate).length;
 	return {
 		goal_id: contract.id,
 		goal: contract.goal,
 		definition_of_done: contract.definition_of_done,
-		lanes,
-		join: {
-			satisfied: unsatisfied.length === 0,
-			unsatisfied,
-		},
+		handoff_count: states.length,
+		open_count: count((state) => state.status === "open" || state.status === "running"),
+		pass_count: count((state) => state.status === "done" && state.result === "PASS"),
+		fail_count: count((state) => state.status === "done" && state.result !== "PASS"),
+		blocked_count: count((state) => state.status === "blocked"),
+		threads,
 	};
 }
 

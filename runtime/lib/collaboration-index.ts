@@ -2,10 +2,10 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { type HandoffState, handoffHistory } from "./handoff";
-import { loadGoal, type GoalLane } from "./goals";
+import { loadGoal, UNGROUPED_GOAL_ID } from "./goals";
 import { readJson, RunPaths, writeJsonAtomic } from "./paths";
 
-export const UNLANED_GOAL_ID = "_unlaned";
+
 export const HANDOFF_INDEX_SCHEMA_VERSION = 1;
 export const DEFAULT_HANDOFF_INDEX_LIMIT = 20;
 export const MAX_HANDOFF_INDEX_LIMIT = 50;
@@ -20,7 +20,7 @@ export interface HandoffIndexCard {
 	goal_id: string | null;
 	handoff_id: string;
 	role: string;
-	lane: GoalLane | null;
+	thread: string | null;
 	status: HandoffState["status"];
 	result: HandoffState["result"] | null;
 	blocked_reasons: string[];
@@ -47,8 +47,8 @@ export interface HandoffIndexCard {
 
 export interface HandoffIndexQuery {
 	goalId?: string;
-	unlaned?: boolean;
-	lane?: string;
+	ungrouped?: boolean;
+	thread?: string;
 	status?: string;
 	role?: string;
 	query?: string;
@@ -132,7 +132,7 @@ export function buildHandoffIndexCard(
 		goal_id: state.goal_id ?? null,
 		handoff_id: state.handoff_id,
 		role: state.role,
-		lane: state.lane ?? null,
+		thread: state.thread ?? null,
 		status: state.status,
 		result: state.result ?? null,
 		blocked_reasons: blockedReasons(state),
@@ -167,7 +167,7 @@ export function handoffIndexCardPath(
 	phase: HandoffIndexPhase,
 ): string {
 	const goalId = handoffHistory(paths).find((state) => state.handoff_id === handoffId)?.goal_id;
-	return path.join(paths.collaborationIndexDir(goalId ?? UNLANED_GOAL_ID), `${handoffId}.${phase}.json`);
+	return path.join(paths.collaborationIndexDir(goalId ?? UNGROUPED_GOAL_ID), `${handoffId}.${phase}.json`);
 }
 
 export function writeDeterministicHandoffIndexCard(
@@ -251,7 +251,7 @@ export function applySemanticHandoffIndexCard(
 }
 
 function cardMatches(card: HandoffIndexCard, query: HandoffIndexQuery): boolean {
-	if (query.lane !== undefined && card.lane !== query.lane) return false;
+	if (query.thread !== undefined && card.thread !== query.thread) return false;
 	if (query.role !== undefined && card.role !== query.role) return false;
 	if (query.status !== undefined) {
 		const status = card.status === "done" && card.result ? card.result.toLowerCase() : card.status;
@@ -273,7 +273,7 @@ function cardMatches(card: HandoffIndexCard, query: HandoffIndexQuery): boolean 
 }
 
 function preferredCard(paths: RunPaths, state: HandoffState): HandoffIndexCard {
-	const goalId = state.goal_id ?? UNLANED_GOAL_ID;
+	const goalId = state.goal_id ?? UNGROUPED_GOAL_ID;
 	for (const phase of ["final", "open"] as const) {
 		const file = path.join(paths.collaborationIndexDir(goalId), `${state.handoff_id}.${phase}.json`);
 		if (!fs.existsSync(file)) continue;
@@ -295,12 +295,9 @@ function handoffSequence(id: string): number {
 }
 
 export function resolveIndexScope(paths: RunPaths, query: HandoffIndexQuery): string {
-	if (query.unlaned) return UNLANED_GOAL_ID;
-	const goalId = query.goalId ?? process.env.CODEFLOW_GOAL_ID;
-	if (!goalId) {
-		throw new Error("handoff index requires --goal-id when no ambient CODEFLOW_GOAL_ID is set");
-	}
-	loadGoal(paths, goalId);
+	if (query.ungrouped) return UNGROUPED_GOAL_ID;
+	const goalId = query.goalId ?? process.env.CODEFLOW_GOAL_ID ?? UNGROUPED_GOAL_ID;
+	if (goalId !== UNGROUPED_GOAL_ID) loadGoal(paths, goalId);
 	return goalId;
 }
 
@@ -311,7 +308,7 @@ export function listHandoffIndex(paths: RunPaths, query: HandoffIndexQuery = {})
 		throw new Error(`handoff index limit must be between 1 and ${MAX_HANDOFF_INDEX_LIMIT}`);
 	}
 	return handoffHistory(paths)
-		.filter((state) => query.unlaned ? state.goal_id === undefined : state.goal_id === goalId)
+		.filter((state) => goalId === UNGROUPED_GOAL_ID ? state.goal_id === undefined : state.goal_id === goalId)
 		.sort((left, right) => handoffSequence(left.handoff_id) - handoffSequence(right.handoff_id))
 		.map((state) => preferredCard(paths, state))
 		.filter((card) => cardMatches(card, query))

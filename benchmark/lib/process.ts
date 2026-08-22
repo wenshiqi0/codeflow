@@ -245,7 +245,7 @@ function parseRound(value: unknown): DriverRound | null {
 		request_started_at: requestStartedAt,
 		handoff_id: optionalString(value.handoff_id),
 		goal_id: optionalString(value.goal_id),
-		lane: optionalString(value.lane),
+		thread: optionalString(value.thread),
 		usage,
 		tool_calls: toolCalls,
 	};
@@ -287,7 +287,7 @@ export function parseDriverEvent(value: unknown): DriverEvent | null {
 				model,
 				handoff_id: optionalString(value.handoff_id),
 				goal_id: optionalString(value.goal_id),
-				lane: optionalString(value.lane),
+				thread: optionalString(value.thread),
 				calls,
 			};
 		}

@@ -41,7 +41,7 @@ interface Args {
 	booleans: Set<string>;
 }
 
-const BOOLEAN_FLAGS = new Set(["active", "unlaned"]);
+const BOOLEAN_FLAGS = new Set(["active", "ungrouped"]);
 
 function parseArgs(argv: string[]): Args {
 	const positional: string[] = [];
@@ -133,27 +133,6 @@ function requireFlag(args: Args, name: string): string {
 	return value;
 }
 
-/**
- * A root PASS is a claim that every immutable goal contract is satisfied.
- * The derived join, rather than the planner's prose receipt, owns that fact.
- */
-export function assertRootPassGoalJoins(paths: RunPaths, handoffId: string): void {
-	const state = handoffStatus(paths, handoffId);
-	if (Array.isArray(state)) throw new CliError(`handoff not found: ${handoffId}`);
-	if ((state.depth ?? 0) !== 0 || state.lineage.parent_handoff_id) return;
-
-	const unsatisfied = goalViews(paths).flatMap((view) =>
-		view.join.satisfied
-			? []
-			: view.join.unsatisfied.map((entry) => `${view.goal_id}: ${entry}`),
-	);
-	if (unsatisfied.length > 0) {
-		throw new CliError(
-			`root PASS requires every goal join to be satisfied: ${unsatisfied.join("; ")}`,
-		);
-	}
-}
-
 async function runHandoff(command: string, args: Args): Promise<number> {
 	const paths = resolvePaths(args);
 
@@ -168,6 +147,8 @@ async function runHandoff(command: string, args: Args): Promise<number> {
 				splitScope: one(args, "split-scope") ?? null,
 				title: one(args, "title") ?? null,
 				scope: all(args, "scope"),
+				goalId: one(args, "goal-id"),
+				thread: one(args, "thread"),
 			});
 			if (result.warning) {
 				console.error(`warning: ${result.warning}`);
@@ -190,7 +171,6 @@ async function runHandoff(command: string, args: Args): Promise<number> {
 				);
 			}
 			const handoffId = resolveHandoffId(args);
-			if (status === "PASS") assertRootPassGoalJoins(paths, handoffId);
 			emit(
 				finishHandoff(paths, {
 					handoffId,
@@ -256,8 +236,8 @@ async function runHandoff(command: string, args: Args): Promise<number> {
 			}
 			emit(listHandoffIndex(paths, {
 				goalId: one(args, "goal-id"),
-				unlaned: args.booleans.has("unlaned"),
-				lane: one(args, "lane"),
+				ungrouped: args.booleans.has("ungrouped"),
+				thread: one(args, "thread"),
 				status: one(args, "status"),
 				role: one(args, "role"),
 				query: one(args, "query"),

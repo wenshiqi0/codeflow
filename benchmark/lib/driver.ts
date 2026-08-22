@@ -38,7 +38,7 @@ export interface DriverRound {
 	turn?: number | null;
 	handoff_id?: string | null;
 	goal_id?: string | null;
-	lane?: string | null;
+	thread?: string | null;
 	usage: AttemptUsage;
 	/** Source provider request start boundary when observed. */
 	request_started_at?: string | null;
@@ -74,7 +74,7 @@ export interface DriverToolCallsEvent {
 	model: string;
 	handoff_id?: string | null;
 	goal_id?: string | null;
-	lane?: string | null;
+	thread?: string | null;
 	/** Calls that reached a terminal status (or "incomplete" at stream end). */
 	calls: DriverToolCall[];
 }

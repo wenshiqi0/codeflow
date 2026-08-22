@@ -6,7 +6,7 @@ export interface WasteSummary {
 	tokens_in_non_pass_handoffs: number | null;
 	waste_ratio_rounds: number | null;
 	planner_rounds_ratio: number | null;
-	handoff_reopens_per_goal_lane_median: number | null;
+	handoff_reopens_per_goal_thread_median: number | null;
 	metrics_available: boolean;
 }
 
@@ -33,7 +33,7 @@ export function summarizeWaste(
 			tokens_in_non_pass_handoffs: null,
 			waste_ratio_rounds: null,
 			planner_rounds_ratio: null,
-			handoff_reopens_per_goal_lane_median: null,
+			handoff_reopens_per_goal_thread_median: null,
 			metrics_available: false,
 		};
 	}
@@ -47,7 +47,7 @@ export function summarizeWaste(
 			tokens_in_non_pass_handoffs: null,
 			waste_ratio_rounds: null,
 			planner_rounds_ratio: null,
-			handoff_reopens_per_goal_lane_median: null,
+			handoff_reopens_per_goal_thread_median: null,
 			metrics_available: false,
 		};
 	}
@@ -70,8 +70,8 @@ export function summarizeWaste(
 	}
 	const groups = new Map<string, number>();
 	for (const state of handoffs) {
-		if (state.goal_id === null || state.lane === null) continue;
-		const key = `${state.goal_id}\0${state.lane}`;
+		if (state.goal_id === null || state.thread === null) continue;
+		const key = `${state.goal_id}\0${state.thread}`;
 		groups.set(key, (groups.get(key) ?? 0) + 1);
 	}
 	return {
@@ -79,7 +79,7 @@ export function summarizeWaste(
 		tokens_in_non_pass_handoffs: nonPassTokens,
 		waste_ratio_rounds: usageRecords.length > 0 ? nonPassRounds / usageRecords.length : null,
 		planner_rounds_ratio: depthKnownRounds > 0 ? depthZeroRounds / depthKnownRounds : null,
-		handoff_reopens_per_goal_lane_median: median([...groups.values()].map((count) => count - 1)),
+		handoff_reopens_per_goal_thread_median: median([...groups.values()].map((count) => count - 1)),
 		metrics_available: true,
 	};
 }
@@ -106,7 +106,7 @@ export function summarizeContextGrowth(
 	const groups = new Map<string, number[]>();
 	let available = true;
 	for (const state of handoffs) {
-		if (state.goal_id === null || state.lane === null) continue;
+		if (state.goal_id === null || state.thread === null) continue;
 		const records = byHandoff.get(state.handoff_id) ?? [];
 		if (records.length === 0) continue;
 		const first = [...records].sort((a, b) => (a.turn ?? Infinity) - (b.turn ?? Infinity))[0];
@@ -114,7 +114,7 @@ export function summarizeContextGrowth(
 			available = false;
 			continue;
 		}
-		const key = `${state.goal_id}\0${state.lane}`;
+		const key = `${state.goal_id}\0${state.thread}`;
 		const list = groups.get(key) ?? [];
 		list.push(first.usage.input + first.usage.cache_read);
 		groups.set(key, list);

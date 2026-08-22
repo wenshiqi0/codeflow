@@ -8,6 +8,7 @@ import {
 	goalView,
 	goalViews,
 	loadGoal,
+	THREAD_PATTERN,
 } from "../../runtime/lib/goals";
 import { finishHandoff, openHandoff } from "../../runtime/lib/handoff";
 import { readJson, RunPaths } from "../../runtime/lib/paths";
@@ -35,34 +36,27 @@ function defineMovementGoal() {
 	});
 }
 
-function openLaneHandoff(lane: "test" | "code" | "verify") {
-	return openHandoff(paths, {
-		role: lane === "test" ? "tester" : lane === "code" ? "coder" : "verify",
-		body: `Goal: complete ${lane}\n`,
+function openThreadHandoff(thread: string, status: "PASS" | "FAIL" = "PASS") {
+	const opened = openHandoff(paths, {
+		role: "worker",
+		body: `Goal: work in ${thread}\n`,
 		depth: 1,
 		goalId: "movement-r1",
-		lane,
+		thread,
 	});
+	const receipt = `${thread}-${status}-receipt.json`;
+	fs.writeFileSync(receipt, JSON.stringify({ status }), "utf8");
+	finishHandoff(paths, {
+		handoffId: opened.handoff_id,
+		status,
+		receipt,
+		summary: `${thread} ${status}`,
+	});
+	return opened;
 }
 
-function receipt(
-	name: string,
-	status: "PASS" | "FAIL",
-	lane: "test" | "code" | "verify",
-): string {
-	fs.writeFileSync(
-		name,
-		JSON.stringify({
-			status,
-			...(lane === "verify" ? { command: "npm test", exit_code: status === "PASS" ? 0 : 1 } : {}),
-		}),
-		"utf8",
-	);
-	return name;
-}
-
-describe("agent goals", () => {
-	test("writes an immutable contract without status fields", () => {
+describe("goal grouping contracts", () => {
+	test("writes an immutable lane-free contract", () => {
 		const result = defineMovementGoal();
 		expect(result.goal_id).toBe("movement-r1");
 		const contract = readJson<Record<string, unknown>>(paths.goalContractPath("movement-r1"));
@@ -72,73 +66,64 @@ describe("agent goals", () => {
 			"goal",
 			"definition_of_done",
 			"created_at",
-			"lanes",
 		]);
 		expect(contract.status).toBeUndefined();
-		expect(contract.result).toBeUndefined();
+		expect(contract.lanes).toBeUndefined();
 	});
 
 	test("rejects changing an existing contract", () => {
 		defineMovementGoal();
 		expect(() =>
-			defineGoal(paths, {
-				id: "movement-r1",
-				goal: "A different goal",
-			}),
+			defineGoal(paths, { id: "movement-r1", goal: "A different goal" }),
 		).toThrow("already exists with different content");
 	});
 
-	test("records lane ownership without mechanical write roots", () => {
+	test("rejects retired lane contracts loudly", () => {
 		defineMovementGoal();
-		const contract = readJson<Record<string, any>>(paths.goalContractPath("movement-r1"));
-		expect(contract.lanes).toEqual({
-			test: { role: "tester" },
-			code: { role: "coder" },
-			verify: { role: "verify" },
-		});
+		const file = paths.goalContractPath("movement-r1");
+		const contract = readJson<Record<string, unknown>>(file);
+		contract.lanes = { test: { role: "tester" } };
+		fs.writeFileSync(file, JSON.stringify(contract));
+		expect(() => loadGoal(paths, "movement-r1")).toThrow("uses the retired lane schema");
 	});
 
-	test("derives join satisfaction from handoffs", () => {
+	test("derives only statistics from grouped handoffs", () => {
 		defineMovementGoal();
-		const handoffs = {
-			test: openLaneHandoff("test"),
-			code: openLaneHandoff("code"),
-			verify: openLaneHandoff("verify"),
-		};
-		for (const lane of ["test", "code", "verify"] as const) {
-			finishHandoff(paths, {
-				handoffId: handoffs[lane].handoff_id,
-				status: "PASS",
-				receipt: receipt(`${lane}-receipt.json`, "PASS", lane),
-				summary: `${lane} complete`,
-			});
-		}
+		openThreadHandoff("implementation");
+		openThreadHandoff("implementation", "FAIL");
+		openThreadHandoff("review");
 		const view = goalView(paths, loadGoal(paths, "movement-r1"));
-		expect(view.join.satisfied).toBe(true);
-		expect(view.join.unsatisfied).toEqual([]);
-		expect(view.lanes.test.latest_handoff?.result).toBe("PASS");
-	});
-
-	test("derives a stable session id for each goal lane", () => {
-		expect(goalSessionId("run-x", "Movement R1", "code")).toBe(
-			"run-x-movement-r1-code",
-		);
-		expect(() => goalSessionId("run-x", "movement-r1", "product")).toThrow(
-			"invalid goal lane",
-		);
-	});
-
-	test("a failed latest lane leaves the join unsatisfied", () => {
-		defineMovementGoal();
-		const testHandoff = openLaneHandoff("test");
-		finishHandoff(paths, {
-			handoffId: testHandoff.handoff_id,
-			status: "FAIL",
-			receipt: receipt("test-receipt.json", "FAIL", "test"),
-			summary: "not red",
+		expect(view).toMatchObject({
+			goal_id: "movement-r1",
+			handoff_count: 3,
+			pass_count: 2,
+			fail_count: 1,
+			blocked_count: 0,
 		});
-		const [view] = goalViews(paths);
-		expect(view.join.satisfied).toBe(false);
-		expect(view.join.unsatisfied).toContain("test: latest handoff PASS");
+		expect(view.threads.implementation).toEqual({
+			handoff_count: 2,
+			open_count: 0,
+			pass_count: 1,
+			fail_count: 1,
+			blocked_count: 0,
+		});
+		expect(view.threads.review.handoff_count).toBe(1);
+		expect("join" in view).toBe(false);
+	});
+
+	test("derives a stable session id for each goal thread", () => {
+		expect(goalSessionId("run-x", "Movement R1", "implementation")).toBe(
+			"run-x-movement-r1-implementation",
+		);
+		expect(() => goalSessionId("run-x", "movement-r1", "Invalid Thread")).toThrow(
+			"invalid goal session thread",
+		);
+		expect(THREAD_PATTERN.test("a-1")).toBe(true);
+	});
+
+	test("goal list contains only grouping contracts", () => {
+		expect(goalViews(paths)).toEqual([]);
+		defineMovementGoal();
+		expect(goalViews(paths)).toHaveLength(1);
 	});
 });

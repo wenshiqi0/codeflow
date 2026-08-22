@@ -121,7 +121,7 @@ export interface BenchmarkReport {
 	breakdowns: {
 		by_role: Record<string, BreakdownTotals>;
 		by_model: Record<string, BreakdownTotals>;
-		by_lane: Record<string, BreakdownTotals>;
+		by_thread: Record<string, BreakdownTotals>;
 		by_tool: Record<string, number>;
 		by_operation: Record<string, number>;
 	};
@@ -138,7 +138,7 @@ export interface BenchmarkReport {
 	runtime_observability: {
 		handoffs: HandoffObservabilitySummary & {
 			by_role: Record<string, HandoffObservabilitySummary>;
-			by_lane: Record<string, HandoffObservabilitySummary>;
+			by_thread: Record<string, HandoffObservabilitySummary>;
 		};
 		waste: WasteSummary;
 		context_growth: ContextGrowthSummary;
@@ -211,7 +211,7 @@ function aggregateWaste(attempts: CaseAttemptRecord[]): WasteSummary {
 			tokens_in_non_pass_handoffs: null,
 			waste_ratio_rounds: null,
 			planner_rounds_ratio: null,
-			handoff_reopens_per_goal_lane_median: null,
+			handoff_reopens_per_goal_thread_median: null,
 			metrics_available: false,
 		};
 	}
@@ -230,7 +230,7 @@ function aggregateWaste(attempts: CaseAttemptRecord[]): WasteSummary {
 	);
 	const totalRounds = attempts.reduce((sum, attempt) => sum + attempt.metrics.model_rounds_total, 0);
 	const reopenValues = attempts
-		.map((attempt) => attempt.metrics.waste.handoff_reopens_per_goal_lane_median)
+		.map((attempt) => attempt.metrics.waste.handoff_reopens_per_goal_thread_median)
 		.filter((value): value is number => value !== null);
 	return {
 		rounds_in_non_pass_handoffs: nonPassRounds,
@@ -243,7 +243,7 @@ function aggregateWaste(attempts: CaseAttemptRecord[]): WasteSummary {
 						0,
 					) / plannerDenominator
 				: null,
-		handoff_reopens_per_goal_lane_median: medianOrNull(reopenValues),
+		handoff_reopens_per_goal_thread_median: medianOrNull(reopenValues),
 		metrics_available: true,
 	};
 }
@@ -373,7 +373,7 @@ function readCases(outDir: string): CaseFile[] {
 					tokens_in_non_pass_handoffs: null,
 					waste_ratio_rounds: null,
 					planner_rounds_ratio: null,
-					handoff_reopens_per_goal_lane_median: null,
+					handoff_reopens_per_goal_thread_median: null,
 					metrics_available: false,
 				},
 				context_growth: metrics.context_growth ?? {
@@ -390,11 +390,11 @@ function readCases(outDir: string): CaseFile[] {
 interface LedgerBreakdownInput {
 	byRole: Record<string, BreakdownTotals>;
 	byModel: Record<string, BreakdownTotals>;
-	byLane: Record<string, BreakdownTotals>;
+	byThread: Record<string, BreakdownTotals>;
 }
 
 /**
- * Role/model/lane breakdowns come from the per-attempt ledgers under
+ * Role/model/thread breakdowns come from the per-attempt ledgers under
  * `cases/` when present (hand-built report fixtures without ledgers simply
  * produce empty breakdowns).
  *
@@ -407,7 +407,7 @@ interface LedgerBreakdownInput {
  *   including models that emitted zero tools. No dimension silently drops a
  *   zero-round tool call or a zero-tool model round.
  *
- * by_role and by_lane keep both dimensions from both ledgers, unchanged.
+ * by_role and by_thread keep both dimensions from both ledgers, unchanged.
  */
 function accumulateLedgers(outDir: string, cases: CaseFile[], out: LedgerBreakdownInput): void {
 	for (const caseFile of cases) {
@@ -427,8 +427,8 @@ function accumulateLedgers(outDir: string, cases: CaseFile[], out: LedgerBreakdo
 				const modelKey = `${record.provider}/${record.model}`;
 				callsByModel.set(modelKey, (callsByModel.get(modelKey) ?? 0) + 1);
 				callsByRole.set(record.role, (callsByRole.get(record.role) ?? 0) + 1);
-				if (record.lane !== null) {
-					callsByLane.set(record.lane, (callsByLane.get(record.lane) ?? 0) + 1);
+				if (record.thread !== null) {
+					callsByLane.set(record.thread, (callsByLane.get(record.thread) ?? 0) + 1);
 				}
 			}
 
@@ -438,9 +438,9 @@ function accumulateLedgers(outDir: string, cases: CaseFile[], out: LedgerBreakdo
 				const modelKey = `${record.provider}/${record.model}`;
 				bump(out.byModel, modelKey).model_rounds++;
 				out.byModel[modelKey].total_tokens += record.usage.total_tokens;
-				if (record.lane !== null) {
-					bump(out.byLane, record.lane).model_rounds++;
-					out.byLane[record.lane].total_tokens += record.usage.total_tokens;
+				if (record.thread !== null) {
+					bump(out.byThread, record.thread).model_rounds++;
+					out.byThread[record.thread].total_tokens += record.usage.total_tokens;
 				}
 			}
 
@@ -451,8 +451,8 @@ function accumulateLedgers(outDir: string, cases: CaseFile[], out: LedgerBreakdo
 			for (const [role, count] of callsByRole) {
 				bump(out.byRole, role).tool_calls += count;
 			}
-			for (const [lane, count] of callsByLane) {
-				bump(out.byLane, lane).tool_calls += count;
+			for (const [thread, count] of callsByLane) {
+				bump(out.byThread, thread).tool_calls += count;
 			}
 		}
 	}
@@ -461,7 +461,7 @@ function accumulateLedgers(outDir: string, cases: CaseFile[], out: LedgerBreakdo
 function addHandoffState(
 	total: HandoffObservabilitySummary,
 	byRole: Record<string, HandoffObservabilitySummary>,
-	byLane: Record<string, HandoffObservabilitySummary>,
+	byThread: Record<string, HandoffObservabilitySummary>,
 	state: HandoffStateProjection,
 ): void {
 	total.metrics_available = true;
@@ -472,11 +472,11 @@ function addHandoffState(
 	byRole[state.role] = role;
 	addHandoffTerminal(role, state);
 
-	const laneKey = state.lane ?? "(unlaned)";
-	const lane = byLane[laneKey] ?? emptyHandoffObservabilitySummary();
-	lane.metrics_available = true;
-	byLane[laneKey] = lane;
-	addHandoffTerminal(lane, state);
+	const threadKey = state.thread ?? "(ungrouped)";
+	const thread = byThread[threadKey] ?? emptyHandoffObservabilitySummary();
+	thread.metrics_available = true;
+	byThread[threadKey] = thread;
+	addHandoffTerminal(thread, state);
 }
 
 function addHandoffTerminal(total: HandoffObservabilitySummary, state: HandoffStateProjection): void {
@@ -502,21 +502,21 @@ function accumulateHandoffObservability(
 	cases: CaseFile[],
 ): HandoffObservabilitySummary & {
 	by_role: Record<string, HandoffObservabilitySummary>;
-	by_lane: Record<string, HandoffObservabilitySummary>;
+	by_thread: Record<string, HandoffObservabilitySummary>;
 } {
 	const total = emptyHandoffObservabilitySummary();
 	const byRole: Record<string, HandoffObservabilitySummary> = {};
-	const byLane: Record<string, HandoffObservabilitySummary> = {};
+	const byThread: Record<string, HandoffObservabilitySummary> = {};
 	for (const caseFile of cases) {
 		const slug = caseFile.instance_id.replace(/\//g, "__");
 		for (const attempt of caseFile.attempts) {
 			const file = path.join(outDir, "cases", slug, "attempts", String(attempt.attempt), "telemetry", "handoff-states.json");
 			if (!fs.existsSync(file)) continue;
 			total.metrics_available = true;
-			for (const state of readHandoffStateProjections(file)) addHandoffState(total, byRole, byLane, state);
+			for (const state of readHandoffStateProjections(file)) addHandoffState(total, byRole, byThread, state);
 		}
 	}
-	return { ...total, by_role: byRole, by_lane: byLane };
+	return { ...total, by_role: byRole, by_thread: byThread };
 }
 
 /** Reads <outDir> artifacts only — manifest, case files, predictions. */
@@ -670,7 +670,7 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 	const breakdownInput: LedgerBreakdownInput = {
 		byRole: {},
 		byModel: {},
-		byLane: {},
+		byThread: {},
 	};
 	accumulateLedgers(outDir, cases, breakdownInput);
 
@@ -779,7 +779,7 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 		breakdowns: {
 			by_role: breakdownInput.byRole,
 			by_model: breakdownInput.byModel,
-			by_lane: breakdownInput.byLane,
+			by_thread: breakdownInput.byThread,
 			by_tool: byTool,
 			by_operation: byOperation,
 		},

@@ -72,7 +72,7 @@ const ALLOWED_PAYLOAD_KEYS = new Set([
 	"role",
 	"depth",
 	"goal_id",
-	"lane",
+	"thread",
 	"pid",
 	"run_id",
 ]);

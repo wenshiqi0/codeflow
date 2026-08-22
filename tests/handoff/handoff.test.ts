@@ -44,6 +44,7 @@ beforeEach(() => {
 	fs.mkdirSync("src");
 	fs.writeFileSync("src/router.ts", "route()\n");
 	fs.writeFileSync("src/config.ts", "loadConfig()\n");
+	fs.writeFileSync("closure.md", "closure\n");
 	paths = new RunPaths(RUNS_DIR, RUN_ID);
 });
 
@@ -63,6 +64,10 @@ function open(role = "planner", depth = 0, body?: string) {
 function receiptFile(name: string, payload: unknown): string {
 	fs.writeFileSync(name, JSON.stringify(payload), "utf-8");
 	return name;
+}
+
+function rootPassFile(): string {
+	return receiptFile(`root-pass-${Math.random().toString(16).slice(2)}.json`, { status: "PASS" });
 }
 
 function eventNames(): string[] {
@@ -252,7 +257,7 @@ describe("start", () => {
 
 	test("starting a terminal handoff is an illegal transition", () => {
 		const result = open();
-		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done" });
+		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done", receipt: rootPassFile(), artifacts: ["closure.md"] });
 		expect(() => startHandoff(paths, result.handoff_id)).toThrow(CliError);
 	});
 
@@ -262,13 +267,11 @@ describe("start", () => {
 });
 
 describe("finish", () => {
-	test("a depth-0 handoff may finish without a receipt", () => {
-		// Nobody delegated it, so there is no delegator to prove anything to.
+	test("a root PASS requires a receipt and closure artifact", () => {
 		const result = open();
 		expect(
-			finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done" })
-				.status,
-		).toBe("PASS");
+			() => finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done" }),
+		).toThrow("requires a non-empty JSON receipt");
 	});
 
 	test("a delegated PASS requires a receipt", () => {
@@ -293,7 +296,7 @@ describe("finish", () => {
 
 	test("a terminal receipt is immutable", () => {
 		const result = open();
-		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done" });
+		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done", receipt: rootPassFile(), artifacts: ["closure.md"] });
 		expect(() =>
 			finishHandoff(paths, { handoffId: result.handoff_id, status: "FAIL", summary: "again" }),
 		).toThrow(CliError);
@@ -301,7 +304,7 @@ describe("finish", () => {
 
 	test("finishing clears the active sentinel", () => {
 		const result = open();
-		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done" });
+		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done", receipt: rootPassFile(), artifacts: ["closure.md"] });
 		expect(fs.existsSync(path.join(paths.active, result.handoff_id))).toBe(false);
 	});
 
@@ -408,6 +411,7 @@ describe("finish", () => {
 			handoffId: result.handoff_id,
 			status: "PASS",
 			summary: "done",
+			receipt: rootPassFile(),
 			artifacts: ["tests.patch"],
 		});
 		expect(eventNames().some((name) => name.includes("artifact_written"))).toBe(true);
@@ -415,7 +419,7 @@ describe("finish", () => {
 
 	test("the root handoff finishing ends the run", () => {
 		const result = open();
-		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done" });
+		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done", receipt: rootPassFile(), artifacts: ["closure.md"] });
 		expect(eventNames().some((name) => name.includes("run_finished"))).toBe(true);
 	});
 
@@ -494,7 +498,7 @@ describe("finish", () => {
 		// One run, one ending: a duplicate run_finished would double-count the
 		// run in the metadata plane.
 		const result = open();
-		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done" });
+		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done", receipt: rootPassFile(), artifacts: ["closure.md"] });
 		expect(eventNames().filter((name) => name.includes("run_finished"))).toHaveLength(1);
 	});
 
@@ -508,7 +512,7 @@ describe("finish", () => {
 			parentId: "h00001-planner",
 			body: "Goal: x\n",
 		});
-		finishHandoff(paths, { handoffId: child.handoff_id, status: "PASS", summary: "done" });
+		finishHandoff(paths, { handoffId: child.handoff_id, status: "PASS", summary: "done", receipt: rootPassFile(), artifacts: ["closure.md"] });
 		expect(eventNames().some((name) => name.includes("run_finished"))).toBe(false);
 	});
 });
@@ -665,11 +669,12 @@ describe("facts recorded through receipts", () => {
 			handoffId: result.handoff_id,
 			status: "PASS",
 			summary: "done",
-			receipt: receiptFile("r.json", {
-				status: "PASS",
-				facts: [{ claim: "entry", path: "src/router.ts", line: 1 }],
-			}),
-		});
+				receipt: receiptFile("r.json", {
+					status: "PASS",
+					facts: [{ claim: "entry", path: "src/router.ts", line: 1 }],
+				}),
+				artifacts: ["closure.md"],
+			});
 		expect(materialize(path.join(paths.runDir, LEDGER_NAME))).toHaveLength(1);
 	});
 
@@ -679,11 +684,12 @@ describe("facts recorded through receipts", () => {
 			handoffId: result.handoff_id,
 			status: "PASS",
 			summary: "done",
-			receipt: receiptFile("r.json", {
-				status: "PASS",
-				facts: [{ claim: "a", value: "1" }],
-			}),
-		});
+				receipt: receiptFile("r.json", {
+					status: "PASS",
+					facts: [{ claim: "a", value: "1" }],
+				}),
+				artifacts: ["closure.md"],
+			});
 		expect(finished.facts_recorded).toEqual(["f1"]);
 	});
 
@@ -772,13 +778,13 @@ describe("queries", () => {
 
 	test("a terminal handoff carries no age", () => {
 		const result = open();
-		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done" });
+		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done", receipt: rootPassFile(), artifacts: ["closure.md"] });
 		expect((handoffStatus(paths, result.handoff_id) as any).age_seconds).toBeUndefined();
 	});
 
 	test("list reports result for a finished handoff", () => {
 		const result = open();
-		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done" });
+		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done", receipt: rootPassFile(), artifacts: ["closure.md"] });
 		expect(handoffList(paths)[0].result).toBe("PASS");
 	});
 
@@ -890,7 +896,7 @@ describe("run lifecycle", () => {
 
 	test("a depth-0 exit does not duplicate a root terminal event", () => {
 		const root = open();
-		finishHandoff(paths, { handoffId: root.handoff_id, status: "PASS", summary: "done" });
+		finishHandoff(paths, { handoffId: root.handoff_id, status: "PASS", summary: "done", receipt: rootPassFile(), artifacts: ["closure.md"] });
 		const before = eventNames().filter((name) => name.includes("run_finished")).length;
 		runnerExited(paths, 4242, "planner", 0);
 		const after = eventNames().filter((name) => name.includes("run_finished")).length;
@@ -926,7 +932,7 @@ describe("agents list", () => {
 
 	test("a finished handoff leaves the board", () => {
 		const result = open();
-		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done" });
+		finishHandoff(paths, { handoffId: result.handoff_id, status: "PASS", summary: "done", receipt: rootPassFile(), artifacts: ["closure.md"] });
 		expect(agentsList(paths)).toEqual([]);
 	});
 

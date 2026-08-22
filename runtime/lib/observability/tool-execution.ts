@@ -2,7 +2,7 @@
  * Privacy-safe tool-call ledger (design §7).
  *
  * A ledger row may carry ONLY the call id, tool name, status, timestamp, and
- * Codeflow attribution fields — role AND provider/model plus goal/lane —
+ * Codeflow attribution fields — role AND provider/model plus goal/thread —
  * sourced from the context that EMITTED the call (the assistant response,
  * the same attribution the usage ledger records). Direct provider/model on
  * every row is what lets reports count tools by model without role→model
@@ -34,7 +34,7 @@ export const TOOL_CALL_RECORD_FIELDS: readonly string[] = [
 	"depth",
 	"handoff_id",
 	"goal_id",
-	"lane",
+	"thread",
 	"provider",
 	"model",
 	"operation_kind",
@@ -72,7 +72,7 @@ export interface ToolCallRecord {
 	depth: number;
 	handoff_id: string | null;
 	goal_id: string | null;
-	lane: string | null;
+	thread: string | null;
 	/** Provider of the assistant response that emitted the call — never inferred from the role. */
 	provider: string;
 	/** Model of the assistant response that emitted the call — never inferred from the role. */
@@ -83,7 +83,7 @@ export interface ToolCallRecord {
 
 const ALLOWED_KEYS = new Set<string>(TOOL_CALL_RECORD_FIELDS);
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set(["succeeded", "failed", "rejected"]);
-const NULLABLE_STRINGS = ["handoff_id", "goal_id", "lane"] as const;
+const NULLABLE_STRINGS = ["handoff_id", "goal_id", "thread"] as const;
 export const OPERATION_KINDS: readonly ToolOperationKind[] = [
 	"goal_list",
 	"goal_show",

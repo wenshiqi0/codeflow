@@ -34,7 +34,7 @@ export interface HandoffStateProjection {
 	status: HandoffProjectionStatus;
 	result: HandoffProjectionResult | null;
 	goal_id: string | null;
-	lane: string | null;
+	thread: string | null;
 	blocked_reasons: ObservabilityBlockedReason[];
 	/** Count of non-enum values found in runtime blocked.reasons. */
 	unknown_blocked_reasons: number;
@@ -120,7 +120,7 @@ export function projectHandoffState(runId: string, value: unknown): HandoffState
 		status,
 		result,
 		goal_id: optionalString(value.goal_id),
-		lane: optionalString(value.lane),
+		thread: optionalString(value.thread),
 		blocked_reasons: [...new Set(blockedReasons)].sort(),
 		unknown_blocked_reasons: unknownReasons,
 		retry_of: optionalString(value.retry_of),
@@ -182,7 +182,7 @@ function validateProjection(value: unknown, index: number): HandoffStateProjecti
 		"status",
 		"result",
 		"goal_id",
-		"lane",
+		"thread",
 		"blocked_reasons",
 		"unknown_blocked_reasons",
 		"retry_of",

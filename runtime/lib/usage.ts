@@ -1,7 +1,7 @@
 /**
  * Attributed model usage: one assistant response is one model round.
  *
- * The ledger is append-only JSONL because goal lanes can run concurrently.
+ * The ledger is append-only JSONL because goal threads can run concurrently.
  * Aggregation happens on read, and the depth-0 runner writes the final report
  * after every child has exited.
  */
@@ -37,7 +37,7 @@ export interface UsageRecord {
 	depth: number;
 	handoff_id: string | null;
 	goal_id: string | null;
-	lane: string | null;
+	thread: string | null;
 	turn: number;
 	provider: string;
 	model: string;
@@ -134,7 +134,7 @@ export function usageRecordFromMessage(message: unknown, turn: number): UsageRec
 		depth: number(env("CODEFLOW_AGENT_DEPTH")),
 		handoff_id: env("CODEFLOW_HANDOFF_ID") ?? null,
 		goal_id: env("CODEFLOW_GOAL_ID") ?? null,
-		lane: env("CODEFLOW_LANE") ?? null,
+		thread: env("CODEFLOW_THREAD") ?? null,
 		turn,
 		provider,
 		model,

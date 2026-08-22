@@ -51,7 +51,7 @@ describe("pull-based collaboration index", () => {
 			depth: 1,
 			body: "Outcome: author focused movement test\n",
 			goalId: "movement-r1",
-			lane: "test",
+			thread: "test",
 		});
 		openHandoff(paths, {
 			role: "architect",
@@ -66,11 +66,12 @@ describe("pull-based collaboration index", () => {
 			goal_id: "movement-r1",
 			handoff_id: testHandoff.handoff_id,
 			role: "tester",
-			lane: "test",
+			thread: "test",
 		});
+		delete process.env.CODEFLOW_GOAL_ID;
 	});
 
-	test("cross-goal lookup and unlaned lookup are explicit", () => {
+	test("cross-goal lookup and ungrouped lookup are explicit", () => {
 		defineGoal(paths, { id: "movement-r1", goal: "Deterministic movement" });
 		defineGoal(paths, { id: "billing-r1", goal: "Deterministic billing" });
 		openHandoff(paths, {
@@ -78,26 +79,28 @@ describe("pull-based collaboration index", () => {
 			depth: 1,
 			body: "Outcome: movement test\n",
 			goalId: "movement-r1",
-			lane: "test",
+			thread: "test",
 		});
 		openHandoff(paths, {
 			role: "coder",
 			depth: 1,
 			body: "Outcome: billing fix\n",
 			goalId: "billing-r1",
-			lane: "code",
+			thread: "code",
 		});
-		const unlaned = openHandoff(paths, {
+		const ungrouped = openHandoff(paths, {
 			role: "architect",
 			depth: 1,
 			body: "Outcome: architecture review\n",
 		});
 
 		expect(listHandoffIndex(paths, { goalId: "billing-r1" })).toHaveLength(1);
-		expect(listHandoffIndex(paths, { unlaned: true })).toMatchObject([
-			{ handoff_id: unlaned.handoff_id },
+		expect(listHandoffIndex(paths, { ungrouped: true })).toMatchObject([
+			{ handoff_id: ungrouped.handoff_id },
 		]);
-		expect(() => listHandoffIndex(paths, {})).toThrow(/ambient CODEFLOW_GOAL_ID/);
+		expect(listHandoffIndex(paths, {})).toMatchObject([
+			{ handoff_id: ungrouped.handoff_id },
+		]);
 	});
 
 	test("filters and deterministic open/final cards work", () => {
@@ -107,7 +110,7 @@ describe("pull-based collaboration index", () => {
 			depth: 1,
 			body: "Outcome: author focused movement regression\n",
 			goalId: "movement-r1",
-			lane: "test",
+			thread: "test",
 		});
 		const receipt = path.join(project, "receipt.json");
 		fs.writeFileSync(receipt, JSON.stringify({
@@ -146,7 +149,7 @@ describe("pull-based collaboration index", () => {
 			depth: 1,
 			body: "Outcome: implement movement bounds fix\n",
 			goalId: "movement-r1",
-			lane: "code",
+			thread: "code",
 		});
 		const openCard = JSON.parse(
 			fs.readFileSync(
@@ -178,7 +181,7 @@ describe("pull-based collaboration index", () => {
 			depth: 1,
 			body: "Outcome: implement movement fix\n",
 			goalId: "movement-r1",
-			lane: "code",
+			thread: "code",
 		});
 		const state = JSON.parse(fs.readFileSync(paths.statePath(opened.handoff_id), "utf8"));
 		const base = writeDeterministicHandoffIndexCard(paths, state, "open");
@@ -205,7 +208,7 @@ describe("pull-based collaboration index", () => {
 			depth: 1,
 			body: "Outcome: implement movement fix\n",
 			goalId: "movement-r1",
-			lane: "code",
+			thread: "code",
 		});
 		finishHandoff(paths, {
 			handoffId: opened.handoff_id,
@@ -229,7 +232,7 @@ describe("pull-based collaboration index", () => {
 			depth: 1,
 			body: "Outcome: author movement regression\n",
 			goalId: "movement-r1",
-			lane: "test",
+			thread: "test",
 		});
 		const goals = cli("goal", ["list"]);
 		expect(goals.exitCode).toBe(0);
@@ -244,7 +247,7 @@ describe("pull-based collaboration index", () => {
 		]);
 
 		const noScope = cli("handoff", ["index"]);
-		expect(noScope.exitCode).toBe(1);
-		expect(noScope.stderr.toString()).toContain("ambient CODEFLOW_GOAL_ID");
+		expect(noScope.exitCode).toBe(0);
+		expect(JSON.parse(noScope.stdout.toString())).toEqual([]);
 	});
 });

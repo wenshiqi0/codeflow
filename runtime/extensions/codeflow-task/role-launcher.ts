@@ -20,6 +20,7 @@ import {
 } from "./handoff-gate";
 import { finishBlocked } from "./registry";
 import type { GoalTaskRef } from "./registry";
+import { UNGROUPED_GOAL_ID } from "../../lib/goals";
 import { currentRun, type RoleRunResult } from "./shared";
 
 // runtime/extensions/codeflow-task/role-launcher.ts -> runtime
@@ -42,7 +43,7 @@ export interface TaskDetails {
 	handoffId?: string;
 	handoffStatus?: string;
 	goalId?: string;
-	lane?: string;
+	thread?: string;
 	sessionId?: string;
 }
 
@@ -196,11 +197,12 @@ export async function runRoleChild(
 	if (handoffId) childEnv.CODEFLOW_HANDOFF_ID = handoffId;
 	else delete childEnv.CODEFLOW_HANDOFF_ID;
 	if (goal) {
-		childEnv.CODEFLOW_GOAL_ID = goal.goalId;
-		childEnv.CODEFLOW_LANE = goal.lane;
+		if (goal.goalId !== UNGROUPED_GOAL_ID) childEnv.CODEFLOW_GOAL_ID = goal.goalId;
+		else delete childEnv.CODEFLOW_GOAL_ID;
+		childEnv.CODEFLOW_THREAD = goal.thread;
 	} else {
 		delete childEnv.CODEFLOW_GOAL_ID;
-		delete childEnv.CODEFLOW_LANE;
+		delete childEnv.CODEFLOW_THREAD;
 	}
 
 	let buffer = "";
