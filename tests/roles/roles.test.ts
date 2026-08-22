@@ -59,10 +59,9 @@ describe("registry", () => {
 	});
 
 	test("reads a definition without mixing it with prompt text", () => {
-		writeRegistry({ planner: role("planner", { delegates: true }) });
+		writeRegistry({ planner: role("planner") });
 		expect(readRoleDefinition(registryFile, "planner")).toMatchObject({
 			model: "kimi/k3",
-			delegates: true,
 		});
 		expect(readRoleDefinition(registryFile, "ghost")).toBeNull();
 	});
@@ -130,7 +129,6 @@ describe("resolution", () => {
 			expect(resolveRole(production, name)?.systemPrompt.trim()).not.toBe("");
 		}
 		expect(listRoles(production).sort()).toEqual([...expectedTools.keys()].sort());
-		expect(resolveRole(production, "planner")?.delegates).toBeTrue();
 		expect(resolveRole(production, "architect")?.goalLane).toBeUndefined();
 		expect(resolveRole(production, "zipper")?.internal).toBeTrue();
 	});
@@ -176,7 +174,6 @@ describe("argv construction", () => {
 describe("allowed keys", () => {
 	test("role policy keys are explicit", () => {
 		expect([...ALLOWED_KEYS].sort()).toEqual([
-			"delegates",
 			"description",
 			"goal_lane",
 			"internal",

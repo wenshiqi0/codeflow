@@ -3,8 +3,6 @@
  */
 
 import * as fs from "node:fs";
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import {
 	BASH_TIMEOUT_ABORT_MARKER,
@@ -28,19 +26,10 @@ import {
 	UNGROUPED_GOAL_ID,
 } from "../../lib/goals";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
-import { readRoleDefinition } from "../../lib/roles";
 import type { RoleRunResult } from "./shared";
 
 export { handoffHistory };
 
-const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const ROLES_FILE = path.join(RUNTIME_DIR, "roles.json");
-const WATCHDOG_EXTENSION = path.join(RUNTIME_DIR, "extensions", "agent-watchdog", "index.ts");
-const CONTEXT_EXTENSION = path.join(RUNTIME_DIR, "extensions", "codeflow-context", "index.ts");
-const BASH_COMPRESSOR_EXTENSION = path.join(RUNTIME_DIR, "extensions", "bash-compressor", "index.ts");
-const USAGE_LEDGER_EXTENSION = path.join(RUNTIME_DIR, "extensions", "usage-ledger", "index.ts");
-const ROLE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
-const INTERNAL_ROLES = new Set(["zipper"]);
 
 interface OpenedHandoff {
 	handoffId: string;
@@ -75,7 +64,6 @@ function freshThreadId(): string {
 }
 
 export function resolveGoalTask(
-	agent: string,
 	goalId: string | undefined,
 	thread: string | undefined,
 ): GoalTaskRef {

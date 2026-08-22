@@ -75,9 +75,43 @@ describe("task registry", () => {
 		expect(MAX_CONCURRENCY).toBe(8);
 	});
 
+	test("organization tools are depth-scoped and role-independent", async () => {
+		const mod = await import("../../runtime/extensions/codeflow-task/index.ts");
+		const names = () => {
+			const registered = new Map<string, unknown>();
+			mod.default({
+				registerTool: (tool: { name: string }) => registered.set(tool.name, tool),
+			} as never);
+			return [...registered.keys()].sort();
+		};
+		process.env.CODEFLOW_AGENT_ROLE = "ghost-role";
+		process.env.CODEFLOW_AGENT_DEPTH = "0";
+		expect(names()).toEqual(["goal", "task", "task_group"]);
+		process.env.CODEFLOW_AGENT_ROLE = "planner";
+		process.env.CODEFLOW_AGENT_DEPTH = "1";
+		expect(names()).toEqual([]);
+	});
+
+	test("task schemas contain prompt, optional goal, and optional thread only", async () => {
+		const mod = await import("../../runtime/extensions/codeflow-task/index.ts");
+		const registered = new Map<string, any>();
+		mod.default({
+			registerTool: (tool: { name: string; parameters?: unknown }) =>
+				registered.set(tool.name, tool),
+		} as never);
+		const keys = (name: string) =>
+			Object.keys((registered.get(name)?.parameters as { properties: Record<string, unknown> }).properties).sort();
+		expect(keys("task")).toEqual(["goal_id", "prompt", "thread"]);
+		expect(keys("task_group")).toEqual(["max_concurrency", "tasks"]);
+		const taskEntry = (registered.get("task_group")?.parameters as {
+			properties: { tasks: { items?: { properties?: Record<string, unknown> } } };
+		}).properties.tasks.items?.properties;
+		expect(Object.keys(taskEntry).sort()).toEqual(["goal_id", "prompt", "thread"]);
+	});
+
 	test("resolves a goal thread and persistent session id", () => {
 		defineMovementGoal();
-		const goal = resolveGoalTask("tester", "movement-r1", "implementation");
+		const goal = resolveGoalTask("movement-r1", "implementation");
 		expect(goal).toMatchObject({
 			goalId: "movement-r1",
 			thread: "implementation",
@@ -88,7 +122,7 @@ describe("task registry", () => {
 
 	test("thread continuations receive a bounded body pointer; fresh threads do not", () => {
 		defineMovementGoal();
-		const goal = resolveGoalTask("coder", "movement-r1", "implementation");
+		const goal = resolveGoalTask("movement-r1", "implementation");
 		const full = "Outcome: implement movement\nIntent: preserve behavior\n";
 		const first = openHandoff(paths, {
 			role: "coder",
@@ -122,8 +156,8 @@ describe("task registry", () => {
 	});
 
 	test("an omitted goal is ungrouped and an omitted thread is fresh", () => {
-		const first = resolveGoalTask("tester", undefined, undefined);
-		const second = resolveGoalTask("tester", undefined, undefined);
+		const first = resolveGoalTask(undefined, undefined);
+		const second = resolveGoalTask(undefined, undefined);
 		expect(first).toMatchObject({ goalId: "_ungrouped", contract: null });
 		expect(second.thread).not.toBe(first.thread);
 		expect(first.sessionId).toContain(`${paths.runId}-_ungrouped-`);
@@ -131,10 +165,10 @@ describe("task registry", () => {
 
 	test("rejects invalid threads and refuses concurrent same-goal-thread work", () => {
 		defineMovementGoal();
-		expect(() => resolveGoalTask("tester", "movement-r1", "Invalid Thread")).toThrow(
+		expect(() => resolveGoalTask("movement-r1", "Invalid Thread")).toThrow(
 			"invalid task thread",
 		);
-		const goal = resolveGoalTask("tester", "movement-r1", "implementation");
+		const goal = resolveGoalTask("movement-r1", "implementation");
 		expect(() => assertThreadAvailable(goal)).not.toThrow();
 		openHandoff(paths, {
 			role: "tester",
@@ -161,7 +195,6 @@ describe("task registry", () => {
 			task.execute(
 				"tool-call",
 				{
-					agent: "tester",
 					prompt: "decide a boundary",
 					goal_id: "movement-r1",
 					thread: "Invalid Thread",

@@ -431,7 +431,6 @@ function debug(argv: string[]): number {
 		console.log(`model: ${definition.model}`);
 		console.log(`prompt: ${definition.prompt}`);
 		if (definition.tools) console.log(`tools: ${definition.tools.join(",")}`);
-		if (definition.delegates) console.log(`delegates: ${definition.delegates}`);
 		return 0;
 	}
 	if (sub === "skill") {

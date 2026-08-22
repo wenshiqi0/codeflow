@@ -36,7 +36,6 @@ const HOST_GUARD_EXTENSION = path.join(RUNTIME_DIR, "extensions", "host-guard", 
 const ROLE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 export interface TaskDetails {
-	agent: string;
 	exitCode: number;
 	stopReason?: string;
 	stderr: string;
@@ -52,22 +51,6 @@ function listAvailableRoles(): string {
 		(role) => !resolveConfiguredRole(ROLES_FILE, role)?.internal,
 	);
 	return roles.length > 0 ? roles.join(", ") : "none";
-}
-
-const delegatesCache = new Map<string, boolean>();
-
-export function roleMayDelegate(role: string | undefined, depth: number): boolean {
-	if (!role || depth !== 0 || !ROLE_NAME_PATTERN.test(role)) return false;
-	const cached = delegatesCache.get(role);
-	if (cached !== undefined) return cached;
-	let result = false;
-	try {
-		result = resolveConfiguredRole(ROLES_FILE, role)?.delegates === true;
-	} catch {
-		return false;
-	}
-	delegatesCache.set(role, result);
-	return result;
 }
 
 /** Absolute evidence root for the current run; absent outside a Codeflow run. */

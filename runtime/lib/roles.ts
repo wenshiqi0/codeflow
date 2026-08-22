@@ -1,7 +1,7 @@
 /**
  * Role resolution from the structured runtime registry.
  *
- * `runtime/roles.json` owns machine policy (model, tools, lanes). Role behavior
+ * `runtime/roles.json` owns machine policy (model, tools). Role behavior
  * lives in one prompt below `references/capabilities/`. Keeping those concerns
  * separate removes the old duplicate agent Markdown layer while preserving one
  * auditable source for each kind of truth.
@@ -15,7 +15,6 @@ export const ALLOWED_KEYS = new Set([
 	"model",
 	"prompt",
 	"tools",
-	"delegates",
 	"needs_project_rules",
 	"goal_lane",
 	"internal",
@@ -26,7 +25,6 @@ export interface RoleDefinition {
 	model: string;
 	prompt: string;
 	tools?: string[];
-	delegates?: boolean;
 	needs_project_rules?: false | "shared" | "full";
 	goal_lane?: "test" | "code" | "verify";
 	internal?: boolean;
@@ -44,7 +42,6 @@ export interface ResolvedRole {
 	systemPrompt: string;
 	promptPath: string;
 	tools: string[];
-	delegates: boolean;
 	needsProjectRules: false | "shared" | "full";
 	goalLane?: "test" | "code" | "verify";
 	internal: boolean;
@@ -91,9 +88,6 @@ function loadRegistry(registryFile: string): RoleRegistry {
 		}
 		if (value.tools !== undefined && (!Array.isArray(value.tools) || value.tools.some((tool) => typeof tool !== "string" || tool.trim() === ""))) {
 			fail(`role ${role}: tools must be an array of non-empty strings`);
-		}
-		if (value.delegates !== undefined && typeof value.delegates !== "boolean") {
-			fail(`role ${role}: delegates must be boolean`);
 		}
 		if (value.internal !== undefined && typeof value.internal !== "boolean") {
 			fail(`role ${role}: internal must be boolean`);
@@ -162,7 +156,6 @@ export function resolveRole(registryFile: string, role: string): ResolvedRole | 
 		systemPrompt: fs.readFileSync(promptPath, "utf-8"),
 		promptPath,
 		tools: (definition.tools ?? []).map((tool) => tool.trim()),
-		delegates: definition.delegates === true,
 		needsProjectRules: definition.needs_project_rules ?? "full",
 		goalLane: definition.goal_lane,
 		internal: definition.internal === true,

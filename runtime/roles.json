@@ -25,7 +25,6 @@
         "task",
         "task_group"
       ],
-      "delegates": true,
       "needs_project_rules": "full"
     },
     "supervisor": {

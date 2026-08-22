@@ -18,7 +18,7 @@ import {
 	TaskContractError,
 	type GoalTaskRef,
 } from "./registry";
-import { roleMayDelegate, runRoleChild, type TaskDetails } from "./role-launcher";
+import { runRoleChild, type TaskDetails } from "./role-launcher";
 
 export const MAX_CONCURRENCY = 8;
 export const MAX_TASK_PROMPT_CHARS = 4_000;
@@ -52,7 +52,6 @@ export function taskResolutionFailure(error: unknown): never {
 }
 
 const TaskParams = Type.Object({
-	agent: Type.String({ description: "Codeflow role name; resolved from runtime/roles.json" }),
 	prompt: Type.String({
 		minLength: 1,
 		maxLength: MAX_TASK_PROMPT_CHARS,
@@ -77,7 +76,6 @@ const GoalParams = Type.Object({
 const TaskGroupParams = Type.Object({
 	tasks: Type.Array(
 		Type.Object({
-			agent: Type.String({ description: "Codeflow role name" }),
 			prompt: Type.String({
 				minLength: 1,
 				maxLength: MAX_TASK_PROMPT_CHARS,
@@ -125,12 +123,10 @@ export function childHandoffPrompt(
 }
 
 export default function (pi: ExtensionAPI) {
-	// Delegation is an explicit role permission and is available only at depth
-	// 0. Children always run at depth 1, so they can never re-register tools
-	// even if their registry entry also contains `delegates: true`.
-	const role = process.env.CODEFLOW_AGENT_ROLE;
+	// Organization is a process-position capability. Children always run at
+	// depth 1, so they never receive these tools.
 	const depth = Number(process.env.CODEFLOW_AGENT_DEPTH ?? "0");
-	if (!roleMayDelegate(role, depth)) return;
+	if (!Number.isFinite(depth) || depth !== 0) return;
 
 	pi.registerTool({
 		name: "goal",
@@ -171,13 +167,13 @@ export default function (pi: ExtensionAPI) {
 		parameters: TaskParams,
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx): Promise<ToolResult<TaskDetails>> {
-			const agent = params.agent.trim();
-			const details: TaskDetails = { agent, exitCode: 1, stderr: "" };
+			const agent = "planner";
+			const details: TaskDetails = { exitCode: 1, stderr: "" };
 
 			let goal: GoalTaskRef | null = null;
 			try {
 				assertTaskPrompt(params.prompt);
-				goal = resolveGoalTask(agent, params.goal_id, params.thread);
+				goal = resolveGoalTask(params.goal_id, params.thread);
 				if (goal) assertThreadAvailable(goal);
 			} catch (error) {
 				taskResolutionFailure(error);
@@ -198,7 +194,6 @@ export default function (pi: ExtensionAPI) {
 				goal && paths ? { id: goal.sessionId, dir: paths.piSessions } : undefined,
 				goal ?? undefined,
 			);
-			details.agent = result.agent;
 			details.exitCode = result.exitCode;
 			details.stopReason = result.stopReason;
 			details.stderr = result.stderr;
@@ -258,26 +253,24 @@ export default function (pi: ExtensionAPI) {
 					const task = tasks[index];
 					if (signal?.aborted) {
 						results[index] = {
-							agent: task.agent.trim(),
 							success: false,
 							content: "Task was aborted by cancellation before it started.",
 							exitCode: 1,
 						};
 						continue;
 					}
-					const agent = task.agent.trim();
+					const agent = "planner";
 					let goal: GoalTaskRef | null = null;
 					try {
 						assertTaskPrompt(task.prompt);
-						goal = resolveGoalTask(agent, task.goal_id, task.thread);
+						goal = resolveGoalTask(task.goal_id, task.thread);
 						if (goal) assertThreadAvailable(goal);
 					} catch (error) {
 						if (!(error instanceof GoalError) && !(error instanceof TaskContractError)) {
 							taskResolutionFailure(error);
 						}
-						results[index] = {
-							agent,
-							success: false,
+					results[index] = {
+						success: false,
 							content: error instanceof Error ? error.message : String(error),
 							exitCode: 1,
 						};
@@ -297,7 +290,6 @@ export default function (pi: ExtensionAPI) {
 					);
 					if (!handoff) {
 						results[index] = {
-							agent: result.agent,
 							success: result.success,
 							content: result.content,
 							exitCode: result.exitCode,
@@ -306,7 +298,6 @@ export default function (pi: ExtensionAPI) {
 					}
 					const reconciled = reconcileHandoff(handoff, result, ctx.cwd);
 					results[index] = {
-						agent: result.agent,
 						...delegationPointer(
 							handoff.handoffId,
 							reconciled.status,

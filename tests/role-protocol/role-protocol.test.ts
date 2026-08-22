@@ -59,7 +59,6 @@ describe("capability-oriented role protocol", () => {
 		const definition = readRoleDefinition(registry, "planner")!;
 		expect(definition.model).toBe("zhipuai-coding-plan/glm-5.3");
 		expect(definition.tools).toEqual(["read", "write", "bash", "goal", "task", "task_group"]);
-		expect(definition.delegates).toBeTrue();
 	});
 
 	test("specialist ownership is precise and non-overlapping", () => {
