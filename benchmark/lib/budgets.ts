@@ -7,13 +7,20 @@
  * never enters ranking. Cost is not a budget axis.
  */
 
-export type BudgetName = "model_rounds" | "tool_calls" | "total_tokens" | "wall_seconds";
+export type BudgetName =
+	| "model_rounds"
+	| "tool_calls"
+	| "fresh_tokens"
+	| "total_tokens"
+	| "wall_seconds";
 
 export interface BenchmarkBudgets {
 	/** Default 120 completed model rounds per instance attempt. */
 	model_rounds: number;
 	/** Default 400 top-level tool calls per instance attempt. */
 	tool_calls: number;
+	/** Default 300,000 non-cache input + output tokens per instance attempt. */
+	fresh_tokens: number;
 	/** Default 3,000,000 provider-reported total tokens per instance attempt. */
 	total_tokens: number;
 	/** Default 5400s (90 min) wall time; safety stop only, not ranked. */
@@ -24,6 +31,7 @@ export interface BenchmarkBudgets {
 export const DEFAULT_BENCHMARK_BUDGETS: BenchmarkBudgets = {
 	model_rounds: 120,
 	tool_calls: 400,
+	fresh_tokens: 300_000,
 	total_tokens: 3_000_000,
 	wall_seconds: 5_400,
 };
@@ -41,6 +49,8 @@ const BUDGET_NAMES: Record<string, BudgetName> = {
 	model_rounds: "model_rounds",
 	"tool-calls": "tool_calls",
 	tool_calls: "tool_calls",
+	"fresh-tokens": "fresh_tokens",
+	fresh_tokens: "fresh_tokens",
 	"total-tokens": "total_tokens",
 	total_tokens: "total_tokens",
 	"wall-seconds": "wall_seconds",
@@ -62,7 +72,7 @@ export function parseBudgetOverrides(entries: string[]): Partial<BenchmarkBudget
 		if (name === undefined) {
 			throw new BenchmarkBudgetError(
 				`invalid budget entry '${entry}': expected <name>=<value> with name one of ` +
-					"model-rounds|tool-calls|total-tokens|wall-seconds",
+					"model-rounds|tool-calls|fresh-tokens|total-tokens|wall-seconds",
 			);
 		}
 		const value = Number(rawValue);
@@ -95,6 +105,8 @@ export function validateBudgetOverrides(overrides: Partial<BenchmarkBudgets> | u
 export interface BudgetState {
 	model_rounds: number;
 	tool_calls: number;
+	/** Null when any round omitted cache fields; absence never becomes zero. */
+	fresh_tokens: number | null;
 	total_tokens: number;
 	wall_seconds: number;
 }
@@ -102,18 +114,20 @@ export interface BudgetState {
 const CANONICAL_ORDER: readonly BudgetName[] = [
 	"model_rounds",
 	"tool_calls",
+	"fresh_tokens",
 	"total_tokens",
 	"wall_seconds",
 ];
 
 /**
  * First cap reached, in canonical order model_rounds, tool_calls,
- * total_tokens, wall_seconds; null when no cap is reached. A cap is reached
+ * fresh_tokens, total_tokens, wall_seconds; null when no cap is reached. A cap is reached
  * when the current count is `>=` the cap (a 120-round cap allows at most 120
  * completed rounds; the attempt stops before issuing round 121).
  */
 export function budgetTerminatedBy(state: BudgetState, budgets: BenchmarkBudgets): BudgetName | null {
 	for (const name of CANONICAL_ORDER) {
+		if (state[name] === null) continue;
 		if (state[name] >= budgets[name]) return name;
 	}
 	return null;

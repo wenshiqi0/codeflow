@@ -119,6 +119,9 @@ function streamRun(options: StreamOptions = {}): StreamOutcome {
 		"--out", outDir,
 	];
 	if (options.budget !== undefined) args.push("--budget", options.budget);
+	if (options.budget?.startsWith("fresh-") !== true) {
+		args.push("--budget", "fresh-tokens=1000000000");
+	}
 	const result = runCodeflow(
 		args,
 		world.env(capture, {

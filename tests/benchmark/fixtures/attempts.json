@@ -114,7 +114,7 @@
           "role": "coder",
           "provider": "fixture",
           "model": "fixture-coder",
-          "usage": { "input": 1000000, "output": 700000, "reasoning": 0, "cache_read": 0, "cache_write": 0, "total_tokens": 1700000, "cost": null },
+          "usage": { "input": 0, "output": 0, "reasoning": 0, "cache_read": 1700000, "cache_write": 0, "total_tokens": 1700000, "cost": null },
           "tool_calls": [
             { "call_id": "g1", "tool": "bash", "status": "succeeded" },
             { "call_id": "g2", "tool": "write", "status": "succeeded" },
@@ -126,7 +126,7 @@
           "role": "coder",
           "provider": "fixture",
           "model": "fixture-coder",
-          "usage": { "input": 1000000, "output": 700000, "reasoning": 0, "cache_read": 0, "cache_write": 0, "total_tokens": 1700000, "cost": null },
+          "usage": { "input": 0, "output": 0, "reasoning": 0, "cache_read": 1700000, "cache_write": 0, "total_tokens": 1700000, "cost": null },
           "tool_calls": [
             { "call_id": "g4", "tool": "bash", "status": "succeeded" },
             { "call_id": "g5", "tool": "read", "status": "rejected" }

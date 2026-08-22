@@ -60,6 +60,7 @@ function stopRun(
 			"--instances", writeInstancesFile([INSTANCE_RESOLVED]),
 			"--out", outDir,
 			"--budget", budget,
+			...(budget.startsWith("fresh-") ? [] : ["--budget", "fresh-tokens=1000000000"]),
 		],
 		world.env(capture, { driverMode, marathon }),
 		60_000,

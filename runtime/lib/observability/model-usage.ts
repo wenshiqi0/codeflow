@@ -261,6 +261,8 @@ export function readAttemptUsageRecords(file: string): AttemptUsageRecord[] {
 export interface TokenUsageSummary {
 	input: number;
 	output: number;
+	/** input + output; null when cache availability is unknown. */
+	fresh_tokens: number | null;
 	reasoning: number;
 	/** Unreported counts as 0 in sums. */
 	cache_read: number;
@@ -289,6 +291,7 @@ export function summarizeTokenUsage(records: AttemptUsageRecord[]): TokenUsageSu
 		total_tokens: 0,
 	};
 	let cacheAvailable = records.length > 0;
+	let freshTokens = 0;
 	let costKnown = false;
 	let costTotal = 0;
 
@@ -296,6 +299,7 @@ export function summarizeTokenUsage(records: AttemptUsageRecord[]): TokenUsageSu
 		const usage = record.usage;
 		totals.input += usage.input;
 		totals.output += usage.output;
+		freshTokens += usage.input + usage.output;
 		totals.reasoning += usage.reasoning;
 		totals.cache_read += usage.cache_read ?? 0;
 		totals.cache_write += usage.cache_write ?? 0;
@@ -313,6 +317,7 @@ export function summarizeTokenUsage(records: AttemptUsageRecord[]): TokenUsageSu
 	return {
 		input: totals.input,
 		output: totals.output,
+		fresh_tokens: cacheAvailable ? freshTokens : null,
 		reasoning: totals.reasoning,
 		cache_read: totals.cache_read,
 		cache_write: totals.cache_write,

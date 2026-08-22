@@ -47,6 +47,7 @@ function metrics(overrides: Record<string, unknown> = {}) {
 		tokens: {
 			input: 0,
 			output: 0,
+			fresh_tokens: null,
 			reasoning: 0,
 			cache_read: 0,
 			cache_write: 0,
@@ -88,11 +89,12 @@ function writeOutDir(
 			tool_network: "disabled",
 			model_provider_network: "disabled",
 			budgets: {
-				defaults: { model_rounds: 120, tool_calls: 400, total_tokens: 3000000, wall_seconds: 5400 },
+				defaults: { model_rounds: 120, tool_calls: 400, fresh_tokens: 3000000, total_tokens: 3000000, wall_seconds: 5400 },
 				overrides: null,
 				effective: {
 					model_rounds: 120,
 					tool_calls: 400,
+					fresh_tokens: 3000000,
 					total_tokens: 3000000,
 					wall_seconds: 5400,
 				},
@@ -290,6 +292,7 @@ describe("per-resolved efficiency numerators", () => {
 		expect(report.budget_terminations).toEqual({
 			model_rounds: 1,
 			tool_calls: 0,
+			fresh_tokens: 0,
 			total_tokens: 0,
 			wall_seconds: 1,
 			none: 2,
@@ -300,6 +303,7 @@ describe("per-resolved efficiency numerators", () => {
 			read: 100,
 			write: 20,
 			fresh_input_tokens: 0,
+			fresh_tokens: null,
 			prompt_tokens: 120,
 			hit_rate: null,
 			metrics_available: false,
@@ -330,6 +334,7 @@ describe("per-resolved efficiency numerators", () => {
 			total_tokens: input + read + write + 10,
 			cache_metrics_available: true,
 			cache_hit_rate: read / (input + read + write),
+			fresh_tokens: input,
 		});
 		writeOutDir(dir, [
 			{ id: "demo/a", verdict: "resolved", metrics: metrics({ tokens: tokenSummary(10, 90, 0) }) },
@@ -337,6 +342,7 @@ describe("per-resolved efficiency numerators", () => {
 		]);
 		const report = mod.buildBenchmarkReport(dir);
 		expect(report.cache.fresh_input_tokens).toBe(20);
+		expect(report.cache.fresh_tokens).toBe(20);
 		expect(report.cache.read).toBe(100);
 		expect(report.cache.write).toBe(10);
 		expect(report.cache.prompt_tokens).toBe(130);
@@ -372,6 +378,7 @@ describe("report shape discipline", () => {
 		expect(report.comparison_keys.budgets).toEqual({
 			model_rounds: 120,
 			tool_calls: 400,
+			fresh_tokens: 3_000_000,
 			total_tokens: 3_000_000,
 			wall_seconds: 5400,
 		});

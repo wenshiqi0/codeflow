@@ -83,7 +83,14 @@ export interface BenchmarkReport {
 		tokens_per_instance_cv_median: number | null;
 		verdict_flip_rate: number | null;
 	} | null;
-	budget_terminations: { model_rounds: number; tool_calls: number; total_tokens: number; wall_seconds: number; none: number };
+	budget_terminations: {
+		model_rounds: number;
+		tool_calls: number;
+		fresh_tokens: number;
+		total_tokens: number;
+		wall_seconds: number;
+		none: number;
+	};
 	patch_hygiene: {
 		attempts_with_stripped_binary_patches: number;
 		stripped_binary_path_count: number;
@@ -97,6 +104,7 @@ export interface BenchmarkReport {
 		read: number;
 		write: number;
 		fresh_input_tokens: number;
+		fresh_tokens: number | null;
 		prompt_tokens: number;
 		hit_rate: number | null;
 		metrics_available: boolean;
@@ -133,7 +141,13 @@ export interface BenchmarkReport {
 		dataset_revision: string;
 		/** sha256 hex of the sorted selected instance ids joined by "\n". */
 		instance_set_digest: string;
-		budgets: { model_rounds: number; tool_calls: number; total_tokens: number; wall_seconds: number };
+		budgets: {
+			model_rounds: number;
+			tool_calls: number;
+			fresh_tokens: number;
+			total_tokens: number;
+			wall_seconds: number;
+		};
 		tool_network: string;
 		harness_commit: string;
 	};
@@ -143,6 +157,7 @@ const VERDICTS: readonly BenchmarkVerdict[] = ["resolved", "unresolved", "infra_
 const TERMINATION_KEYS: readonly (BudgetName | "none")[] = [
 	"model_rounds",
 	"tool_calls",
+	"fresh_tokens",
 	"total_tokens",
 	"wall_seconds",
 	"none",
@@ -558,7 +573,14 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 	}
 	const denominator = counts.resolved + counts.unresolved;
 
-	const budgetTerminations = { model_rounds: 0, tool_calls: 0, total_tokens: 0, wall_seconds: 0, none: 0 };
+	const budgetTerminations = {
+		model_rounds: 0,
+		tool_calls: 0,
+		fresh_tokens: 0,
+		total_tokens: 0,
+		wall_seconds: 0,
+		none: 0,
+	};
 	for (const attempt of attempts) {
 		budgetTerminations[attempt.terminated_by ?? "none"]++;
 	}
@@ -579,11 +601,13 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 	let cacheRead = 0;
 	let cacheWrite = 0;
 	let cacheInput = 0;
+	let freshTokens = 0;
 	let cacheAvailable = attempts.length > 0;
 	for (const attempt of attempts) {
 		cacheRead += attempt.metrics.tokens.cache_read;
 		cacheWrite += attempt.metrics.tokens.cache_write;
 		cacheInput += attempt.metrics.tokens.input;
+		freshTokens += attempt.metrics.tokens.fresh_tokens ?? 0;
 		if (!attempt.metrics.tokens.cache_metrics_available) cacheAvailable = false;
 	}
 	const cacheDenominator = cacheInput + cacheRead + cacheWrite;
@@ -689,6 +713,7 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 			read: cacheRead,
 			write: cacheWrite,
 			fresh_input_tokens: cacheInput,
+			fresh_tokens: cacheAvailable ? freshTokens : null,
 			prompt_tokens: cacheDenominator,
 			hit_rate: cacheAvailable && cacheDenominator > 0 ? cacheRead / cacheDenominator : null,
 			metrics_available: cacheAvailable,
@@ -742,6 +767,7 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 			budgets: {
 				model_rounds: effective.model_rounds,
 				tool_calls: effective.tool_calls,
+				fresh_tokens: effective.fresh_tokens,
 				total_tokens: effective.total_tokens,
 				wall_seconds: effective.wall_seconds,
 			},

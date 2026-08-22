@@ -134,6 +134,7 @@ describe("the manifest pins what actually ran", () => {
 		expect(manifest.budgets.defaults).toEqual({
 			model_rounds: 120,
 			tool_calls: 400,
+			fresh_tokens: 300_000,
 			total_tokens: 3_000_000,
 			wall_seconds: 5400,
 		});
@@ -280,6 +281,7 @@ describe("report.json", () => {
 		expect(report().budget_terminations).toEqual({
 			model_rounds: 0,
 			tool_calls: 0,
+			fresh_tokens: 0,
 			total_tokens: 1,
 			wall_seconds: 0,
 			none: 4,
@@ -301,13 +303,14 @@ describe("report.json", () => {
 
 	test("cache aggregate is unavailable while any attempt is unreported", () => {
 		expect(report().cache).toEqual({
-			read: 120,
-			write: 5,
-			fresh_input_tokens: 2_002_010,
-			prompt_tokens: 2_002_135,
-			hit_rate: null,
-			metrics_available: false,
-			per_attempt_hit_rate: { median: 0, p90: 9 / 110 },
+				read: 3_400_120,
+				write: 5,
+				fresh_input_tokens: 2_010,
+				fresh_tokens: null,
+				prompt_tokens: 3_402_135,
+				hit_rate: null,
+				metrics_available: false,
+				per_attempt_hit_rate: { median: 9 / 110, p90: 1 },
 		});
 	});
 

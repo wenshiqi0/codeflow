@@ -50,7 +50,7 @@ run options:
   --attempts <n>                    attempts per instance, default 1;
                                     values >1 are non-official diagnostics
   --budget <name>=<value>           repeatable override; name one of
-                                    model-rounds|tool-calls|total-tokens|wall-seconds
+                                    model-rounds|tool-calls|fresh-tokens|total-tokens|wall-seconds
   --model-config <id>               Codeflow model config id, default "default"
   --fixture <dir>                   offline fixture driver + evaluator +
                                     simulated clock (no model/docker/network)

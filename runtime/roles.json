@@ -4,12 +4,14 @@
       "description": "Shapes architecture direction, reversibility, boundaries, and fitness functions.",
       "model": "zhipuai-coding-plan/glm-5.3",
       "prompt": "references/capabilities/architecture.md",
+      "handoff_round_cap": 10,
       "needs_project_rules": "full"
     },
     "coder": {
       "description": "Owns technical discovery, developer tests, implementation, diagnosis, and code evolution.",
       "model": "zhipuai-coding-plan/glm-5.3",
       "prompt": "references/capabilities/implementation.md",
+      "handoff_round_cap": 30,
       "needs_project_rules": "shared",
       "goal_lane": "code"
     },
@@ -32,6 +34,7 @@
       "description": "Owns product contracts, business cases, executable business tests, and assertion intent.",
       "model": "zhipuai-coding-plan/glm-5.3",
       "prompt": "references/capabilities/testing.md",
+      "handoff_round_cap": 25,
       "needs_project_rules": "shared",
       "goal_lane": "test"
     },
@@ -39,6 +42,7 @@
       "description": "Creates independent execution evidence and classifies what it proves.",
       "model": "deepseek/deepseek-v4-flash",
       "prompt": "references/capabilities/verification.md",
+      "handoff_round_cap": 20,
       "needs_project_rules": false,
       "goal_lane": "verify"
     },

@@ -110,11 +110,17 @@ the same shapes with fixture content):
 ### 1.2 Budgets
 
 ```ts
-export type BudgetName = "model_rounds" | "tool_calls" | "total_tokens" | "wall_seconds";
+export type BudgetName =
+  | "model_rounds"
+  | "tool_calls"
+  | "fresh_tokens"
+  | "total_tokens"
+  | "wall_seconds";
 
 export interface BenchmarkBudgets {
   model_rounds: number;   // default 120
   tool_calls: number;     // default 400
+  fresh_tokens: number;   // default 300_000, input + output when cache reporting is complete
   total_tokens: number;   // default 3_000_000, provider-reported
   wall_seconds: number;   // default 5400 (90 min), safety stop only
 }
@@ -123,17 +129,18 @@ export const DEFAULT_BENCHMARK_BUDGETS: BenchmarkBudgets;
 
 export class BenchmarkBudgetError extends Error;
 
-/** CLI spellings model-rounds / tool-calls / total-tokens / wall-seconds map to snake_case. */
+/** CLI spellings model-rounds / tool-calls / fresh-tokens / total-tokens / wall-seconds map to snake_case. */
 export function parseBudgetOverrides(entries: string[]): Partial<BenchmarkBudgets>;
 
 export interface BudgetState {
   model_rounds: number;
   tool_calls: number;
+  fresh_tokens: number | null; // null when cache fields were unreported
   total_tokens: number;
   wall_seconds: number;
 }
 
-/** First cap reached, in canonical order model_rounds, tool_calls, total_tokens, wall_seconds; null if none. */
+/** First cap reached, in canonical order model_rounds, tool_calls, fresh_tokens, total_tokens, wall_seconds; null if none. */
 export function budgetTerminatedBy(state: BudgetState, budgets: BenchmarkBudgets): BudgetName | null;
 
 export interface BenchmarkClock {
@@ -769,7 +776,7 @@ codeflow benchmark run    --dataset <snapshot-path | hub-id>
                           [--concurrency <n>]         # default 1
                           [--attempts <n>]            # attempts per instance; default 1,
                                                       # >1 is non-official diagnostic only
-                          [--budget <name>=<value>]... # repeatable; model-rounds|tool-calls|total-tokens|wall-seconds
+                          [--budget <name>=<value>]... # repeatable; model-rounds|tool-calls|fresh-tokens|total-tokens|wall-seconds
                           [--model-config <id>]        # default "default"
                           [--fixture <dir>]            # offline driver+evaluator+simulated clock
 

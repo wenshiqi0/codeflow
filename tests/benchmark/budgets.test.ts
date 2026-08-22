@@ -81,6 +81,7 @@ describe("budget constants and parsing", () => {
 		expect(mod.DEFAULT_BENCHMARK_BUDGETS).toEqual({
 			model_rounds: 120,
 			tool_calls: 400,
+			fresh_tokens: 300_000,
 			total_tokens: 3_000_000,
 			wall_seconds: 5400,
 		});
@@ -93,6 +94,8 @@ describe("budget constants and parsing", () => {
 			tool_calls: 10,
 			wall_seconds: 60,
 		});
+		expect(mod.parseBudgetOverrides(["fresh-tokens=500000"])).toEqual({ fresh_tokens: 500000 });
+		expect(mod.parseBudgetOverrides(["fresh_tokens=500000"])).toEqual({ fresh_tokens: 500000 });
 		expect(() => mod.parseBudgetOverrides(["dollars=100"])).toThrow();
 		expect(() => mod.parseBudgetOverrides(["model-rounds=zero"])).toThrow();
 		expect(() => mod.parseBudgetOverrides(["model-rounds=0"])).toThrow();
@@ -101,18 +104,19 @@ describe("budget constants and parsing", () => {
 	test("stop detection: >= is a stop, canonical order breaks ties, null when clear", async () => {
 		const mod = await bench();
 		const budgets = mod.DEFAULT_BENCHMARK_BUDGETS;
-		expect(mod.budgetTerminatedBy({ model_rounds: 119, tool_calls: 399, total_tokens: 2_999_999, wall_seconds: 5399 }, budgets)).toBeNull();
-		expect(mod.budgetTerminatedBy({ model_rounds: 120, tool_calls: 0, total_tokens: 0, wall_seconds: 0 }, budgets)).toBe("model_rounds");
-		expect(mod.budgetTerminatedBy({ model_rounds: 0, tool_calls: 400, total_tokens: 0, wall_seconds: 0 }, budgets)).toBe("tool_calls");
-		expect(mod.budgetTerminatedBy({ model_rounds: 0, tool_calls: 0, total_tokens: 3_000_000, wall_seconds: 0 }, budgets)).toBe("total_tokens");
-		expect(mod.budgetTerminatedBy({ model_rounds: 0, tool_calls: 0, total_tokens: 0, wall_seconds: 5400 }, budgets)).toBe("wall_seconds");
-		// Several caps crossed at once: the canonical order names one deterministically.
-		expect(
-			mod.budgetTerminatedBy(
-				{ model_rounds: 120, tool_calls: 400, total_tokens: 3_000_000, wall_seconds: 5400 },
-				budgets,
-			),
-		).toBe("model_rounds");
+		expect(mod.budgetTerminatedBy({ model_rounds: 119, tool_calls: 399, fresh_tokens: 299_999, total_tokens: 2_999_999, wall_seconds: 5399 }, budgets)).toBeNull();
+		expect(mod.budgetTerminatedBy({ model_rounds: 120, tool_calls: 0, fresh_tokens: 0, total_tokens: 0, wall_seconds: 0 }, budgets)).toBe("model_rounds");
+		expect(mod.budgetTerminatedBy({ model_rounds: 0, tool_calls: 400, fresh_tokens: 0, total_tokens: 0, wall_seconds: 0 }, budgets)).toBe("tool_calls");
+		expect(mod.budgetTerminatedBy({ model_rounds: 0, tool_calls: 0, fresh_tokens: 300_000, total_tokens: 0, wall_seconds: 0 }, budgets)).toBe("fresh_tokens");
+		expect(mod.budgetTerminatedBy({ model_rounds: 0, tool_calls: 0, fresh_tokens: null, total_tokens: 3_000_000, wall_seconds: 0 }, budgets)).toBe("total_tokens");
+		expect(mod.budgetTerminatedBy({ model_rounds: 0, tool_calls: 0, fresh_tokens: 0, total_tokens: 0, wall_seconds: 5400 }, budgets)).toBe("wall_seconds");
+		expect(mod.budgetTerminatedBy({ model_rounds: 120, tool_calls: 400, fresh_tokens: 300_000, total_tokens: 3_000_000, wall_seconds: 5400 }, budgets)).toBe("model_rounds");
+	});
+
+	test("fresh tokens stay unavailable when cache reporting is absent", async () => {
+		const mod = await bench();
+		const budgets = { ...mod.DEFAULT_BENCHMARK_BUDGETS, fresh_tokens: 1 };
+		expect(mod.budgetTerminatedBy({ model_rounds: 0, tool_calls: 0, fresh_tokens: null, total_tokens: 0, wall_seconds: 0 }, budgets)).toBeNull();
 	});
 });
 
@@ -199,6 +203,33 @@ describe("deterministic stops through the runner (simulated clock)", () => {
 		const predictions = readJsonl(path.join(outDir, "predictions.jsonl"));
 		expect(predictions).toHaveLength(1);
 		expect(predictions[0].model_patch).toContain("# partial");
+	});
+
+	test("fresh-token stop precedes total-token safety cap and records its axis", async () => {
+		const mod = await bench();
+		const outDir = makeTmpDir();
+		const evalCalls: any[] = [];
+		const driver = scriptedDriver([
+			{ type: "workspace_write", path: "fix.py", content: "# fresh fix\n" },
+			roundEvent(1, 100),
+			roundEvent(1, 100),
+			roundEvent(1, 100),
+		], []);
+		const result = await mod.runBenchmark({
+			dataset: SNAPSHOT,
+			instances: ["demo/demo-1001"],
+			outDir,
+			budgets: { fresh_tokens: 150 },
+			driver,
+			evaluator: spyEvaluator("resolved", evalCalls),
+			clock: { now: () => 0 },
+			codeflowCommit: "0".repeat(40),
+		});
+		const attempt = readJson(path.join(outDir, "cases", "demo__demo-1001", "case.json")).attempts[0];
+		expect(attempt.terminated_by).toBe("fresh_tokens");
+		expect(attempt.metrics.model_rounds_total).toBe(2);
+		expect(result.report.budget_terminations.fresh_tokens).toBe(1);
+		expect(evalCalls).toHaveLength(1);
 	});
 
 	test("evaluation run ids are distinct per attempt and per benchmark run", async () => {

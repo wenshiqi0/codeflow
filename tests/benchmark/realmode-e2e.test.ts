@@ -330,12 +330,14 @@ describe("REAL-7: the report aggregates the real-mode run honestly", () => {
 			hit_rate: null,
 			metrics_available: false,
 			per_attempt_hit_rate: { median: 0, p90: 0 },
+			fresh_tokens: null,
 		});
 	});
 
 	test("budgets terminated nobody in this run; breakdowns attribute by model", () => {
 		expect(report().budget_terminations).toEqual({
 			model_rounds: 0, tool_calls: 0, total_tokens: 0, wall_seconds: 0, none: 3,
+			fresh_tokens: 0,
 		});
 		expect(report().breakdowns.by_model["fake-openai/fake-coder"]).toEqual({
 			model_rounds: 3,

@@ -907,11 +907,12 @@ function handBuiltOutDir(dir: string, cases: Array<{ id: string; usage: any[]; t
 			tool_network: "disabled",
 			model_provider_network: "disabled",
 			budgets: {
-				defaults: { model_rounds: 120, tool_calls: 400, total_tokens: 3000000, wall_seconds: 5400 },
+				defaults: { model_rounds: 120, tool_calls: 400, fresh_tokens: 3000000, total_tokens: 3000000, wall_seconds: 5400 },
 				overrides: null,
 				effective: {
 					model_rounds: 120,
 					tool_calls: 400,
+					fresh_tokens: 3000000,
 					total_tokens: 3000000,
 					wall_seconds: 5400,
 				},
@@ -958,6 +959,7 @@ function handBuiltOutDir(dir: string, cases: Array<{ id: string; usage: any[]; t
 			cost_total: null,
 			cache_metrics_available: false,
 			cache_hit_rate: null,
+			fresh_tokens: null,
 		},
 		wall_seconds: 0,
 		terminated_by: null,

@@ -59,6 +59,8 @@ Keep one active handoff per lane. Continue a lane from its persistent session an
 
 `EXECUTION_TIMEOUT` is a deliberate control transfer to you, not a provider failure and not permission for the child to retry. The timed-out child handoff is already terminal and its structured pointer names the reason. Choose the next bounded action: split the command, change its timeout only when existing evidence justifies the new bound, route an environment defect to coder, or open an explicit new handoff. Never replay the identical timed-out command implicitly. If none of those actions is safe and bounded, finish the root handoff `BLOCKED` with `EXECUTION_TIMEOUT`.
 
+`CONTEXT_BUDGET_EXCEEDED` from a lane means the work unit was too large: split the outcome or narrow the handoff, never re-issue it unchanged.
+
 ## Concise handoffs
 
 A handoff contains only what the receiver needs:
@@ -75,6 +77,8 @@ Do not paste source, documentation, API payloads, command transcripts, or a spec
 ## Root closure
 
 When all goal joins are terminal, write a non-empty JSON root receipt and a concise closure artifact under `.codeflow/runs/evidence/<run-id>/`. Report goal outcomes, changed files, evidence pointers, risks, and incomplete work. Finish mechanically:
+
+Once a goal's join is satisfied, do not open further lane handoffs for it; re-verification of an already satisfied join is waste, not diligence.
 
 ```bash
 code-agent handoff finish --id "$CODEFLOW_HANDOFF_ID" --status <PASS|FAIL> --receipt <root receipt path> --artifact <closure artifact path> --summary "<one line>"

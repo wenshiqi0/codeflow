@@ -273,7 +273,13 @@ async function runInstanceAttempt(
 	const usageRecords: AttemptUsageRecord[] = [];
 	const toolRecords: ToolCallRecord[] = [];
 	const failedAttempts: FailedModelAttempt[] = [];
-	const state: BudgetState = { model_rounds: 0, tool_calls: 0, total_tokens: 0, wall_seconds: 0 };
+	const state: BudgetState = {
+		model_rounds: 0,
+		tool_calls: 0,
+		fresh_tokens: 0,
+		total_tokens: 0,
+		wall_seconds: 0,
+	};
 	let terminatedBy: BudgetName | null = null;
 	let infraFailure = false;
 	let timeToFirstPatchSeconds: number | null = null;
@@ -376,7 +382,12 @@ async function runInstanceAttempt(
 
 				state.model_rounds += 1;
 				state.tool_calls += calls.length;
-				state.total_tokens += round.usage.total_tokens;
+			if (round.usage.cache_read === null || round.usage.cache_write === null) {
+				state.fresh_tokens = null;
+			} else if (state.fresh_tokens !== null) {
+				state.fresh_tokens += round.usage.input + round.usage.output;
+			}
+			state.total_tokens += round.usage.total_tokens;
 				return checkBudget();
 			}
 			case "tool_calls": {

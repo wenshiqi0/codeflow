@@ -65,6 +65,7 @@ describe("explicit zero vs unreported", () => {
 		]);
 		expect(summary.cache_metrics_available).toBe(false);
 		expect(summary.cache_hit_rate).toBeNull();
+		expect(summary.fresh_tokens).toBeNull();
 	});
 
 	test("no rounds at all: unavailable, null rate — not 0%", async () => {
@@ -119,6 +120,14 @@ describe("token-weighted cache hit rate", () => {
 		expect(summary.total_tokens).toBe(150);
 		expect(summary.reasoning).toBe(20);
 	});
+
+	test("fresh tokens are non-cache input plus output, never reasoning double-counted", async () => {
+		const mod = await bench();
+		const summary = mod.summarizeTokenUsage([
+			record({ input: 100, output: 50, reasoning: 20, cache_read: 900, cache_write: 0, total_tokens: 1050, cost: null }),
+		]);
+		expect(summary.fresh_tokens).toBe(150);
+	});
 });
 
 describe("usage observability schema compatibility", () => {
@@ -158,10 +167,11 @@ describe("cost stays informational", () => {
 		expect(summary.cost_total).toBe(3.75);
 		// No cost field exists anywhere in the budget contract (see budgets test),
 		// and the budget cap names are resource counts only.
-		for (const name of ["model_rounds", "tool_calls", "total_tokens", "wall_seconds"]) {
+		for (const name of ["model_rounds", "tool_calls", "fresh_tokens", "total_tokens", "wall_seconds"]) {
 			expect(mod.DEFAULT_BENCHMARK_BUDGETS).toHaveProperty(name);
 		}
 		expect(Object.keys(mod.DEFAULT_BENCHMARK_BUDGETS).sort()).toEqual([
+			"fresh_tokens",
 			"model_rounds",
 			"tool_calls",
 			"total_tokens",

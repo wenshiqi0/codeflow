@@ -28,4 +28,14 @@ describe("capability prompt contracts", () => {
 			"post-implementation evidence review -> `verify`; re-engage `tester` only for disputed assertion intent",
 		);
 	});
+
+	test("planner splits context-budget events and stops satisfied-goal loops", () => {
+		const planning = prompt("planning.md");
+		expect(planning).toContain(
+			"`CONTEXT_BUDGET_EXCEEDED` from a lane means the work unit was too large",
+		);
+		expect(planning).toContain(
+			"Once a goal's join is satisfied, do not open further lane handoffs for it",
+		);
+	});
 });

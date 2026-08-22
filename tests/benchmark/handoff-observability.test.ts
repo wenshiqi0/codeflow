@@ -168,9 +168,9 @@ describe("runner and report consume handoff observability", () => {
 				tool_network: "disabled",
 				model_provider_network: "disabled",
 				budgets: {
-					defaults: { model_rounds: 1, tool_calls: 1, total_tokens: 1, wall_seconds: 1 },
+					defaults: { model_rounds: 1, tool_calls: 1, fresh_tokens: 1, total_tokens: 1, wall_seconds: 1 },
 					overrides: null,
-					effective: { model_rounds: 1, tool_calls: 1, total_tokens: 1, wall_seconds: 1 },
+					effective: { model_rounds: 1, tool_calls: 1, fresh_tokens: 1, total_tokens: 1, wall_seconds: 1 },
 				},
 				driver_mode: "fixture",
 			}),

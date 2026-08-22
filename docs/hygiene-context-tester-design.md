@@ -324,10 +324,10 @@ session 历史被每轮重放；lane 第 N 个 handoff 的 session 里躺着 N �
 
 **改动**（`benchmark/lib/budgets.ts` + `runner.ts` 计量点）：
 
-- 新轴 `fresh_tokens = input − cache_read + output + reasoning`
-  （usage 记录已含全部字段，`runtime/lib/usage.ts:91-103`）；
-- `DEFAULT_BENCHMARK_BUDGETS` 加 `fresh_tokens: 800_000`（初值取
-  14539 自然收尾 case 的 fresh 用量 ×1.5，pilot 后版本化校准）；
+- 新轴 `fresh_tokens = input + output`（`input` 已是非 cache 输入，
+  `reasoning` 是 output subset，不能重复相加）；
+- `DEFAULT_BENCHMARK_BUDGETS` 加 `fresh_tokens: 300_000`（初值取
+  三个成功 case fresh 用量的安全余量，pilot 后版本化校准）；
 - `total_tokens: 3_000_000` **保留为安全硬顶**；canonical order 变为
   `model_rounds, tool_calls, fresh_tokens, total_tokens, wall_seconds`；
 - provider 未报告 cache 字段时（`tokens-cache.test.ts` 已定义的
