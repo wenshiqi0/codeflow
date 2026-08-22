@@ -336,8 +336,8 @@ describe("REAL-7: the report aggregates the real-mode run honestly", () => {
 
 	test("budgets terminated nobody in this run; breakdowns attribute by model", () => {
 		expect(report().budget_terminations).toEqual({
-			model_rounds: 0, tool_calls: 0, total_tokens: 0, wall_seconds: 0, none: 3,
-			fresh_tokens: 0,
+			wall_seconds: 0,
+			none: 3,
 		});
 		expect(report().breakdowns.by_model["fake-openai/fake-coder"]).toEqual({
 			model_rounds: 3,

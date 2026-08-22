@@ -1,40 +1,28 @@
 /**
- * Fair per-instance budgets (design §5).
+ * Benchmark termination and consumption accounting.
  *
- * Any cap reached stops further inference for that attempt, but the runner
- * still extracts the patch, submits the prediction, and requests a verdict —
- * a budget stop never forces `unresolved`. Wall time is a safety stop only and
- * never enters ranking. Cost is not a budget axis.
+ * Wall time is the only termination axis: it is infrastructure liveness
+ * protection, not a model-work budget. Rounds, tool calls, and tokens are
+ * consumption metrics only; arbitrarily large values never stop inference.
  */
 
-export type BudgetName =
-	| "model_rounds"
-	| "tool_calls"
-	| "fresh_tokens"
-	| "total_tokens"
-	| "wall_seconds";
+export type TerminationBudgetName = "wall_seconds";
+export type ConsumptionMetricName = "model_rounds" | "tool_calls" | "fresh_tokens" | "total_tokens";
 
-export interface BenchmarkBudgets {
-	/** Default 120 completed model rounds per instance attempt. */
-	model_rounds: number;
-	/** Default 400 top-level tool calls per instance attempt. */
-	tool_calls: number;
-	/** Default 300,000 non-cache input + output tokens per instance attempt. */
-	fresh_tokens: number;
-	/** Default 3,000,000 provider-reported total tokens per instance attempt. */
-	total_tokens: number;
-	/** Default 5400s (90 min) wall time; safety stop only, not ranked. */
-	wall_seconds: number;
-}
+export type BudgetName = TerminationBudgetName;
+export type BenchmarkBudgets = { wall_seconds: number };
 
-/** The design-pinned hard caps. Budget changes after the pilot are versioned. */
+/** Default 5400s (90 min); a hung attempt must remain stoppable. */
 export const DEFAULT_BENCHMARK_BUDGETS: BenchmarkBudgets = {
-	model_rounds: 120,
-	tool_calls: 400,
-	fresh_tokens: 300_000,
-	total_tokens: 3_000_000,
 	wall_seconds: 5_400,
 };
+
+export const CONSUMPTION_METRICS: readonly ConsumptionMetricName[] = [
+	"model_rounds",
+	"tool_calls",
+	"fresh_tokens",
+	"total_tokens",
+];
 
 export class BenchmarkBudgetError extends Error {
 	constructor(message: string) {
@@ -43,24 +31,15 @@ export class BenchmarkBudgetError extends Error {
 	}
 }
 
-/** CLI kebab-case spellings (and their snake_case budget names) map to canonical names. */
-const BUDGET_NAMES: Record<string, BudgetName> = {
-	"model-rounds": "model_rounds",
-	model_rounds: "model_rounds",
-	"tool-calls": "tool_calls",
-	tool_calls: "tool_calls",
-	"fresh-tokens": "fresh_tokens",
-	fresh_tokens: "fresh_tokens",
-	"total-tokens": "total_tokens",
-	total_tokens: "total_tokens",
+/** CLI kebab-case spellings (and their snake_case budget names). */
+const BUDGET_NAMES: Record<string, TerminationBudgetName> = {
 	"wall-seconds": "wall_seconds",
 	wall_seconds: "wall_seconds",
 };
 
 /**
- * Parse repeatable `<name>=<value>` budget override entries.
- * Unknown names and non-positive-integer values throw {@link BenchmarkBudgetError};
- * zero is refused because a zero cap is a misconfiguration, not a budget.
+ * Parse repeatable `<name>=<value>` termination-budget overrides.
+ * Consumption metrics are intentionally not accepted here.
  */
 export function parseBudgetOverrides(entries: string[]): Partial<BenchmarkBudgets> {
 	const overrides: Partial<BenchmarkBudgets> = {};
@@ -71,8 +50,7 @@ export function parseBudgetOverrides(entries: string[]): Partial<BenchmarkBudget
 		const name = BUDGET_NAMES[rawName];
 		if (name === undefined) {
 			throw new BenchmarkBudgetError(
-				`invalid budget entry '${entry}': expected <name>=<value> with name one of ` +
-					"model-rounds|tool-calls|fresh-tokens|total-tokens|wall-seconds",
+				`invalid budget entry '${entry}': expected wall-seconds=<positive-integer>`,
 			);
 		}
 		const value = Number(rawValue);
@@ -86,13 +64,11 @@ export function parseBudgetOverrides(entries: string[]): Partial<BenchmarkBudget
 	return overrides;
 }
 
-/** Validate already-structured overrides (module callers) the same way the CLI ones are. */
+/** Validate already-structured overrides (module callers) like CLI entries. */
 export function validateBudgetOverrides(overrides: Partial<BenchmarkBudgets> | undefined): void {
 	if (overrides === undefined || overrides === null) return;
-	for (const name of Object.keys(overrides) as BudgetName[]) {
-		if (!BUDGET_NAMES[name]) {
-			throw new BenchmarkBudgetError(`unknown budget name: ${name}`);
-		}
+	for (const name of Object.keys(overrides) as TerminationBudgetName[]) {
+		if (!BUDGET_NAMES[name]) throw new BenchmarkBudgetError(`unknown budget name: ${name}`);
 		const value = overrides[name];
 		if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
 			throw new BenchmarkBudgetError(
@@ -102,6 +78,7 @@ export function validateBudgetOverrides(overrides: Partial<BenchmarkBudgets> | u
 	}
 }
 
+/** All measured consumption plus the wall-time termination axis. */
 export interface BudgetState {
 	model_rounds: number;
 	tool_calls: number;
@@ -111,26 +88,9 @@ export interface BudgetState {
 	wall_seconds: number;
 }
 
-const CANONICAL_ORDER: readonly BudgetName[] = [
-	"model_rounds",
-	"tool_calls",
-	"fresh_tokens",
-	"total_tokens",
-	"wall_seconds",
-];
-
-/**
- * First cap reached, in canonical order model_rounds, tool_calls,
- * fresh_tokens, total_tokens, wall_seconds; null when no cap is reached. A cap is reached
- * when the current count is `>=` the cap (a 120-round cap allows at most 120
- * completed rounds; the attempt stops before issuing round 121).
- */
+/** Wall time is the only cap. Large consumption values remain observational. */
 export function budgetTerminatedBy(state: BudgetState, budgets: BenchmarkBudgets): BudgetName | null {
-	for (const name of CANONICAL_ORDER) {
-		if (state[name] === null) continue;
-		if (state[name] >= budgets[name]) return name;
-	}
-	return null;
+	return state.wall_seconds >= budgets.wall_seconds ? "wall_seconds" : null;
 }
 
 /** Wall time counts from attempt start using the injected clock. */

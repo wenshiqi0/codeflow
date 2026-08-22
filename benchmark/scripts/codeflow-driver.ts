@@ -24,7 +24,7 @@
  *     runner's budget checks supervise the LIVE run; after the process ends
  *     a bounded final drain picks up the last rows, and calls still without
  *     a terminal result at stream end are `incomplete`;
- *  4. SIGTERM is forwarded to the Codeflow process (budget stops terminate a
+ *  4. SIGTERM is forwarded to the Codeflow process (wall stops terminate a
  *     live run), escalating to SIGKILL if it lingers past the runner's grace
  *     window; the exit code mirrors the Codeflow run (non-zero => the runner
  *     records infra_error).

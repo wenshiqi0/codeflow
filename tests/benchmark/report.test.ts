@@ -211,7 +211,7 @@ describe("per-resolved efficiency numerators", () => {
 			{
 				id: "demo/r",
 				verdict: "resolved",
-				terminated_by: "model_rounds",
+				terminated_by: null,
 				metrics: metrics({
 					model_rounds_total: 100,
 					primary_model_rounds: 90,
@@ -290,12 +290,8 @@ describe("per-resolved efficiency numerators", () => {
 
 		// Budget stops are counted, and are orthogonal to verdicts.
 		expect(report.budget_terminations).toEqual({
-			model_rounds: 1,
-			tool_calls: 0,
-			fresh_tokens: 0,
-			total_tokens: 0,
 			wall_seconds: 1,
-			none: 2,
+			none: 3,
 		});
 
 		// Cache: one attempt unreported poisons availability; sums still shown.
@@ -364,24 +360,18 @@ describe("report shape discipline", () => {
 		);
 		const report = mod.buildBenchmarkReport(dir);
 		expect(Object.keys(report.comparison_keys).sort()).toEqual([
-			"budgets",
 			"dataset_id",
 			"dataset_revision",
 			"dataset_split",
 			"harness_commit",
 			"instance_set_digest",
+			"termination_budgets",
 			"tool_network",
 		]);
 		expect(report.comparison_keys.dataset_revision).toBe("78f471bf655a3137b2e8a75af1501690ec009ec3");
 		expect(report.comparison_keys.harness_commit).toBe("7a21e05772954cc81471ae19d56f436cecf43c54");
 		expect(report.comparison_keys.tool_network).toBe("disabled");
-		expect(report.comparison_keys.budgets).toEqual({
-			model_rounds: 120,
-			tool_calls: 400,
-			fresh_tokens: 3_000_000,
-			total_tokens: 3_000_000,
-			wall_seconds: 5400,
-		});
+		expect(report.comparison_keys.termination_budgets).toEqual({ wall_seconds: 5400 });
 		const digest = createHash("sha256")
 			.update([...ids].sort().join("\n"))
 			.digest("hex");

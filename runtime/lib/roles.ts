@@ -18,7 +18,6 @@ export const ALLOWED_KEYS = new Set([
 	"delegates",
 	"needs_project_rules",
 	"goal_lane",
-	"handoff_round_cap",
 	"internal",
 ]);
 
@@ -30,8 +29,6 @@ export interface RoleDefinition {
 	delegates?: boolean;
 	needs_project_rules?: false | "shared" | "full";
 	goal_lane?: "test" | "code" | "verify";
-	/** Completed assistant rounds allowed in one handoff; zero disables the cap. */
-	handoff_round_cap?: number;
 	internal?: boolean;
 }
 
@@ -50,7 +47,6 @@ export interface ResolvedRole {
 	delegates: boolean;
 	needsProjectRules: false | "shared" | "full";
 	goalLane?: "test" | "code" | "verify";
-	handoffRoundCap?: number;
 	internal: boolean;
 }
 
@@ -107,14 +103,6 @@ function loadRegistry(registryFile: string): RoleRegistry {
 		}
 		if (value.goal_lane !== undefined && !/^(?:test|code|verify)$/.test(String(value.goal_lane))) {
 			fail(`role ${role}: goal_lane must be test, code, or verify`);
-		}
-		if (
-			value.handoff_round_cap !== undefined &&
-			(typeof value.handoff_round_cap !== "number" ||
-				!Number.isInteger(value.handoff_round_cap) ||
-				value.handoff_round_cap < 0)
-		) {
-			fail(`role ${role}: handoff_round_cap must be a non-negative integer`);
 		}
 		roles[role] = value as unknown as RoleDefinition;
 	}
@@ -177,7 +165,6 @@ export function resolveRole(registryFile: string, role: string): ResolvedRole | 
 		delegates: definition.delegates === true,
 		needsProjectRules: definition.needs_project_rules ?? "full",
 		goalLane: definition.goal_lane,
-		handoffRoundCap: definition.handoff_round_cap,
 		internal: definition.internal === true,
 	};
 }

@@ -179,7 +179,6 @@ describe("allowed keys", () => {
 			"delegates",
 			"description",
 			"goal_lane",
-			"handoff_round_cap",
 			"internal",
 			"model",
 			"needs_project_rules",

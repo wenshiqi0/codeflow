@@ -165,17 +165,8 @@ describe("cost stays informational", () => {
 			}),
 		]);
 		expect(summary.cost_total).toBe(3.75);
-		// No cost field exists anywhere in the budget contract (see budgets test),
-		// and the budget cap names are resource counts only.
-		for (const name of ["model_rounds", "tool_calls", "fresh_tokens", "total_tokens", "wall_seconds"]) {
-			expect(mod.DEFAULT_BENCHMARK_BUDGETS).toHaveProperty(name);
-		}
-		expect(Object.keys(mod.DEFAULT_BENCHMARK_BUDGETS).sort()).toEqual([
-			"fresh_tokens",
-			"model_rounds",
-			"tool_calls",
-			"total_tokens",
-			"wall_seconds",
-		]);
+		// No cost field exists anywhere in the budget contract (see budgets test).
+		// Token consumption is observational and has no termination cap.
+		expect(mod.DEFAULT_BENCHMARK_BUDGETS).toEqual({ wall_seconds: 5400 });
 	});
 });

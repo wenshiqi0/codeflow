@@ -20,7 +20,7 @@ without network, Docker, or model calls.
   an infra error before evaluation; `demo/demo-1004` is absent to exercise
   `not_evaluated`.
 
-`demo/demo-1005` is the budget target: 4 scripted rounds, each 10 minutes of
-simulated wall time; rounds 1–2 together report 3.4M tokens, so the default
-3M token cap stops it after round 2, and small `--budget` overrides stop it at
-rounds / tool calls / wall time deterministically.
+`demo/demo-1005` is the large-consumption target: 4 scripted rounds, each 10
+minutes of simulated wall time, with 3.4M tokens in the first two rounds. Token,
+round, and tool-call counts remain observational; a small `--budget
+wall-seconds=...` override deterministically exercises the sole termination axis.

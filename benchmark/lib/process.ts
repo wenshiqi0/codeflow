@@ -21,7 +21,7 @@
  *   <bin> --workspace <dir> --attempt <n> --model-config <id>
  * with exactly the model-visible instance projection (4 keys) on stdin, then
  * read NDJSON DriverEvents lazily from stdout, re-checking budgets after every
- * event. On a budget stop the runner stops reading and the generator's cleanup
+ * event. On a wall stop the runner stops reading and the generator's cleanup
  * sends SIGTERM, escalating to SIGKILL after a grace period. Non-zero exit
  * after a natural end is an execution infra_error — never retried in-attempt,
  * never disguised as unresolved.
@@ -150,7 +150,7 @@ function parseUsage(value: unknown): AttemptUsage | null {
 	const cacheWrite = cacheField(value, "cacheWrite", "cache_write");
 	const reportedTotal = finiteNumber(value.totalTokens ?? value.total_tokens);
 	if (input === null || output === null) return null;
-	// Provider-reported total is the budget axis; when a provider omits it the
+	// Provider-reported total is a consumption metric; when a provider omits it the
 	// rounded sum of the reported components is the only honest stand-in.
 	const total = reportedTotal ?? input + output + (cacheRead ?? 0) + (cacheWrite ?? 0);
 	return {
@@ -416,7 +416,7 @@ export interface ProcessCodeflowDriverOptions {
 /**
  * One spawned Codeflow process per attempt. stdin carries ONLY the allowlist
  * projection; stdout is consumed lazily so budgets re-check after every event;
- * breaking out of the event loop (budget stop) terminates the process.
+ * breaking out of the event loop (wall stop) terminates the process.
  */
 export function createProcessCodeflowDriver(
 	options: ProcessCodeflowDriverOptions = {},

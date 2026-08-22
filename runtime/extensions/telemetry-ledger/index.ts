@@ -187,7 +187,7 @@ export default function (pi: ExtensionAPI): void {
 		const input = plainNumber(rawUsage.input);
 		const output = plainNumber(rawUsage.output);
 		const reportedTotal = rawUsage.totalTokens ?? rawUsage.total_tokens;
-		// Provider-reported total is the fair-budget axis; when a provider
+		// Provider-reported total is a consumption metric; when a provider
 		// omits it, the sum of reported components is the honest stand-in.
 		const total =
 			typeof reportedTotal === "number" && Number.isFinite(reportedTotal)

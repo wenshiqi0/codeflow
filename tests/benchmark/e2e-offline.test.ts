@@ -5,13 +5,12 @@
  *
  * run -> workspace -> git-diff patch -> predictions.jsonl -> evaluation run id
  * -> verdict merge -> report.json, with a manifest that pins exactly what was
- * run, artifacts that never appear half-written, and budget stops that still
+ * run, artifacts that never appear half-written, and a wall stop that still
  * submit the patch.
  *
  * Expected numbers are derived from tests/benchmark/fixtures (see its README):
  *  - attempts per instance: 1001 resolved, 1002 unresolved, 1003 infra_error,
- *    1004 not_evaluated, 1005 resolved but stopped by the default 3M token cap
- *    after round 2.
+ *    1004 not_evaluated, 1005 resolved with large token consumption.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -99,7 +98,7 @@ describe("the chain completes offline through the real CLI", () => {
 		expect(files.filter((rel) => rel.endsWith(".json")).length).toBeGreaterThan(0);
 			for (const rel of files) {
 				if (rel.endsWith(".json")) {
-					expect([1, 2]).toContain(readJson(artifact(rel)).schema_version);
+					expect([1, 2, 3]).toContain(readJson(artifact(rel)).schema_version);
 			} else if (rel.endsWith(".jsonl")) {
 				// Throws on any half line: append-only writers must write whole lines.
 				expect(readJsonl(artifact(rel)).length).toBeGreaterThan(0);
@@ -112,7 +111,7 @@ describe("the chain completes offline through the real CLI", () => {
 describe("the manifest pins what actually ran", () => {
 	test("dataset identity, harness, and codeflow commits are exact", () => {
 		const manifest = readJson(artifact("benchmark-run.json"));
-		expect(manifest.schema_version).toBe(2);
+		expect(manifest.schema_version).toBe(3);
 		expect(manifest.dataset.dataset_id).toBe("SWE-bench/SWE-bench_Verified");
 		expect(manifest.dataset.split).toBe("test");
 		expect(manifest.dataset.revision).toBe("78f471bf655a3137b2e8a75af1501690ec009ec3");
@@ -131,14 +130,15 @@ describe("the manifest pins what actually ran", () => {
 		expect(manifest.tool_network).toBe("disabled");
 		expect(manifest.model_provider_network).toBe("disabled");
 		expect(manifest.driver_mode).toBe("fixture");
-		expect(manifest.budgets.defaults).toEqual({
-			model_rounds: 120,
-			tool_calls: 400,
-			fresh_tokens: 300_000,
-			total_tokens: 3_000_000,
-			wall_seconds: 5400,
-		});
-		expect(manifest.budgets.effective).toEqual(manifest.budgets.defaults);
+		expect(manifest.termination_budgets.defaults).toEqual({ wall_seconds: 5400 });
+		expect(manifest.termination_budgets.effective).toEqual({ wall_seconds: 5400 });
+		expect(manifest.termination_budgets.overrides).toBe(null);
+		expect(manifest.consumption_metrics.axes).toEqual([
+			"model_rounds",
+			"tool_calls",
+			"fresh_tokens",
+			"total_tokens",
+		]);
 		expect(manifest.instances.selected).toEqual([
 			"demo/demo-1001",
 			"demo/demo-1002",
@@ -165,7 +165,7 @@ describe("predictions satisfy the official field contract", () => {
 		}
 	});
 
-	test("patches are the extracted workspace diffs, including after a budget stop", () => {
+	test("patches are the extracted workspace diffs, including after a wall stop", () => {
 		const predictions = Object.fromEntries(
 			readJsonl(artifact("predictions.jsonl")).map((p: any) => [p.instance_id, p]),
 		);
@@ -173,7 +173,7 @@ describe("predictions satisfy the official field contract", () => {
 		expect(predictions["demo/demo-1002"].model_patch).toContain("FIXED_1002");
 		expect(predictions["demo/demo-1003"].model_patch).toContain("# partial");
 		expect(predictions["demo/demo-1004"].model_patch).toBe("");
-		// 1005 was stopped at the 3M token cap after round 2 — its fix is still there.
+		// 1005 exceeds the former token cap but now completes its script.
 		expect(predictions["demo/demo-1005"].model_patch).toContain("FIXED_1005");
 	});
 });
@@ -195,12 +195,12 @@ describe("verdict merge", () => {
 		expect(attempt("demo/demo-1005").verdict).toBe("resolved");
 	});
 
-	test("the default 3M token cap stops demo-1005 but does not make it unresolved", () => {
+	test("demo-1005 exceeds the former token cap without termination", () => {
 		const record = attempt("demo/demo-1005");
-		expect(record.terminated_by).toBe("total_tokens");
+		expect(record.terminated_by).toBe(null);
 		expect(record.verdict).toBe("resolved");
-		expect(record.metrics.model_rounds_total).toBe(2); // rounds 3 and 4 never played
-		expect(record.metrics.tokens.total_tokens).toBe(3_400_000);
+		expect(record.metrics.model_rounds_total).toBe(4);
+		expect(record.metrics.tokens.total_tokens).toBe(3_401_200);
 	});
 
 	test("each attempt gets its own evaluation run id, namespaced by the benchmark run", () => {
@@ -279,46 +279,44 @@ describe("report.json", () => {
 
 	test("efficiency aggregates match the fixture arithmetic", () => {
 		expect(report().budget_terminations).toEqual({
-			model_rounds: 0,
-			tool_calls: 0,
-			fresh_tokens: 0,
-			total_tokens: 1,
 			wall_seconds: 0,
-			none: 4,
+			none: 5,
 		});
-		expect(report().model_rounds.total).toBe(11);
+		expect(report().model_rounds.total).toBe(13);
 		expect(report().model_rounds.median).toBe(2);
 		expect(report().model_rounds.p90).toBe(5);
-		expect(report().model_rounds.primary).toBe(9);
+		expect(report().model_rounds.primary).toBe(11);
 		expect(report().model_rounds.support).toBe(2);
 		expect(report().model_rounds.failed_attempts).toBe(1);
-		expect(report().tool_calls.total).toBe(13);
+		expect(report().tool_calls.total).toBe(14);
 		expect(report().tool_calls.median).toBe(3);
-		expect(report().tokens.total).toBe(3_402_425);
+		expect(report().tool_calls.p90).toBe(6);
+		expect(report().tokens.total).toBe(3_403_625);
 		expect(report().tokens.median).toBe(700);
-		expect(report().per_resolved.rounds).toBeCloseTo(11 / 2, 12);
-		expect(report().per_resolved.tokens).toBeCloseTo(3_402_425 / 2, 6);
-		expect(report().tool_calls_per_model_round).toBeCloseTo(13 / 11, 12);
+		expect(report().tokens.p90).toBe(3_401_200);
+		expect(report().per_resolved.rounds).toBeCloseTo(13 / 2, 12);
+		expect(report().per_resolved.tokens).toBeCloseTo(3_403_625 / 2, 6);
+		expect(report().tool_calls_per_model_round).toBeCloseTo(14 / 13, 12);
 	});
 
 	test("cache aggregate is unavailable while any attempt is unreported", () => {
 		expect(report().cache).toEqual({
-				read: 3_400_120,
-				write: 5,
-				fresh_input_tokens: 2_010,
-				fresh_tokens: null,
-				prompt_tokens: 3_402_135,
-				hit_rate: null,
-				metrics_available: false,
-				per_attempt_hit_rate: { median: 9 / 110, p90: 1 },
+			read: 3_400_120,
+			write: 5,
+			fresh_input_tokens: 3_010,
+			fresh_tokens: null,
+			prompt_tokens: 3_403_135,
+			hit_rate: null,
+			metrics_available: false,
+			per_attempt_hit_rate: { median: 9 / 110, p90: 0.9997059688326962 },
 		});
 	});
 
 	test("breakdowns by role, model, and tool; wall time is not_ranked; no score", () => {
-		expect(report().breakdowns.by_role.coder.model_rounds).toBe(7);
+		expect(report().breakdowns.by_role.coder.model_rounds).toBe(9);
 		expect(report().breakdowns.by_role.tester.model_rounds).toBe(1);
-		expect(report().breakdowns.by_model["fixture/fixture-coder"].model_rounds).toBe(7);
-		expect(report().breakdowns.by_tool).toEqual({ bash: 8, read: 3, write: 2 });
+		expect(report().breakdowns.by_model["fixture/fixture-coder"].model_rounds).toBe(9);
+		expect(report().breakdowns.by_tool).toEqual({ bash: 9, read: 3, write: 2 });
 		expect(report().wall_time.not_ranked).toBe(true);
 		for (const key of Object.keys(report())) {
 			expect(key.toLowerCase()).not.toMatch(/score|composite/);
@@ -364,7 +362,7 @@ describe("instance allowlist and concurrency are honored", () => {
 	});
 });
 
-describe("budget overrides stop deterministically and still submit the patch", () => {
+describe("wall override stops deterministically and still submits the patch", () => {
 	function stopRun(budget: string): { attempt: any; manifest: any; predictions: any[] } {
 		const dir = makeTmpDir();
 		const result = benchmarkRun(dir, [
@@ -381,39 +379,14 @@ describe("budget overrides stop deterministically and still submit the patch", (
 		};
 	}
 
-	test("model-rounds cap stops after round 2 with the cap recorded and override visible", () => {
-		const { attempt, manifest, predictions } = stopRun("model-rounds=2");
-		expect(attempt.terminated_by).toBe("model_rounds");
-		expect(attempt.metrics.model_rounds_total).toBe(2);
-		expect(attempt.metrics.tool_calls_total).toBe(5);
-		expect(attempt.metrics.tokens.total_tokens).toBe(3_400_000);
-		expect(attempt.verdict).toBe("resolved");
-		expect(predictions[0].model_patch).toContain("FIXED_1005");
-		expect(manifest.budgets.effective.model_rounds).toBe(2);
-		expect(manifest.budgets.overrides).toEqual({ model_rounds: 2 });
-	});
-
-	test("tool-call cap stops after the response that crossed it", () => {
-		const { attempt } = stopRun("tool-calls=2");
-		expect(attempt.terminated_by).toBe("tool_calls");
-		expect(attempt.metrics.model_rounds_total).toBe(1);
-		expect(attempt.metrics.tool_calls_total).toBe(3);
-		expect(attempt.verdict).toBe("resolved");
-	});
-
-	test("token cap override is honored and recorded", () => {
-		const { attempt, manifest } = stopRun("total-tokens=2000000");
-		expect(attempt.terminated_by).toBe("total_tokens");
-		expect(attempt.metrics.model_rounds_total).toBe(2);
-		expect(manifest.budgets.effective.total_tokens).toBe(2_000_000);
-	});
-
 	test("wall-time cap stops via the simulated clock after the crossing round", () => {
-		const { attempt } = stopRun("wall-seconds=600");
+		const { attempt, manifest } = stopRun("wall-seconds=600");
 		expect(attempt.terminated_by).toBe("wall_seconds");
 		expect(attempt.metrics.model_rounds_total).toBe(1);
 		expect(attempt.metrics.wall_seconds).toBeGreaterThanOrEqual(600);
 		expect(attempt.verdict).toBe("resolved");
+		expect(manifest.termination_budgets.effective).toEqual({ wall_seconds: 600 });
+		expect(manifest.termination_budgets.overrides).toEqual({ wall_seconds: 600 });
 	});
 });
 

@@ -2,7 +2,7 @@
  * Real-mode STREAMING supervision through the production process seam
  * (design §4, §5; contract §1.7, §1.7.1).
  *
- * REAL-13 (realmode-budgets.test.ts) proves post-mortem that a budget stop
+ * REAL-13 (realmode-budgets.test.ts) proves post-mortem that a wall stop
  * kills the spawned process and still grades the partial patch. What it
  * cannot see — and what design §4/§1.7.1 actually require — is that the
  * runner CONSUMES the nested process's event stream lazily and lands the
@@ -61,7 +61,7 @@ beforeAll(() => {
 afterAll(cleanupTmpDirs);
 
 interface StreamOptions {
-	/** e.g. "model-rounds=2"; omitted => natural end under default budgets. */
+	/** e.g. "wall-seconds=1"; omitted => natural end under the default wall limit. */
 	budget?: string;
 	/** Scripted rounds in the stream fake; default 4. */
 	rounds?: number;
@@ -119,9 +119,6 @@ function streamRun(options: StreamOptions = {}): StreamOutcome {
 		"--out", outDir,
 	];
 	if (options.budget !== undefined) args.push("--budget", options.budget);
-	if (options.budget?.startsWith("fresh-") !== true) {
-		args.push("--budget", "fresh-tokens=1000000000");
-	}
 	const result = runCodeflow(
 		args,
 		world.env(capture, {
@@ -191,7 +188,7 @@ function expectKilledAliveAndWouldContinue(outcome: StreamOutcome): void {
 }
 
 /**
- * A budget stop never discards work and never masquerades as a model result
+ * A wall stop never discards work and never masquerades as a model result
  * (design §4, §5): the partial patch is extracted, submitted with exactly the
  * official keys, and the evaluator is still asked with the attempt's unique
  * evaluation run id.
@@ -277,67 +274,15 @@ describe("REAL-16: the production process seam streams ledgers while the nested 
 	}, 60_000);
 });
 
-describe("REAL-17: the model-round cap kills the live process; the partial patch is still graded", () => {
-	test("stop after round 2 with the crossing round already durable on the ledger", () => {
-		const outcome = streamRun({ budget: "model-rounds=2", rounds: 4 });
+describe("REAL-17: the wall safety limit kills a live process and preserves partial work", () => {
+	test("wall stop after durable streamed rounds", () => {
+		const outcome = streamRun({ budget: "wall-seconds=1", rounds: 4, delayMs: 400 });
 
 		expectKilledAliveAndWouldContinue(outcome);
-		expect(outcome.attempt.terminated_by).toBe("model_rounds");
-		// Round 2 was applied, round 3 was never emitted: stop exactly at the cap.
-		expect(outcome.attempt.metrics.model_rounds_total).toBe(2);
-		expect(outcome.emitted.filter((event) => event.type === "round")).toHaveLength(2);
-		expect(outcome.emitted[outcome.emitted.length - 1].type).toBe("round");
-		// Only round 1's standalone tool events were emitted before the stop.
-		expect(outcome.attempt.metrics.tool_calls_total).toBe(2);
-		// The moment the supervisor's SIGTERM arrived, the crossing round was
-		// already durably in the ledgers — not lost with the killed process.
-		expect(phase(outcome, "sigterm").usage_rows).toBe(2);
-		expect(phase(outcome, "sigterm").tool_rows).toBe(4);
-		// Partial work before the stop is submitted and graded; later work is not.
-		expectPartialPatchEvaluated(outcome, ["STEP_1"], ["STEP_2", "STEP_3", "STEP_4"]);
-		expect(outcome.manifest.budgets.effective.model_rounds).toBe(2);
-		expect(outcome.report.budget_terminations.model_rounds).toBe(1);
-	}, 60_000);
-});
-
-describe("REAL-18: the tool-call cap fires on the standalone instrumentation event", () => {
-	test("stop between model responses — no second round is needed or emitted", () => {
-		const outcome = streamRun({ budget: "tool-calls=2", rounds: 4 });
-
-		expectKilledAliveAndWouldContinue(outcome);
-		expect(outcome.attempt.terminated_by).toBe("tool_calls");
-		// Contract §1.7: tool-call budgets supervise the live process WITHOUT
-		// waiting for the next model response. The stop fired on the second
-		// standalone tool_calls event; exactly one round was ever emitted.
-		expect(outcome.emitted.filter((event) => event.type === "round")).toHaveLength(1);
-		expect(outcome.emitted[outcome.emitted.length - 1].type).toBe("tool_calls");
-		expect(outcome.attempt.metrics.model_rounds_total).toBe(1);
-		expect(outcome.attempt.metrics.tool_calls_total).toBe(2);
-		// The first tool event's rows were on the ledger while the process
-		// was still alive, before it emitted the second one.
-		expect(phase(outcome, "before_tool_1_2").tool_rows).toBe(2);
-		expect(phase(outcome, "sigterm").usage_rows).toBe(1);
-		expect(phase(outcome, "sigterm").tool_rows).toBe(4);
-		expectPartialPatchEvaluated(outcome, ["STEP_1"], ["STEP_2", "STEP_3", "STEP_4"]);
-		expect(outcome.report.budget_terminations.tool_calls).toBe(1);
-	}, 60_000);
-});
-
-describe("REAL-19: the provider-reported token cap kills the live process; the partial patch is still graded", () => {
-	test("stop at round 3 (1.2M >= 1M) with the crossing round fully counted", () => {
-		const outcome = streamRun({ budget: "total-tokens=1000000", rounds: 4, tokens: 400_000 });
-
-		expectKilledAliveAndWouldContinue(outcome);
-		expect(outcome.attempt.terminated_by).toBe("total_tokens");
-		// The token ledger counts the crossing round in full — 3 x 400_000.
-		expect(outcome.attempt.metrics.model_rounds_total).toBe(3);
-		expect(outcome.attempt.metrics.tokens.total_tokens).toBe(1_200_000);
-		expect(outcome.emitted.filter((event) => event.type === "round")).toHaveLength(3);
-		expect(phase(outcome, "sigterm").usage_rows).toBe(3);
-		expect(phase(outcome, "sigterm").tool_rows).toBe(8);
-		// Rounds 1 and 2 finished their writes; round 3's write never landed.
-		expectPartialPatchEvaluated(outcome, ["STEP_1", "STEP_2"], ["STEP_3", "STEP_4"]);
-		expect(outcome.manifest.budgets.effective.total_tokens).toBe(1_000_000);
-		expect(outcome.report.budget_terminations.total_tokens).toBe(1);
+		expect(outcome.attempt.terminated_by).toBe("wall_seconds");
+		expect(phase(outcome, "sigterm").usage_rows).toBeGreaterThanOrEqual(1);
+		expectPartialPatchEvaluated(outcome, ["STEP_1"], ["STEP_4"]);
+		expect(outcome.manifest.termination_budgets.effective).toEqual({ wall_seconds: 1 });
+		expect(outcome.report.budget_terminations.wall_seconds).toBe(1);
 	}, 60_000);
 });

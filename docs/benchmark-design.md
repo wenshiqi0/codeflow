@@ -76,22 +76,19 @@ Verified instance
 
 ## 5. 公平预算
 
-第一版对每个 instance 使用以下统一硬上限：
+每个 instance attempt 仅保留一个终止轴：
 
-| 预算 | 上限 |
+| 终止预算 | 上限 |
 | --- | ---: |
-| LLM model rounds | 120 |
-| tool calls | 400 |
-| provider-reported total tokens | 3,000,000 |
 | wall time | 90 分钟 |
 
 规则：
 
-- 任意上限触发即停止继续执行，`terminated_by` 记录具体上限。
-- wall time 只用于安全停止，不进入主得分。
+- wall time 是基础设施活性安全线，不进入主得分。
+- model rounds、tool calls、fresh tokens、provider-reported total tokens、cache read/write 只计量、进报告和对照，不终止 attempt。
 - cache read/write token 包含在 provider-reported `total_tokens` 中；reasoning token 通常是 output 子集，不得再次叠加。
 - 不使用费用作为停止预算或跨模型排名约束。
-- pilot 后只允许在 full run 之前调整一次预算；调整理由和新值必须版本化。full run 开始后不得按模型改变预算。
+- wall 上限调整必须版本化；full run 开始后不得按模型改变。
 
 ## 6. Model round 口径
 

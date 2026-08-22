@@ -31,7 +31,7 @@ The runner spawns **one process per instance attempt**:
 - **stdout**: NDJSON — one serialized `DriverEvent` (contract §1.7) per line,
   streamed. The runner reads lazily, records usage/tool-call/failed-attempt
   ledgers from the events, and re-checks budgets after every event.
-- **Termination**: on a budget cap the runner stops reading, sends
+- **Termination**: on the wall limit the runner stops reading, sends
   **SIGTERM**, and escalates to SIGKILL only after a short grace period. The
   process is expected to exit promptly on SIGTERM.
 - **exit codes**: `0` after the attempt's natural end; any non-zero exit (or

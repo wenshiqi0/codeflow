@@ -10,7 +10,7 @@
  * - Report by-model tool counts are computed from those recorded fields,
  *   never from a role→model inference. A role that used several models in an
  *   attempt must still get exact per-model tool counts; a role whose usage
- *   ledger lost a round (budget stop between flushes) must never have its
+ *   ledger lost a round (wall stop between flushes) must never have its
  *   calls reassigned to whatever model the usage rows happen to show.
  * - The privacy floor is untouched: tool arguments, command text, tool
  *   results, source content, and credentials appear nowhere in any tool-call
@@ -1119,7 +1119,7 @@ describe("CNT: report by-model tool counts use the recorded fields", () => {
 		const mod = await bench();
 		const dir = makeTmpDir();
 		// The coder role shows exactly ONE model in the usage ledger (a
-		// budget stop can flush a tool row while its usage row is lost), but
+		// wall stop can flush a tool row while its usage row is lost), but
 		// the tool rows record a different model. Any role→model inference
 		// would hand both calls to p/A; the recorded fields say p/B.
 		handBuiltOutDir(dir, [

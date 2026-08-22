@@ -2,7 +2,7 @@
  * Budgets must supervise a LIVE spawned process in real mode (design §4, §5,
  * §13.7): when a cap fires the runner stops pulling driver events, terminates
  * the process (SIGTERM first), still extracts the partial patch, still
- * submits the prediction, and still requests a verdict — a budget stop never
+ * submits the prediction, and still requests a verdict — a wall stop never
  * forces `unresolved` and never discards work.
  *
  * The marathon fake driver emits budget-sized rounds forever and writes one
@@ -60,7 +60,6 @@ function stopRun(
 			"--instances", writeInstancesFile([INSTANCE_RESOLVED]),
 			"--out", outDir,
 			"--budget", budget,
-			...(budget.startsWith("fresh-") ? [] : ["--budget", "fresh-tokens=1000000000"]),
 		],
 		world.env(capture, { driverMode, marathon }),
 		60_000,
@@ -101,31 +100,7 @@ function expectSupervisedStop(outcome: StopOutcome, cap: string): void {
 	expect(outcome.patch).not.toBe("");
 }
 
-describe("REAL-13: each cap stops a live spawned process and still extracts the patch", () => {
-	test("model-rounds cap", () => {
-		const outcome = stopRun("model-rounds=2", { delayMs: 600 });
-		expectSupervisedStop(outcome, "model_rounds");
-		expect(outcome.attempt.metrics.model_rounds_total).toBe(2); // round 3 never happened
-		expect(outcome.manifest.budgets.effective.model_rounds).toBe(2);
-		// Partial patch: work that finished before the stop is in, later work is not.
-		expect(outcome.patch).toContain("STEP_1");
-		expect(outcome.patch).not.toContain("STEP_3");
-	});
-
-	test("tool-calls cap stops after the response that crossed it", () => {
-		const outcome = stopRun("tool-calls=3", { delayMs: 600, tools: 2 });
-		expectSupervisedStop(outcome, "tool_calls");
-		expect(outcome.attempt.metrics.model_rounds_total).toBe(2);
-		expect(outcome.attempt.metrics.tool_calls_total).toBe(4);
-	});
-
-	test("provider-reported token cap", () => {
-		const outcome = stopRun("total-tokens=1000000", { delayMs: 600, tokens: 500_000 });
-		expectSupervisedStop(outcome, "total_tokens");
-		expect(outcome.attempt.metrics.model_rounds_total).toBe(2);
-		expect(outcome.attempt.metrics.tokens.total_tokens).toBe(1_000_000);
-	});
-
+describe("REAL-13: wall safety stops a live spawned process and still extracts the patch", () => {
 	test("wall-time safety stop on the real clock", () => {
 		// Round 1 lands ~0s, STEP_1 at ~1.2s, round 2 immediately after;
 		// the independent timer fires at 2s before STEP_2 or round 3.

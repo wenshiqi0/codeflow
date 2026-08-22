@@ -26,6 +26,7 @@ export {
 	BenchmarkBudgetError,
 	type BenchmarkBudgets,
 	DEFAULT_BENCHMARK_BUDGETS,
+	CONSUMPTION_METRICS,
 	type BudgetName,
 	parseBudgetOverrides,
 	validateBudgetOverrides,

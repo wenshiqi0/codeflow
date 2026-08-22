@@ -50,7 +50,7 @@ interface DriverHandle {
 	capture: string;
 	/** Resolves with the driver's exit code once the process has exited. */
 	finished: Promise<number | null>;
-	/** SIGTERM/SIGKILL the driver process — what a budget stop does. */
+	/** SIGTERM/SIGKILL the driver process — what a wall stop does. */
 	kill: (signal?: "SIGTERM" | "SIGKILL") => void;
 }
 
@@ -240,7 +240,7 @@ describe("production codeflow-driver.ts streams from the live Codeflow process",
 		expect(run.aliveAtEvent.length).toBeGreaterThanOrEqual(2);
 		for (const alive of run.aliveAtEvent) expect(alive).toBe(true);
 
-		run.kill("SIGTERM"); // what the runner's budget stop does
+		run.kill("SIGTERM"); // what the runner's wall stop does
 		const code = await Promise.race([
 			run.finished,
 			new Promise<never>((_, reject) =>
@@ -273,8 +273,8 @@ describe("production codeflow-driver.ts streams from the live Codeflow process",
 	}, 30_000);
 });
 
-describe("production defaults end to end: a cap terminates the live nested run", () => {
-	test("model-rounds cap through the REAL CLI and driver script; partial patch graded", () => {
+describe("production defaults end to end: wall safety terminates the live nested run", () => {
+	test("wall stop through the REAL CLI and driver script; partial patch graded", () => {
 		const outDir = makeTmpDir("codeflow-bench-prodcap-");
 		const capture = world.newCapture();
 		// Everything real except the two live boundaries the host cannot serve
@@ -294,8 +294,7 @@ describe("production defaults end to end: a cap terminates the live nested run",
 				"--dataset", world.snapshot,
 				"--instances", writeInstancesFile([INSTANCE_RESOLVED]),
 				"--out", outDir,
-				"--budget", "model-rounds=2",
-				"--budget", "fresh-tokens=1000000000",
+				"--budget", "wall-seconds=2",
 			],
 			env,
 			90_000,
@@ -308,19 +307,18 @@ describe("production defaults end to end: a cap terminates the live nested run",
 		const report = readJson(path.join(outDir, "report.json"));
 		const predictions = readJsonl(path.join(outDir, "predictions.jsonl"));
 
-		// The cap terminated the attempt; a stop is not an execution failure.
-		expect(attempt.terminated_by).toBe("model_rounds");
+		// The wall limit terminated the attempt; a stop is not an execution failure.
+		expect(attempt.terminated_by).toBe("wall_seconds");
 		expect(attempt.execution_status).toBe("completed");
-		expect(attempt.metrics.model_rounds_total).toBe(2); // round 3 never streamed
-		expect(manifest.budgets.effective.model_rounds).toBe(2);
-		expect(report.budget_terminations.model_rounds).toBe(1);
+		expect(attempt.metrics.model_rounds_total).toBeGreaterThanOrEqual(1);
+		expect(manifest.termination_budgets.effective).toEqual({ wall_seconds: 2 });
+		expect(report.budget_terminations.wall_seconds).toBe(1);
 
 		// Partial work before the stop is extracted and officially graded.
 		expect(predictions).toHaveLength(1);
 		expect(Object.keys(predictions[0]).sort()).toEqual(["instance_id", "model_name_or_path", "model_patch"]);
 		expect(predictions[0].model_patch).toContain("STEP_1");
-		expect(predictions[0].model_patch).not.toContain("STEP_2");
-		expect(predictions[0].model_patch).not.toContain("STEP_3");
+		expect(predictions[0].model_patch).not.toContain("STEP_6");
 		expect(attempt.verdict).toBe("resolved");
 		const harness = readJsonl(path.join(capture, "harness-calls.jsonl"));
 		expect(harness).toHaveLength(1);
@@ -332,7 +330,7 @@ describe("production defaults end to end: a cap terminates the live nested run",
 		// already durable in the runner-written ledger.
 		const terminated = captureJson(capture, "inner-terminated");
 		expect(terminated).not.toBe(null);
-		expect(terminated.usage_rows).toBe(2);
+		expect(terminated.usage_rows).toBeGreaterThanOrEqual(1);
 		expect(captureJson(capture, "inner-natural-exit")).toBe(null);
 		expect(pidAlive(Number(fs.readFileSync(path.join(capture, "inner-pid"), "utf8")))).toBe(false);
 	}, 90_000);

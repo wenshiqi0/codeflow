@@ -2,7 +2,7 @@
  * The benchmark runner (design §4, contract §1.8).
  *
  * Per instance attempt:
- *   fresh isolated workspace -> driver events -> ledgers -> budget stop or
+ *   fresh isolated workspace -> driver events -> ledgers -> wall-safety stop or
  *   natural end -> extract git-diff patch -> official prediction -> unique
  *   evaluation run id -> verdict -> per-case artifacts -> report.
  *
@@ -35,6 +35,7 @@ import {
 import {
 	DEFAULT_BENCHMARK_BUDGETS,
 	BenchmarkBudgetError,
+	CONSUMPTION_METRICS,
 	budgetTerminatedBy,
 	validateBudgetOverrides,
 	type BenchmarkBudgets,
@@ -576,7 +577,7 @@ export async function runBenchmark(options: BenchmarkRunOptions): Promise<Benchm
 			: null;
 
 	const manifest: BenchmarkManifest = {
-		schema_version: BENCHMARK_MANIFEST_SCHEMA_VERSION as 2,
+		schema_version: BENCHMARK_MANIFEST_SCHEMA_VERSION as 3,
 		benchmark_run_id: benchmarkRunId,
 		created_at: new Date(clock.now()).toISOString(),
 		dataset: {
@@ -598,7 +599,12 @@ export async function runBenchmark(options: BenchmarkRunOptions): Promise<Benchm
 		// Agent tool network and model-provider network are declared separately (design §4).
 		tool_network: "disabled",
 		model_provider_network: driverMode === "fixture" ? "disabled" : "required",
-		budgets: { defaults: { ...DEFAULT_BENCHMARK_BUDGETS }, overrides, effective: budgets },
+		termination_budgets: {
+			defaults: { ...DEFAULT_BENCHMARK_BUDGETS },
+			overrides,
+			effective: budgets,
+		},
+		consumption_metrics: { axes: [...CONSUMPTION_METRICS] },
 		driver_mode: driverMode,
 	};
 

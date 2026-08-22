@@ -25,7 +25,8 @@ import type { BenchmarkManifest, CaseAttemptRecord, CaseFile } from "./artifacts
 import {
 	BENCHMARK_MANIFEST_SCHEMA_VERSION,
 	LEGACY_BENCHMARK_MANIFEST_SCHEMA_VERSION,
-} from "./artifacts";
+	LEGACY_BUDGETED_BENCHMARK_MANIFEST_SCHEMA_VERSION,
+	} from "./artifacts";
 import { BENCHMARK_CASE_SCHEMA_VERSION } from "./artifacts";
 import { DEFAULT_BENCHMARK_BUDGETS, type BudgetName } from "./budgets";
 import { readPredictions } from "./predictions";
@@ -84,10 +85,6 @@ export interface BenchmarkReport {
 		verdict_flip_rate: number | null;
 	} | null;
 	budget_terminations: {
-		model_rounds: number;
-		tool_calls: number;
-		fresh_tokens: number;
-		total_tokens: number;
 		wall_seconds: number;
 		none: number;
 	};
@@ -152,11 +149,7 @@ export interface BenchmarkReport {
 		dataset_revision: string;
 		/** sha256 hex of the sorted selected instance ids joined by "\n". */
 		instance_set_digest: string;
-		budgets: {
-			model_rounds: number;
-			tool_calls: number;
-			fresh_tokens: number;
-			total_tokens: number;
+		termination_budgets: {
 			wall_seconds: number;
 		};
 		tool_network: string;
@@ -165,14 +158,7 @@ export interface BenchmarkReport {
 }
 
 const VERDICTS: readonly BenchmarkVerdict[] = ["resolved", "unresolved", "infra_error", "not_evaluated"];
-const TERMINATION_KEYS: readonly (BudgetName | "none")[] = [
-	"model_rounds",
-	"tool_calls",
-	"fresh_tokens",
-	"total_tokens",
-	"wall_seconds",
-	"none",
-];
+const TERMINATION_KEYS: readonly (BudgetName | "none")[] = ["wall_seconds", "none"];
 
 function median(values: number[]): number {
 	if (values.length === 0) return 0;
@@ -307,17 +293,25 @@ function readManifest(outDir: string): BenchmarkManifest {
 	};
 	if (
 		parsed.schema_version !== BENCHMARK_MANIFEST_SCHEMA_VERSION &&
+		parsed.schema_version !== LEGACY_BUDGETED_BENCHMARK_MANIFEST_SCHEMA_VERSION &&
 		parsed.schema_version !== LEGACY_BENCHMARK_MANIFEST_SCHEMA_VERSION
 	) {
 		throw new BenchmarkReportError(`unsupported manifest schema_version: ${String(parsed.schema_version)}`);
 	}
-	return parsed.schema_version === BENCHMARK_MANIFEST_SCHEMA_VERSION
-		? parsed
-		: {
-				...parsed,
-				schema_version: BENCHMARK_MANIFEST_SCHEMA_VERSION,
-				attempts_per_instance: 1,
-			};
+	if (parsed.schema_version === BENCHMARK_MANIFEST_SCHEMA_VERSION) return parsed;
+	return {
+		...parsed,
+		schema_version: BENCHMARK_MANIFEST_SCHEMA_VERSION,
+		attempts_per_instance: parsed.attempts_per_instance ?? 1,
+		termination_budgets: parsed.termination_budgets ?? {
+			defaults: DEFAULT_BENCHMARK_BUDGETS,
+			overrides: null,
+			effective: DEFAULT_BENCHMARK_BUDGETS,
+		},
+		consumption_metrics: parsed.consumption_metrics ?? {
+			axes: ["model_rounds", "tool_calls", "fresh_tokens", "total_tokens"],
+		},
+	};
 }
 
 function readCases(outDir: string): CaseFile[] {
@@ -408,7 +402,7 @@ interface LedgerBreakdownInput {
  * - tool_calls are grouped by each requested row's RECORDED provider/model —
  *   never by role→model inference, so a role that switched models mid-attempt
  *   still gets exact per-model counts, and a model with zero rounds can carry
- *   calls (a budget stop can flush a tool row whose usage row was lost);
+ *   calls (a wall stop can flush a tool row whose usage row was lost);
  * - rounds/tokens are grouped directly from every usage row's provider/model,
  *   including models that emitted zero tools. No dimension silently drops a
  *   zero-round tool call or a zero-tool model round.
@@ -585,10 +579,6 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 	const denominator = counts.resolved + counts.unresolved;
 
 	const budgetTerminations = {
-		model_rounds: 0,
-		tool_calls: 0,
-		fresh_tokens: 0,
-		total_tokens: 0,
 		wall_seconds: 0,
 		none: 0,
 	};
@@ -684,7 +674,7 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 	};
 	accumulateLedgers(outDir, cases, breakdownInput);
 
-	const effective = manifest.budgets?.effective ?? DEFAULT_BENCHMARK_BUDGETS;
+	const effective = manifest.termination_budgets?.effective ?? DEFAULT_BENCHMARK_BUDGETS;
 	const handoffObservability = accumulateHandoffObservability(outDir, cases);
 	const attemptsPerInstance = manifest.attempts_per_instance ?? 1;
 	const validCases = cases
@@ -828,11 +818,7 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 			dataset_split: manifest.dataset?.split ?? "",
 			dataset_revision: manifest.dataset?.revision ?? "",
 			instance_set_digest: createHash("sha256").update([...selected].sort().join("\n")).digest("hex"),
-			budgets: {
-				model_rounds: effective.model_rounds,
-				tool_calls: effective.tool_calls,
-				fresh_tokens: effective.fresh_tokens,
-				total_tokens: effective.total_tokens,
+			termination_budgets: {
 				wall_seconds: effective.wall_seconds,
 			},
 			tool_network: manifest.tool_network ?? "disabled",

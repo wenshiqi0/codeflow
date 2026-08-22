@@ -107,29 +107,27 @@ the same shapes with fixture content):
   `78f471bf655a3137b2e8a75af1501690ec009ec3`
 - harness commit `7a21e05772954cc81471ae19d56f436cecf43c54`
 
-### 1.2 Budgets
+### 1.2 Termination budgets and consumption metrics
 
 ```ts
-export type BudgetName =
+export type TerminationBudgetName = "wall_seconds";
+export type ConsumptionMetricName =
   | "model_rounds"
   | "tool_calls"
   | "fresh_tokens"
-  | "total_tokens"
-  | "wall_seconds";
+  | "total_tokens";
 
+export type BudgetName = TerminationBudgetName;
 export interface BenchmarkBudgets {
-  model_rounds: number;   // default 120
-  tool_calls: number;     // default 400
-  fresh_tokens: number;   // default 300_000, input + output when cache reporting is complete
-  total_tokens: number;   // default 3_000_000, provider-reported
-  wall_seconds: number;   // default 5400 (90 min), safety stop only
+  wall_seconds: number; // default 5400 (90 min), liveness safety
 }
 
 export const DEFAULT_BENCHMARK_BUDGETS: BenchmarkBudgets;
+export const CONSUMPTION_METRICS: readonly ConsumptionMetricName[];
 
 export class BenchmarkBudgetError extends Error;
 
-/** CLI spellings model-rounds / tool-calls / fresh-tokens / total-tokens / wall-seconds map to snake_case. */
+/** Only wall-seconds is accepted. */
 export function parseBudgetOverrides(entries: string[]): Partial<BenchmarkBudgets>;
 
 export interface BudgetState {
@@ -140,7 +138,7 @@ export interface BudgetState {
   wall_seconds: number;
 }
 
-/** First cap reached, in canonical order model_rounds, tool_calls, fresh_tokens, total_tokens, wall_seconds; null if none. */
+/** Wall time is the only stop axis; resource counts never terminate. */
 export function budgetTerminatedBy(state: BudgetState, budgets: BenchmarkBudgets): BudgetName | null;
 
 export interface BenchmarkClock {
@@ -148,12 +146,12 @@ export interface BenchmarkClock {
 }
 ```
 
-Stop semantics: budgets are per instance attempt. A cap is reached when the
-current count is `>=` the cap (a 120-round cap means at most 120 completed
-rounds; the attempt stops before issuing round 121). Wall time counts from
-attempt start using the injected clock. On termination the runner stops pulling
-driver events, still extracts the patch, still submits the prediction, and
-still requests a verdict — a budget stop never forces `unresolved`.
+Stop semantics: the wall limit is per instance attempt and counts from attempt
+start using the injected clock. On termination the runner stops pulling driver
+events, still extracts the patch, still submits the prediction, and still
+requests a verdict — a wall stop never forces `unresolved`. Rounds, tool calls,
+fresh tokens, and total tokens remain complete consumption metrics in ledgers
+and reports.
 
 ### 1.3 Model rounds
 
@@ -459,7 +457,7 @@ export type DriverEvent =
 The `tool_calls` variant is the real-mode instrumentation path: the production
 Codeflow driver streams each tool call when it terminates (attributed to the
 role AND provider/model recorded on the staging row — the emitting context,
-never role→model inference), so tool-call budgets supervise the live process
+never role→model inference), so tool-call ledgers remain current in the live process
 without waiting for the next model response. Fixture drivers attach a
 response's calls to its round event; both forms produce identical ledger rows
 (the round's provider/model is the emitting context for its attached calls).
@@ -512,7 +510,7 @@ live runs):
 
 The runner validates every spawned driver event structurally
 (`parseDriverEvent`); a malformed line is a protocol violation
-(infra_error). On a budget stop the runner stops reading and the process is
+(infra_error). On a wall stop the runner stops reading and the process is
 SIGTERMed (SIGKILL after a grace period). A non-zero driver exit after a
 natural end is an execution infra_error. Workspace provisioning failures are
 attempt infra_errors; provisioning only ever writes inside the attempt's
@@ -669,7 +667,7 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport;
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "benchmark_run_id": "bench-...",
   "generated_at": "<ISO>",
   "attempts_per_instance": 1,
@@ -713,7 +711,7 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport;
   },
   "comparison_keys": {
     "dataset_id": "", "dataset_split": "", "dataset_revision": "",
-    "instance_set_digest": "", "budgets": { "model_rounds": 0, "tool_calls": 0, "total_tokens": 0, "wall_seconds": 0 },
+    "instance_set_digest": "", "termination_budgets": { "wall_seconds": 5400 },
     "tool_network": "disabled", "harness_commit": ""
   }
 }
@@ -776,7 +774,7 @@ codeflow benchmark run    --dataset <snapshot-path | hub-id>
                           [--concurrency <n>]         # default 1
                           [--attempts <n>]            # attempts per instance; default 1,
                                                       # >1 is non-official diagnostic only
-                          [--budget <name>=<value>]... # repeatable; model-rounds|tool-calls|fresh-tokens|total-tokens|wall-seconds
+                          [--budget wall-seconds=<seconds>]  # wall-liveness override; resource counts are observational
                           [--model-config <id>]        # default "default"
                           [--fixture <dir>]            # offline driver+evaluator+simulated clock
 
@@ -835,7 +833,7 @@ with complete lines, so an interrupted run can never parse half a document.
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "benchmark_run_id": "bench-...",
   "created_at": "<ISO>",
   "dataset": { "dataset_id": "", "split": "", "revision": "<40-hex>", "source": "local-snapshot|hub", "instance_count": 0 },
@@ -847,16 +845,17 @@ with complete lines, so an interrupted run can never parse half a document.
   "attempts_per_instance": 1,
   "tool_network": "disabled",
   "model_provider_network": "disabled",
-  "budgets": { "defaults": {}, "overrides": null, "effective": {} },
+  "termination_budgets": { "defaults": { "wall_seconds": 5400 }, "overrides": null, "effective": { "wall_seconds": 5400 } },
+  "consumption_metrics": { "axes": ["model_rounds", "tool_calls", "fresh_tokens", "total_tokens"] },
   "driver_mode": "fixture|codeflow"
 }
 ```
 
 - The manifest must record the exact dataset id, split, resolved revision
   (40-hex), harness commit, Codeflow commit, actual concurrency, network
-  declarations, and effective budgets. Never a moving alias.
-- Report rebuilding accepts legacy manifest v1 and interprets it as
-  `attempts_per_instance: 1`; new runs write manifest v2.
+  declarations, effective wall limit, and observational metric axes. Never a moving alias.
+- Report rebuilding accepts legacy manifest v1/v2 and supplies defaults for
+  omitted v1 fields; new runs write manifest v3.
 - `tool_network` defaults to `"disabled"` and is `"disabled"` in fixture mode.
 - `model_provider_network` is `"disabled"` in fixture mode (no provider is
   called) and `"required"` in real mode — the two networks are declared
