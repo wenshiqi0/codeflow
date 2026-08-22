@@ -188,6 +188,7 @@ export async function runRoleChild(
 		PI_CODING_AGENT_DIR: RUNTIME_DIR,
 		CODEFLOW_AGENT_ROLE: role,
 		CODEFLOW_AGENT_DEPTH: "1",
+		CODEFLOW_PROJECT_DIR: path.resolve(cwd),
 		CODEFLOW_HANDOFF_INDEX_ZIPPER: process.env.CODEFLOW_HANDOFF_INDEX_ZIPPER ?? "on",
 	};
 	const evidenceDir = currentEvidenceDir();

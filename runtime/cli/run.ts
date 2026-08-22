@@ -236,6 +236,8 @@ export async function run(
 	const runId = options.resume?.runId ?? inherited ?? newRunId();
 	const runsDir = resolveRunsDir(process.env.CODEFLOW_RUNS_DIR);
 	let handoffId = process.env.CODEFLOW_HANDOFF_ID;
+	const paths = new RunPaths(runsDir, runId);
+	const projectDir = path.resolve(process.cwd());
 
 	// --print resolves the binding and exits. It must not register a run, emit
 	// events, or create directories: a diagnostic that leaves artifacts behind
@@ -249,6 +251,8 @@ export async function run(
 						CODEFLOW_AGENT_DEPTH: freshRun ? "0" : "1",
 						CODEFLOW_RUN_ID: runId,
 						CODEFLOW_RUNS_DIR: runsDir,
+						CODEFLOW_PROJECT_DIR: projectDir,
+						CODEFLOW_EVIDENCE_DIR: paths.evidence,
 						...(handoffId ? { CODEFLOW_HANDOFF_ID: handoffId } : {}),
 					},
 				argv: buildArgv(resolved, args.prompt, EXTENSIONS),
@@ -256,8 +260,6 @@ export async function run(
 		);
 		return 0;
 	}
-
-	const paths = new RunPaths(runsDir, runId);
 
 	if (args.handoffFile) {
 		if (!fs.existsSync(args.handoffFile)) {
