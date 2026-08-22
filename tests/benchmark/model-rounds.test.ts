@@ -27,12 +27,12 @@ function usageRecord(overrides: Record<string, unknown> = {}) {
 		schema_version: 1,
 		at: "2026-01-01T00:00:00Z",
 		attempt: 1,
-		role: "coder",
+		role: "worker",
 		provider: "fixture",
-		model: "fixture-coder",
+		model: "fixture-worker",
 		handoff_id: null,
 		goal_id: null,
-		lane: null,
+		thread: null,
 		usage: { ...USAGE },
 		...overrides,
 	};
@@ -47,13 +47,13 @@ function toolRow(callId: string, kind: "requested" | "result", extra: Record<str
 		status: kind === "result" ? "succeeded" : null,
 		at: "2026-01-01T00:00:00Z",
 		run_id: null,
-		role: "coder",
+		role: "worker",
 		depth: 1,
 		handoff_id: null,
 		goal_id: null,
-		lane: null,
+		thread: null,
 		provider: "fixture",
-		model: "fixture-coder",
+		model: "fixture-worker",
 		...extra,
 	};
 }
@@ -62,10 +62,10 @@ async function bench(): Promise<any> {
 	return loadBenchmarkModule();
 }
 
-describe("role classification", () => {
-	test("business roles are primary; support models are single-listed", async () => {
+describe("round classification", () => {
+	test("project rounds are primary; internal support models are single-listed", async () => {
 		const mod = await bench();
-		for (const role of ["planner", "architect", "coder"]) {
+		for (const role of ["worker", "future-worker"]) {
 			expect(mod.classifyModelRole(role)).toBe("primary");
 		}
 		for (const role of mod.SUPPORT_MODEL_ROLES) {
@@ -75,15 +75,9 @@ describe("role classification", () => {
 		expect(mod.classifyModelRole("some-future-role")).toBe("primary");
 	});
 
-	test("the support set matches the current roster's support models", async () => {
+	test("the support set contains only the internal zipper", async () => {
 		const mod = await bench();
-		expect([...mod.SUPPORT_MODEL_ROLES].sort()).toEqual([
-			"supervisor",
-			"tester",
-			"title-compressor",
-			"verify",
-			"zipper",
-		]);
+		expect(mod.SUPPORT_MODEL_ROLES).toEqual(["zipper"]);
 	});
 });
 
@@ -109,14 +103,14 @@ describe("round counting semantics", () => {
 		expect(metrics.tool_calls_per_model_round).toBe(3);
 	});
 
-	test("multi-role attempt: total = primary + support; support broken out", async () => {
+	test("multi-worker attempt: total = primary + support; support broken out", async () => {
 		const mod = await bench();
 		const metrics = mod.buildAttemptMetrics({
 			usageRecords: [
-				usageRecord({ role: "planner", model: "fixture-planner" }),
-				usageRecord({ role: "coder" }),
+				usageRecord({ role: "worker", model: "fixture-worker" }),
+				usageRecord({ role: "worker" }),
 				usageRecord(),
-				usageRecord({ role: "tester", model: "fixture-tester" }),
+				usageRecord({ role: "worker", model: "fixture-worker" }),
 				usageRecord({ role: "zipper", model: "fixture-zipper" }),
 			],
 			failedModelAttempts: [],
@@ -125,8 +119,8 @@ describe("round counting semantics", () => {
 			terminatedBy: null,
 		});
 		expect(metrics.model_rounds_total).toBe(5);
-		expect(metrics.primary_model_rounds).toBe(3);
-		expect(metrics.support_model_rounds).toBe(2);
+		expect(metrics.primary_model_rounds).toBe(4);
+		expect(metrics.support_model_rounds).toBe(1);
 	});
 
 	test("failed provider attempts are counted separately, never as completed rounds", async () => {
@@ -137,17 +131,17 @@ describe("round counting semantics", () => {
 				{
 					schema_version: 1,
 					at: "2026-01-01T00:00:00Z",
-					role: "coder",
+					role: "worker",
 					provider: "fixture",
-					model: "fixture-coder",
+					model: "fixture-worker",
 					error_class: "provider_timeout",
 				},
 				{
 					schema_version: 1,
 					at: "2026-01-01T00:00:01Z",
-					role: "coder",
+					role: "worker",
 					provider: "fixture",
-					model: "fixture-coder",
+					model: "fixture-worker",
 					error_class: "overloaded",
 				},
 			],

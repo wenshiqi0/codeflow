@@ -7,7 +7,7 @@
  * One file, two modes:
  *
  *  - DRIVER mode (default, no `--mode` in argv): imports the real
- *    `runRoleChild` and runs role "coder" through it, exactly the way a
+ *    `runRoleChild` and runs role "worker" through it, exactly the way a
  *    delegated role is launched in production. runRoleChild resolves the
  *    role from runtime/roles.json, builds the pi argv (extensions included)
  *    and spawns the child with `{ ...process.env, CODEFLOW_AGENT_ROLE,
@@ -123,7 +123,7 @@ const { runRoleChild } = await import("../../../runtime/extensions/codeflow-task
 const dir = captureDir();
 fs.mkdirSync(dir, { recursive: true });
 const result = await runRoleChild(
-	"coder",
+	"worker",
 	"NETWALL delegated probe: attempt the outbound network checks this environment asks for, then finish.",
 	undefined,
 	process.cwd(),

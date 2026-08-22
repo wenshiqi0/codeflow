@@ -255,9 +255,9 @@ describe("stop terminates the depth-0 process tree", () => {
 		const proc = spawnExec(fixture);
 		try {
 			const { runId, runner, tree } = await waitForTree(fixture.runsDir, fixture.treeFile);
-			// exec always drives the planner; choosing a role is never the
+			// exec always drives the worker; choosing a role is never the
 			// outer caller's job.
-			expect(runner.role).toBe("planner");
+			expect(runner.role).toBe("worker");
 			expect(typeof runner.pid).toBe("number");
 
 			const stopped = stopRun(fixture.runsDir, runId);
@@ -285,7 +285,7 @@ describe("stop terminates the depth-0 process tree", () => {
 		const proc = spawnExec(fixture);
 		try {
 			const { runner, tree } = await waitForTree(fixture.runsDir, fixture.treeFile);
-			expect(runner.role).toBe("planner");
+			expect(runner.role).toBe("worker");
 			const supervisorPid = runner.pid as number;
 			expect(typeof supervisorPid).toBe("number");
 

@@ -204,7 +204,7 @@ describe("production codeflow-driver.ts streams from the live Codeflow process",
 		// Production protocol (contract §1.7): rounds carry usage only; the
 		// token ledger rides the round events.
 		const round1 = run.events[0];
-		expect(round1.round.role).toBe("coder");
+		expect(round1.round.role).toBe("worker");
 		expect(round1.round.tool_calls).toBeUndefined();
 		expect(round1.round.usage.total_tokens).toBe(400_000);
 		// The terminated call is its own standalone event.
@@ -213,7 +213,7 @@ describe("production codeflow-driver.ts streams from the live Codeflow process",
 		expect(Date.parse(run.events[1].calls[0].result_at)).toBeGreaterThanOrEqual(
 			Date.parse(run.events[1].calls[0].requested_at),
 		);
-		expect(run.events[1].role).toBe("coder");
+		expect(run.events[1].role).toBe("worker");
 		// The request that never terminated is emitted incomplete only once
 		// the process has ENDED (it cannot be known incomplete while alive).
 		expect(run.events[3].calls).toMatchObject([{ call_id: "t-2", tool: "bash", status: "incomplete" }]);
@@ -325,7 +325,7 @@ describe("production defaults end to end: wall safety terminates the live nested
 		expect(harness[0].official_fields_ok).toBe(true);
 		expect(harness[0].run_id).toBe(attempt.evaluation_run_id);
 
-		// The nested run was LIVE when the supervisor's signal landed: it never
+		// The nested run was LIVE when the worker's signal landed: it never
 		// finished its endless script, and at kill time the crossing round was
 		// already durable in the runner-written ledger.
 		const terminated = captureJson(capture, "inner-terminated");

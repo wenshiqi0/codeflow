@@ -211,11 +211,11 @@ describe("P5: memo exists but refuses; audit is gated", () => {
 			schema_version: 1,
 			at: "2026-01-01T00:00:00Z",
 			run_id: "run-usage",
-			role: "coder",
+			role: "worker",
 			depth: 1,
 			handoff_id: "h1",
 			goal_id: "g1",
-			lane: "code",
+			thread: "code",
 			turn: 1,
 			provider: "p",
 			model: "m",
@@ -321,12 +321,12 @@ describe("P10: sub streams from the watermark", () => {
 	});
 });
 
-describe("P10b: goals are derived joins", () => {
-	test("codeflow goals reports lane handoffs without goal state", () => {
+describe("P10b: goals are grouping statistics", () => {
+	test("codeflow goals reports thread handoffs without goal state", () => {
 		const dir = makeRunsDir();
 		const runDir = path.join(dir, "run-goal");
 		const goalDir = path.join(runDir, "goals", "movement-r1");
-		const handoffDir = path.join(runDir, "handoffs", "h00001-tester");
+		const handoffDir = path.join(runDir, "handoffs", "h00001-worker");
 		fs.mkdirSync(goalDir, { recursive: true });
 		fs.mkdirSync(handoffDir, { recursive: true });
 		fs.writeFileSync(path.join(goalDir, "contract.json"), JSON.stringify({
@@ -335,19 +335,14 @@ describe("P10b: goals are derived joins", () => {
 			goal: "Deterministic movement",
 			definition_of_done: ["Business tests pass"],
 				created_at: "2026-01-01T00:00:00Z",
-				lanes: {
-					test: { role: "tester" },
-					code: { role: "coder" },
-					verify: { role: "verify" },
-				},
 		}));
 		fs.writeFileSync(path.join(handoffDir, "state.json"), JSON.stringify({
-			handoff_id: "h00001-tester",
-			role: "tester",
+			handoff_id: "h00001-worker",
+			role: "worker",
 			status: "done",
 			result: "PASS",
 			goal_id: "movement-r1",
-			lane: "test",
+			thread: "test",
 		}));
 
 		const env = { ...baseEnv(), CODEFLOW_RUNS_DIR: dir };
@@ -355,10 +350,11 @@ describe("P10b: goals are derived joins", () => {
 		expect(result.exitCode).toBe(0);
 		const [goal] = JSON.parse(result.stdout);
 		expect(goal.goal_id).toBe("movement-r1");
-		expect(goal.join.satisfied).toBe(false);
-		expect(goal.lanes.test.latest_handoff.result).toBe("PASS");
-		expect(goal.lanes.code.latest_handoff).toBeNull();
+		expect(goal.handoff_count).toBe(1);
+		expect(goal.pass_count).toBe(1);
+		expect(goal.threads.test.handoff_count).toBe(1);
 		expect("status" in goal).toBe(false);
+		expect("join" in goal).toBe(false);
 	});
 });
 
@@ -573,7 +569,7 @@ describe("P15: exec rejects delegate-only options", () => {
 			const env = { ...baseEnv(), CODEFLOW_RUNS_DIR: makeRunsDir() };
 			const result = outer(["exec", ...flags, "some requirement"], env);
 			expect(result.exitCode).not.toBe(0);
-			expect(result.stderr).toMatch(/delegate|planner/i);
+			expect(result.stderr).toMatch(/delegate|worker/i);
 			if (flags[0] !== "--print") {
 				expect(result.stderr).toMatch(/role|handoff/i);
 			}
@@ -589,8 +585,8 @@ describe("P15: exec rejects delegate-only options", () => {
 			CODEFLOW_RUN_ID: "run-gate-test",
 			CODEFLOW_RUNS_DIR: makeRunsDir(),
 		};
-		const result = inner(["delegate", "--role", "coder", "--print", "do a thing"], env);
+		const result = inner(["delegate", "--role", "worker", "--print", "do a thing"], env);
 		expect(result.exitCode).toBe(0);
-		expect(JSON.parse(result.stdout).role).toBe("coder");
+		expect(JSON.parse(result.stdout).role).toBe("worker");
 	});
 });

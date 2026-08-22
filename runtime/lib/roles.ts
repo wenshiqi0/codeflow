@@ -61,36 +61,36 @@ function loadRegistry(registryFile: string): RoleRegistry {
 	try {
 		parsed = JSON.parse(fs.readFileSync(registryFile, "utf-8"));
 	} catch (error) {
-		fail(`cannot read role registry ${registryFile}: ${error instanceof Error ? error.message : String(error)}`);
+		fail(`cannot read worker registry ${registryFile}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 	if (!isRecord(parsed) || !isRecord(parsed.roles)) {
-		fail(`role registry ${registryFile} must contain a roles object`);
+		fail(`worker registry ${registryFile} must contain a roles object`);
 	}
 
 	const roles: Record<string, RoleDefinition> = {};
 	for (const [role, value] of Object.entries(parsed.roles)) {
 		if (!ROLE_NAME_PATTERN.test(role)) fail(`invalid role name in registry: ${role}`);
-		if (!isRecord(value)) fail(`role ${role}: configuration must be an object`);
+		if (!isRecord(value)) fail(`worker ${role}: configuration must be an object`);
 		for (const key of Object.keys(value)) {
-			if (!ALLOWED_KEYS.has(key)) fail(`role ${role}: unknown configuration key ${key}`);
+			if (!ALLOWED_KEYS.has(key)) fail(`worker ${role}: unknown configuration key ${key}`);
 		}
 		if (typeof value.description !== "string" || value.description.trim() === "") {
-			fail(`role ${role}: description must be a non-empty string`);
+			fail(`worker ${role}: description must be a non-empty string`);
 		}
 		if (typeof value.model !== "string" || value.model.trim() === "") {
-			fail(`role ${role}: model must be a non-empty string`);
+			fail(`worker ${role}: model must be a non-empty string`);
 		}
 		if (typeof value.prompt !== "string" || value.prompt.trim() === "") {
-			fail(`role ${role}: prompt must be a non-empty string`);
+			fail(`worker ${role}: prompt must be a non-empty string`);
 		}
 		if (value.tools !== undefined && (!Array.isArray(value.tools) || value.tools.some((tool) => typeof tool !== "string" || tool.trim() === ""))) {
-			fail(`role ${role}: tools must be an array of non-empty strings`);
+			fail(`worker ${role}: tools must be an array of non-empty strings`);
 		}
 		if (value.internal !== undefined && typeof value.internal !== "boolean") {
-			fail(`role ${role}: internal must be boolean`);
+			fail(`worker ${role}: internal must be boolean`);
 		}
 		if (value.needs_project_rules !== undefined && value.needs_project_rules !== false && value.needs_project_rules !== "shared" && value.needs_project_rules !== "full") {
-			fail(`role ${role}: needs_project_rules must be false, shared, or full`);
+			fail(`worker ${role}: needs_project_rules must be false, shared, or full`);
 		}
 		roles[role] = value as unknown as RoleDefinition;
 	}
@@ -117,19 +117,19 @@ function resolvePrompt(registryFile: string, role: string, ref: string): string 
 	const promptPath = path.resolve(packageRoot, ref);
 	const relative = path.relative(referencesRoot, promptPath);
 	if (!promptPath.endsWith(".md") || relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
-		fail(`role ${role}: prompt must be Markdown below references/: ${ref}`);
+		fail(`worker ${role}: prompt must be Markdown below references/: ${ref}`);
 	}
 	try {
 		const realRoot = fs.realpathSync(referencesRoot);
 		const realPrompt = fs.realpathSync(promptPath);
 		const realRelative = path.relative(realRoot, realPrompt);
 		if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
-			fail(`role ${role}: prompt escapes references/: ${ref}`);
+			fail(`worker ${role}: prompt escapes references/: ${ref}`);
 		}
 		return realPrompt;
 	} catch (error) {
 		if (error instanceof RoleError) throw error;
-		fail(`role ${role}: prompt is unreadable: ${ref}`);
+		fail(`worker ${role}: prompt is unreadable: ${ref}`);
 	}
 }
 
@@ -139,7 +139,7 @@ export function resolveRole(registryFile: string, role: string): ResolvedRole | 
 
 	const separator = definition.model.indexOf("/");
 	if (separator <= 0 || separator === definition.model.length - 1) {
-		fail(`role ${role}: model must be '<provider>/<model>'`);
+		fail(`worker ${role}: model must be '<provider>/<model>'`);
 	}
 	const promptPath = resolvePrompt(registryFile, role, definition.prompt);
 	return {

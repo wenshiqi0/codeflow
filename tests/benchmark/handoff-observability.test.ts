@@ -30,7 +30,7 @@ function writeRuntimeState(
 			schema_version: 2,
 			run_id: runId,
 			handoff_id: handoffId,
-			role: "coder",
+			role: "worker",
 			depth: 1,
 			goal: "secret goal prose",
 			scope: ["secret/scope"],
@@ -43,13 +43,13 @@ function projection(overrides: Record<string, unknown> = {}): Record<string, unk
 	return {
 		schema_version: 1,
 		run_id: "run-1",
-		handoff_id: "h00001-coder",
-		role: "coder",
+		handoff_id: "h00001-worker",
+		role: "worker",
 		depth: 1,
 		status: "blocked",
 		result: "BLOCKED",
 		goal_id: "goal-1",
-		lane: "code",
+		thread: "code",
 		blocked_reasons: ["PROVIDER_FAILURE"],
 		unknown_blocked_reasons: 0,
 		retry_of: null,
@@ -61,11 +61,11 @@ describe("handoff metadata projection", () => {
 	test("projects only closed metadata and counts unknown reasons", async () => {
 		const mod = await loadBenchmarkModule();
 		const dir = makeTmpDir();
-		writeRuntimeState(dir, "run-1", "h00001-coder", {
+		writeRuntimeState(dir, "run-1", "h00001-worker", {
 			status: "blocked",
 			result: "BLOCKED",
 			goal_id: "goal-1",
-			lane: "code",
+			thread: "code",
 			blocked: {
 				reasons: ["PROVIDER_FAILURE", "NEW_RUNTIME_REASON", "not an enum"],
 				detail: "provider socket closed",
@@ -93,7 +93,7 @@ describe("handoff metadata projection", () => {
 });
 
 describe("runner and report consume handoff observability", () => {
-	test("runner writes canonical telemetry and report aggregates by reason, role, and lane", async () => {
+	test("runner writes canonical telemetry and report aggregates by reason, goal, thread, and depth", async () => {
 		const mod = await loadBenchmarkModule();
 		const dir = makeTmpDir();
 		const outDir = path.join(dir, "benchmark-out");
@@ -109,12 +109,12 @@ describe("runner and report consume handoff observability", () => {
 			driver: {
 				async *startAttempt(input) {
 					const runsRoot = path.resolve(input.workspaceDir, "..", "codeflow-runs");
-					writeRuntimeState(runsRoot, "run-inner", "h00001-coder", {
-						role: "coder",
+					writeRuntimeState(runsRoot, "run-inner", "h00001-worker", {
+						role: "worker",
 						status: "blocked",
 						result: "BLOCKED",
 						goal_id: "goal-1",
-						lane: "code",
+						thread: "code",
 						blocked: { reasons: ["PROVIDER_FAILURE", "UNDOCUMENTED"], detail: "secret" },
 					});
 				},
@@ -137,10 +137,11 @@ describe("runner and report consume handoff observability", () => {
 			redelegations: 0,
 			metrics_available: true,
 		});
-		expect(result.report.runtime_observability.handoffs.by_role.coder.blocked_reasons).toEqual({
+		expect(result.report.runtime_observability.handoffs.by_goal["goal-1"].blocked_reasons).toEqual({
 			PROVIDER_FAILURE: 1,
 		});
-		expect(result.report.runtime_observability.handoffs.by_lane.code.blocked).toBe(1);
+		expect(result.report.runtime_observability.handoffs.by_thread.code.blocked).toBe(1);
+		expect(result.report.runtime_observability.handoffs.by_depth["1"].blocked).toBe(1);
 	});
 
 	test("old v1-style artifacts rebuild with observability unavailable", async () => {

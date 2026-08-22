@@ -24,12 +24,12 @@ function record(usage: Record<string, unknown>) {
 		schema_version: 1,
 		at: "2026-01-01T00:00:00Z",
 		attempt: 1,
-		role: "coder",
+		role: "worker",
 		provider: "fixture",
-		model: "fixture-coder",
+		model: "fixture-worker",
 		handoff_id: null,
 		goal_id: null,
-		lane: null,
+		thread: null,
 		usage,
 	};
 }

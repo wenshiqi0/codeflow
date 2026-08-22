@@ -158,13 +158,13 @@ and reports.
 One assistant model response with usage = one completed `model_round`. A
 response with N tool calls is 1 round + N calls. Provider requests that fail
 before any assistant response are `failed_model_attempts`, never completed
-rounds. All roles count in `model_rounds_total`.
+rounds. All workers count in `model_rounds_total`.
 
 ```ts
-/** Roles counted as support models; everything else (incl. unknown roles) is primary. */
+/** Registry entries counted as internal support; everything else (incl. unknown entries) is primary. */
 export const SUPPORT_MODEL_ROLES: readonly string[];
-// Fixed content: ["tester", "verify", "supervisor", "title-compressor", "zipper"]
-// Primary roles: planner, architect, coder.
+// Fixed content: ["zipper"]
+// Project work and unknown future entries are primary.
 
 export function classifyModelRole(role: string): "primary" | "support";
 ```
@@ -177,7 +177,7 @@ export const TOOL_CALL_SCHEMA_VERSION = 1;
 /** The only top-level keys a ledger row may carry. */
 export const TOOL_CALL_RECORD_FIELDS: readonly string[];
 // ["schema_version", "kind", "call_id", "tool", "status", "at",
-//  "run_id", "role", "depth", "handoff_id", "goal_id", "lane",
+//  "run_id", "role", "depth", "handoff_id", "goal_id", "thread",
 //  "provider", "model"]
 
 export type ToolCallRecordKind = "requested" | "result";
@@ -195,7 +195,7 @@ export interface ToolCallRecord {
   depth: number;
   handoff_id: string | null;
   goal_id: string | null;
-  lane: string | null;
+  thread: string | null;
   provider: string;  // provider of the assistant response that EMITTED the call
   model: string;     // model of the assistant response that EMITTED the call
 }
@@ -258,7 +258,7 @@ export interface AttemptUsageRecord {
   turn: number | null;
   handoff_id: string | null;
   goal_id: string | null;
-  lane: string | null;
+  thread: string | null;
   usage: {
     input: number;
     output: number;
@@ -387,8 +387,8 @@ export interface WasteSummary {
   rounds_in_non_pass_handoffs: number | null;
   tokens_in_non_pass_handoffs: number | null;
   waste_ratio_rounds: number | null;
-  planner_rounds_ratio: number | null;
-  handoff_reopens_per_goal_lane_median: number | null;
+  root_rounds_ratio: number | null;
+  handoff_reopens_per_goal_thread_median: number | null;
   metrics_available: boolean;
 }
 export interface ContextGrowthSummary {
@@ -437,7 +437,7 @@ export interface DriverRound {
   turn?: number | null;
   handoff_id?: string | null;
   goal_id?: string | null;
-  lane?: string | null;
+  thread?: string | null;
   usage: AttemptUsageRecord["usage"];
   request_started_at?: string | null;
   tool_calls?: DriverToolCall[];  // tool calls emitted by this one response
@@ -451,7 +451,7 @@ export type DriverEvent =
   | { type: "infra_error"; error_class: string } // terminates the attempt as infra failure
   | { type: "tool_calls"; role: string; provider: string; model: string;
       handoff_id?: string | null; goal_id?: string | null;
-      lane?: string | null; calls: DriverToolCall[] }; // real-mode instrumentation
+      thread?: string | null; calls: DriverToolCall[] }; // real-mode instrumentation
 ```
 
 The `tool_calls` variant is the real-mode instrumentation path: the production
@@ -688,7 +688,7 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport;
     "per_attempt_hit_rate": { "median": null, "p90": null }
   },
   "tool_calls_per_model_round": null,
-  "breakdowns": { "by_role": {}, "by_model": {}, "by_lane": {}, "by_tool": {} },
+  "breakdowns": { "by_goal": {}, "by_model": {}, "by_thread": {}, "by_depth": {}, "by_tool": {} },
   "wall_time": {
     "total_seconds": 0, "median_seconds": 0, "p90_seconds": 0, "not_ranked": true,
     "tool_execution_seconds": { "total": 0, "median": null, "p90": null },
@@ -700,12 +700,12 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport;
     "handoffs": {
       "total": 0, "pass": 0, "fail": 0, "blocked": 0, "nonterminal": 0,
       "blocked_reasons": {}, "unknown_blocked_reasons": 0, "redelegations": 0,
-      "metrics_available": false, "by_role": {}, "by_lane": {}
+      "metrics_available": false, "by_goal": {}, "by_thread": {}, "by_depth": {}
     },
     "waste": {
       "rounds_in_non_pass_handoffs": null, "tokens_in_non_pass_handoffs": null,
-      "waste_ratio_rounds": null, "planner_rounds_ratio": null,
-      "handoff_reopens_per_goal_lane_median": null, "metrics_available": false
+      "waste_ratio_rounds": null, "root_rounds_ratio": null,
+      "handoff_reopens_per_goal_thread_median": null, "metrics_available": false
     },
     "context_growth": { "first_turn_input_by_handoff_index": null, "metrics_available": false }
   },

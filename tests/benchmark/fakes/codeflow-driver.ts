@@ -27,7 +27,7 @@
  *             while this process is still alive (REAL-16..19).
  *
  * Every mode writes driver-natural-exit-<pid> when it finishes its script on
- * its own; only a supervisor's signal can prevent that marker, which is what
+ * its own; only a worker's signal can prevent that marker, which is what
  * the budget tests assert (killed before natural exit, i.e. it would
  * otherwise have continued).
  */
@@ -188,7 +188,7 @@ function markNaturalExit(summary: Record<string, unknown>): void {
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
 	process.on(signal, () => {
 		// Still alive at termination time: record what the runner's ledgers
-		// held the moment the supervisor's signal arrived.
+		// held the moment the worker's signal arrived.
 		if ((process.env.FAKE_DRIVER_MODE ?? "script") === "stream") {
 			observeLedgers(`sigterm`);
 		}
@@ -229,7 +229,7 @@ if (mode === "marathon") {
 		emit({
 			type: "round",
 			round: {
-				role: "coder",
+				role: "worker",
 				provider: "fake-anthropic",
 				model: "fake-marathon",
 				usage: {
@@ -278,12 +278,12 @@ if (mode === "stream") {
 		emitObserved({
 			type: "round",
 			round: {
-				role: "coder",
+				role: "worker",
 				provider: "fake-anthropic",
 				model: "fake-stream",
 				handoff_id: null,
 				goal_id: null,
-				lane: null,
+				thread: null,
 				usage: {
 					input: tokens - 100,
 					output: 100,
@@ -304,14 +304,14 @@ if (mode === "stream") {
 			observeLedgers(`before_tool_${round}_${tool}`);
 			emitObserved({
 				type: "tool_calls",
-				role: "coder",
+				role: "worker",
 				// Same staging-row attribution the production chain forwards:
 				// provider/model of the round that emitted these calls.
 				provider: "fake-anthropic",
 				model: "fake-stream",
 				handoff_id: null,
 				goal_id: null,
-				lane: null,
+				thread: null,
 				calls: [{ call_id: `s-${round}-${tool}`, tool: "bash", status: "succeeded" }],
 			});
 			toolEvents += 1;
@@ -340,9 +340,9 @@ const steps: DriverStep[] = instance?.steps ?? [
 		event: {
 			type: "round",
 			round: {
-				role: "coder",
+				role: "worker",
 				provider: "fake-openai",
-				model: "fake-coder",
+				model: "fake-worker",
 				usage: { input: 90, output: 10, reasoning: 0, cache_read: 0, cache_write: 0, total_tokens: 100, cost: null },
 				tool_calls: [{ call_id: "fallback-1", tool: "bash", status: "succeeded" }],
 			},

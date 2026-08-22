@@ -1,6 +1,6 @@
 # Model usage
 
-Codeflow attributes every assistant model response to the current Codeflow role, handoff, goal lane, and model. The zipper support model is also recorded even though it runs in an isolated no-tool child.
+Codeflow attributes every assistant model response to the current worker entry, handoff, goal thread, and model. The zipper support model is also recorded even though it runs in an isolated no-tool child.
 
 ## Artifacts
 
@@ -12,7 +12,7 @@ Codeflow attributes every assistant model response to the current Codeflow role,
 Each ledger row contains:
 
 - `at`, `run_id`, `role`, `depth`, and `handoff_id`;
-- `goal_id` and `lane` for goal workers;
+- `goal_id` and `thread` for goal workers;
 - `turn`;
 - `provider`, `model`, and `response_model`;
 - normalized input, output, cache read/write, reasoning, and total tokens;

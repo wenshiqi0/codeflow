@@ -71,8 +71,8 @@ describe("provider profiles", () => {
 		expect(launcher).not.toContain("CUSTOM_ANTHROPIC");
 	});
 
-	test("the planner remains bound to GLM 5.3", () => {
-		const planner = readRoleDefinition(path.join(runtimeDir, "roles.json"), "planner");
-		expect(planner?.model).toBe("zhipuai-coding-plan/glm-5.3");
+	test("the worker remains bound to GLM 5.3", () => {
+		const worker = readRoleDefinition(path.join(runtimeDir, "roles.json"), "worker");
+		expect(worker?.model).toBe("zhipuai-coding-plan/glm-5.3");
 	});
 });

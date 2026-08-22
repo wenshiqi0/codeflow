@@ -243,11 +243,11 @@ never inside tests): `swebench/harness/run_evaluation.py` (`__main__` argparse
 
 Every tool-call ledger row carries DIRECT `provider`/`model` attribution
 from the context that emitted the call (the assistant response — the same
-attribution the usage ledger records), alongside role/goal/lane. Both fakes
+attribution the usage ledger records), alongside role/goal/thread. Both fakes
 that write staging rows speak that schema:
 
 - `inner-codeflow.sh` `tool_row()` stamps `provider` (default
-  `fake-anthropic`) and `model` (default `fake-coder`) on every row —
+  `fake-anthropic`) and `model` (default `fake-worker`) on every row —
   optional args 4/5 exist so future scenarios can vary them.
 - `codeflow-driver.ts` stream mode emits standalone `tool_calls` events
   with the emitting round's `provider`/`model` (`fake-anthropic`/
@@ -289,7 +289,7 @@ Fake captures (all under `FAKE_CAPTURE_DIR`, `<pid>`-suffixed):
   streams ledgers to disk incrementally, not at exit (REAL-16..19).
 - `driver-emitted-<pid>.jsonl` — stream mode only: `{seq, type, at}` per
   emitted event, so tests can prove exactly how far the process got before
-  the supervisor killed it.
+  the worker killed it.
 - `harness-calls.jsonl` — one row per evaluation: `{argv, run_id, instance,
   predictions_path, prediction_keys}` plus `net_check` (`{url, exit_code,
   ok}`) when `FAKE_HARNESS_NET_URL` is set (§6).

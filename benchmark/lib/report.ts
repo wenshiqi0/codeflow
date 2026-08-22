@@ -119,9 +119,10 @@ export interface BenchmarkReport {
 		};
 	};
 	breakdowns: {
-		by_role: Record<string, BreakdownTotals>;
+		by_goal: Record<string, BreakdownTotals>;
 		by_model: Record<string, BreakdownTotals>;
 		by_thread: Record<string, BreakdownTotals>;
+		by_depth: Record<string, BreakdownTotals>;
 		by_tool: Record<string, number>;
 		by_operation: Record<string, number>;
 	};
@@ -137,8 +138,9 @@ export interface BenchmarkReport {
 	};
 	runtime_observability: {
 		handoffs: HandoffObservabilitySummary & {
-			by_role: Record<string, HandoffObservabilitySummary>;
+			by_goal: Record<string, HandoffObservabilitySummary>;
 			by_thread: Record<string, HandoffObservabilitySummary>;
+			by_depth: Record<string, HandoffObservabilitySummary>;
 		};
 		waste: WasteSummary;
 		context_growth: ContextGrowthSummary;
@@ -210,7 +212,7 @@ function aggregateWaste(attempts: CaseAttemptRecord[]): WasteSummary {
 			rounds_in_non_pass_handoffs: null,
 			tokens_in_non_pass_handoffs: null,
 			waste_ratio_rounds: null,
-			planner_rounds_ratio: null,
+			root_rounds_ratio: null,
 			handoff_reopens_per_goal_thread_median: null,
 			metrics_available: false,
 		};
@@ -223,8 +225,8 @@ function aggregateWaste(attempts: CaseAttemptRecord[]): WasteSummary {
 		(sum, attempt) => sum + (attempt.metrics.waste.tokens_in_non_pass_handoffs ?? 0),
 		0,
 	);
-	const plannerWeighted = attempts.filter((attempt) => attempt.metrics.waste.planner_rounds_ratio !== null);
-	const plannerDenominator = plannerWeighted.reduce(
+	const rootWeighted = attempts.filter((attempt) => attempt.metrics.waste.root_rounds_ratio !== null);
+	const rootDenominator = rootWeighted.reduce(
 		(sum, attempt) => sum + attempt.metrics.model_rounds_total,
 		0,
 	);
@@ -236,12 +238,12 @@ function aggregateWaste(attempts: CaseAttemptRecord[]): WasteSummary {
 		rounds_in_non_pass_handoffs: nonPassRounds,
 		tokens_in_non_pass_handoffs: nonPassTokens,
 		waste_ratio_rounds: totalRounds > 0 ? nonPassRounds / totalRounds : null,
-		planner_rounds_ratio:
-			plannerDenominator > 0
-				? plannerWeighted.reduce(
-						(sum, attempt) => sum + attempt.metrics.model_rounds_total * (attempt.metrics.waste.planner_rounds_ratio ?? 0),
+		root_rounds_ratio:
+			rootDenominator > 0
+				? rootWeighted.reduce(
+						(sum, attempt) => sum + attempt.metrics.model_rounds_total * (attempt.metrics.waste.root_rounds_ratio ?? 0),
 						0,
-					) / plannerDenominator
+					) / rootDenominator
 				: null,
 		handoff_reopens_per_goal_thread_median: medianOrNull(reopenValues),
 		metrics_available: true,
@@ -372,7 +374,7 @@ function readCases(outDir: string): CaseFile[] {
 					rounds_in_non_pass_handoffs: null,
 					tokens_in_non_pass_handoffs: null,
 					waste_ratio_rounds: null,
-					planner_rounds_ratio: null,
+					root_rounds_ratio: null,
 					handoff_reopens_per_goal_thread_median: null,
 					metrics_available: false,
 				},
@@ -388,13 +390,14 @@ function readCases(outDir: string): CaseFile[] {
 }
 
 interface LedgerBreakdownInput {
-	byRole: Record<string, BreakdownTotals>;
+	byGoal: Record<string, BreakdownTotals>;
 	byModel: Record<string, BreakdownTotals>;
 	byThread: Record<string, BreakdownTotals>;
+	byDepth: Record<string, BreakdownTotals>;
 }
 
 /**
- * Role/model/thread breakdowns come from the per-attempt ledgers under
+ * Goal/model/thread/depth breakdowns come from the per-attempt ledgers under
  * `cases/` when present (hand-built report fixtures without ledgers simply
  * produce empty breakdowns).
  *
@@ -407,7 +410,7 @@ interface LedgerBreakdownInput {
  *   including models that emitted zero tools. No dimension silently drops a
  *   zero-round tool call or a zero-tool model round.
  *
- * by_role and by_thread keep both dimensions from both ledgers, unchanged.
+ * by_goal, by_thread, and by_depth keep both dimensions from both ledgers.
  */
 function accumulateLedgers(outDir: string, cases: CaseFile[], out: LedgerBreakdownInput): void {
 	for (const caseFile of cases) {
@@ -418,23 +421,32 @@ function accumulateLedgers(outDir: string, cases: CaseFile[], out: LedgerBreakdo
 			const toolRecords = readToolCallRecords(path.join(attemptDir, "tool-calls.jsonl"));
 
 			const callsByModel = new Map<string, number>();
-			const callsByRole = new Map<string, number>();
-			const callsByLane = new Map<string, number>();
+			const callsByGoal = new Map<string, number>();
+			const callsByThread = new Map<string, number>();
+			const callsByDepth = new Map<string, number>();
 			// Tool side first: the recorded attribution decides the model groups
 			// without any role→model inference.
 			for (const record of toolRecords) {
 				if (record.kind !== "requested") continue;
 				const modelKey = `${record.provider}/${record.model}`;
 				callsByModel.set(modelKey, (callsByModel.get(modelKey) ?? 0) + 1);
-				callsByRole.set(record.role, (callsByRole.get(record.role) ?? 0) + 1);
+				const goalKey = record.goal_id ?? "_ungrouped";
+				const depthKey = String(record.depth);
+				callsByGoal.set(goalKey, (callsByGoal.get(goalKey) ?? 0) + 1);
+				callsByDepth.set(depthKey, (callsByDepth.get(depthKey) ?? 0) + 1);
 				if (record.thread !== null) {
-					callsByLane.set(record.thread, (callsByLane.get(record.thread) ?? 0) + 1);
+					const threadKey = record.thread;
+					callsByThread.set(threadKey, (callsByThread.get(threadKey) ?? 0) + 1);
 				}
 			}
 
 			for (const record of usageRecords) {
-				bump(out.byRole, record.role).model_rounds++;
-				out.byRole[record.role].total_tokens += record.usage.total_tokens;
+				const goalKey = record.goal_id ?? "_ungrouped";
+				const depthKey = record.depth === null ? "unknown" : String(record.depth);
+				bump(out.byGoal, goalKey).model_rounds++;
+				out.byGoal[goalKey].total_tokens += record.usage.total_tokens;
+				bump(out.byDepth, depthKey).model_rounds++;
+				out.byDepth[depthKey].total_tokens += record.usage.total_tokens;
 				const modelKey = `${record.provider}/${record.model}`;
 				bump(out.byModel, modelKey).model_rounds++;
 				out.byModel[modelKey].total_tokens += record.usage.total_tokens;
@@ -448,11 +460,14 @@ function accumulateLedgers(outDir: string, cases: CaseFile[], out: LedgerBreakdo
 			for (const [modelKey, count] of callsByModel) {
 				bump(out.byModel, modelKey).tool_calls += count;
 			}
-			for (const [role, count] of callsByRole) {
-				bump(out.byRole, role).tool_calls += count;
+			for (const [goal, count] of callsByGoal) {
+				bump(out.byGoal, goal).tool_calls += count;
 			}
-			for (const [thread, count] of callsByLane) {
+			for (const [thread, count] of callsByThread) {
 				bump(out.byThread, thread).tool_calls += count;
+			}
+			for (const [depth, count] of callsByDepth) {
+				bump(out.byDepth, depth).tool_calls += count;
 			}
 		}
 	}
@@ -460,23 +475,31 @@ function accumulateLedgers(outDir: string, cases: CaseFile[], out: LedgerBreakdo
 
 function addHandoffState(
 	total: HandoffObservabilitySummary,
-	byRole: Record<string, HandoffObservabilitySummary>,
+	byGoal: Record<string, HandoffObservabilitySummary>,
 	byThread: Record<string, HandoffObservabilitySummary>,
+	byDepth: Record<string, HandoffObservabilitySummary>,
 	state: HandoffStateProjection,
 ): void {
 	total.metrics_available = true;
 	addHandoffTerminal(total, state);
 
-	const role = byRole[state.role] ?? emptyHandoffObservabilitySummary();
-	role.metrics_available = true;
-	byRole[state.role] = role;
-	addHandoffTerminal(role, state);
+	const goalKey = state.goal_id ?? "_ungrouped";
+	const goal = byGoal[goalKey] ?? emptyHandoffObservabilitySummary();
+	goal.metrics_available = true;
+	byGoal[goalKey] = goal;
+	addHandoffTerminal(goal, state);
 
 	const threadKey = state.thread ?? "(ungrouped)";
 	const thread = byThread[threadKey] ?? emptyHandoffObservabilitySummary();
 	thread.metrics_available = true;
 	byThread[threadKey] = thread;
 	addHandoffTerminal(thread, state);
+
+	const depthKey = String(state.depth);
+	const depth = byDepth[depthKey] ?? emptyHandoffObservabilitySummary();
+	depth.metrics_available = true;
+	byDepth[depthKey] = depth;
+	addHandoffTerminal(depth, state);
 }
 
 function addHandoffTerminal(total: HandoffObservabilitySummary, state: HandoffStateProjection): void {
@@ -501,22 +524,26 @@ function accumulateHandoffObservability(
 	outDir: string,
 	cases: CaseFile[],
 ): HandoffObservabilitySummary & {
-	by_role: Record<string, HandoffObservabilitySummary>;
+	by_goal: Record<string, HandoffObservabilitySummary>;
 	by_thread: Record<string, HandoffObservabilitySummary>;
+	by_depth: Record<string, HandoffObservabilitySummary>;
 } {
 	const total = emptyHandoffObservabilitySummary();
-	const byRole: Record<string, HandoffObservabilitySummary> = {};
+	const byGoal: Record<string, HandoffObservabilitySummary> = {};
 	const byThread: Record<string, HandoffObservabilitySummary> = {};
+	const byDepth: Record<string, HandoffObservabilitySummary> = {};
 	for (const caseFile of cases) {
 		const slug = caseFile.instance_id.replace(/\//g, "__");
 		for (const attempt of caseFile.attempts) {
 			const file = path.join(outDir, "cases", slug, "attempts", String(attempt.attempt), "telemetry", "handoff-states.json");
 			if (!fs.existsSync(file)) continue;
 			total.metrics_available = true;
-			for (const state of readHandoffStateProjections(file)) addHandoffState(total, byRole, byThread, state);
+			for (const state of readHandoffStateProjections(file)) {
+				addHandoffState(total, byGoal, byThread, byDepth, state);
+			}
 		}
 	}
-	return { ...total, by_role: byRole, by_thread: byThread };
+	return { ...total, by_goal: byGoal, by_thread: byThread, by_depth: byDepth };
 }
 
 /** Reads <outDir> artifacts only — manifest, case files, predictions. */
@@ -668,9 +695,10 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 		}
 	}
 	const breakdownInput: LedgerBreakdownInput = {
-		byRole: {},
+		byGoal: {},
 		byModel: {},
 		byThread: {},
+		byDepth: {},
 	};
 	accumulateLedgers(outDir, cases, breakdownInput);
 
@@ -777,9 +805,10 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 			index_cards: indexCards,
 		},
 		breakdowns: {
-			by_role: breakdownInput.byRole,
+			by_goal: breakdownInput.byGoal,
 			by_model: breakdownInput.byModel,
 			by_thread: breakdownInput.byThread,
+			by_depth: breakdownInput.byDepth,
 			by_tool: byTool,
 			by_operation: byOperation,
 		},

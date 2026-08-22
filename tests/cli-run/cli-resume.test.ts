@@ -35,9 +35,9 @@ function baseEnv(): Record<string, string> {
 
 function terminalSource(runsDir: string, requirement: string): RunPaths {
 	const paths = new RunPaths(runsDir, "run-resume-cli");
-	runStart(paths, "planner", 41001, requirement);
+	runStart(paths, "worker", 41001, requirement);
 	const root = openHandoff(paths, {
-		role: "planner",
+		role: "worker",
 		depth: 0,
 		body: `Goal: ${requirement}\n`,
 	});
@@ -47,12 +47,12 @@ function terminalSource(runsDir: string, requirement: string): RunPaths {
 		summary: "runtime correction required",
 		blockedReasons: ["PROVIDER_FAILURE"],
 	});
-	runnerExited(paths, 41001, "planner", 0);
+	runnerExited(paths, 41001, "worker", 0);
 	return paths;
 }
 
 describe("external resume command", () => {
-	test("continues the same run id and persistent planner session", () => {
+	test("continues the same run id and persistent worker session", () => {
 		const fixture = temporaryRoot("codeflow-cli-resume-");
 		const runsDir = path.join(fixture, "runs");
 		const argsFile = path.join(fixture, "pi-args.json");
@@ -67,7 +67,7 @@ describe("external resume command", () => {
 		fs.mkdirSync(source.goalDir("existing-goal"), { recursive: true });
 		fs.writeFileSync(source.goalContractPath("existing-goal"), '{"goal_id":"existing-goal"}\n');
 		fs.mkdirSync(source.piSessions, { recursive: true });
-		fs.writeFileSync(path.join(source.piSessions, "existing-lane.jsonl"), "lane history\n");
+		fs.writeFileSync(path.join(source.piSessions, "existing-thread.jsonl"), "thread history\n");
 		fs.writeFileSync(path.join(source.runDir, "facts.jsonl"), "confirmed fact\n");
 		fs.mkdirSync(source.evidence, { recursive: true });
 		fs.writeFileSync(path.join(source.evidence, "existing.txt"), "verified evidence\n");
@@ -95,17 +95,17 @@ describe("external resume command", () => {
 			resume_count: 1,
 		});
 		const argv = JSON.parse(fs.readFileSync(argsFile, "utf-8")) as string[];
-		expect(argv[argv.indexOf("--session-id") + 1]).toBe(`${source.runId}-planner`);
+		expect(argv[argv.indexOf("--session-id") + 1]).toBe(`${source.runId}-worker`);
 		expect(argv[argv.indexOf("-p") + 1]).toContain("Continue its existing immutable goals");
 		expect(fs.readdirSync(source.handoffs).sort()).toEqual([
-			"h00001-planner",
-			"h00002-planner",
+			"h00001-worker",
+			"h00002-worker",
 		]);
-		expect(readJson<Record<string, unknown>>(source.statePath("h00001-planner"))).toMatchObject({
+		expect(readJson<Record<string, unknown>>(source.statePath("h00001-worker"))).toMatchObject({
 			status: "blocked",
 		});
 		expect(fs.readFileSync(source.goalContractPath("existing-goal"), "utf-8")).toContain("existing-goal");
-		expect(fs.readFileSync(path.join(source.piSessions, "existing-lane.jsonl"), "utf-8")).toBe("lane history\n");
+		expect(fs.readFileSync(path.join(source.piSessions, "existing-thread.jsonl"), "utf-8")).toBe("thread history\n");
 		expect(fs.readFileSync(path.join(source.runDir, "facts.jsonl"), "utf-8")).toBe("confirmed fact\n");
 		expect(fs.readFileSync(path.join(source.evidence, "existing.txt"), "utf-8")).toBe("verified evidence\n");
 		expect(fs.readdirSync(source.events).some((name) => name.includes("run_resumed--STARTED"))).toBeTrue();
@@ -115,7 +115,7 @@ describe("external resume command", () => {
 		const fixture = temporaryRoot("codeflow-cli-resume-active-");
 		const runsDir = path.join(fixture, "runs");
 		const paths = new RunPaths(runsDir, "run-active");
-		runStart(paths, "planner", process.pid, "still active");
+		runStart(paths, "worker", process.pid, "still active");
 
 		const result = Bun.spawnSync(["bash", codeflow, "resume", paths.runId], {
 			cwd: fixture,

@@ -6,7 +6,7 @@
  * - Every tool-call ledger row carries explicit `provider` + `model` sourced
  *   from the context that EMITTED the call (the assistant response — the same
  *   attribution the usage/round ledger records), alongside role and
- *   goal/lane attribution, for root and delegated roles alike.
+ *   goal/thread attribution, for root and delegated roles alike.
  * - Report by-model tool counts are computed from those recorded fields,
  *   never from a role→model inference. A role that used several models in an
  *   attempt must still get exact per-model tool counts; a role whose usage
@@ -67,11 +67,11 @@ function attributedRow(
 		status: kind === "result" ? "succeeded" : null,
 		at: "2026-01-01T00:00:00Z",
 		run_id: "run-attr",
-		role: "coder",
+		role: "worker",
 		depth: 1,
 		handoff_id: "h1",
 		goal_id: "g1",
-		lane: "code",
+		thread: "code",
 		provider: "prov-x",
 		model: "model-x",
 		...extra,
@@ -135,14 +135,15 @@ function forbiddenKeysIn(value: unknown): string[] {
 }
 
 /**
- * Report maps whose KEYS are run-chosen identifiers (role/model/lane/tool
- * names — a lane can legitimately be called "code"). Their keys are exempt
+ * Report maps whose KEYS are run-chosen identifiers (role/model/thread/tool
+ * names — a thread can legitimately be called "code"). Their keys are exempt
  * from the payload-name scan; their VALUES are scanned like everything else.
  */
 const REPORT_DYNAMIC_KEY_MAPS: ReadonlySet<string> = new Set([
-	"breakdowns.by_role",
+	"breakdowns.by_goal",
 	"breakdowns.by_model",
-	"breakdowns.by_lane",
+	"breakdowns.by_thread",
+	"breakdowns.by_depth",
 	"breakdowns.by_tool",
 ]);
 
@@ -273,11 +274,11 @@ async function withExtension(
 			CODEFLOW_BENCHMARK_DRIVER_LEDGER_DIR: ledger,
 			CODEFLOW_BENCHMARK_ATTEMPT: "1",
 			CODEFLOW_RUN_ID: "run-ext",
-			CODEFLOW_AGENT_ROLE: roleEnv.CODEFLOW_AGENT_ROLE ?? "planner",
+			CODEFLOW_AGENT_ROLE: roleEnv.CODEFLOW_AGENT_ROLE ?? "worker",
 			CODEFLOW_AGENT_DEPTH: roleEnv.CODEFLOW_AGENT_DEPTH ?? "0",
 			CODEFLOW_HANDOFF_ID: roleEnv.CODEFLOW_HANDOFF_ID ?? undefined,
 			CODEFLOW_GOAL_ID: roleEnv.CODEFLOW_GOAL_ID ?? undefined,
-			CODEFLOW_LANE: roleEnv.CODEFLOW_LANE ?? undefined,
+			CODEFLOW_THREAD: roleEnv.CODEFLOW_THREAD ?? undefined,
 		},
 		() => {
 			(mod.default as (api: any) => void)(pi);
@@ -359,7 +360,7 @@ describe("ATTR: the tool-call contract carries provider/model attribution", () =
 describe("EXT: telemetry-ledger attributes tool calls to the emitting model", () => {
 	test("EXT-1 root role rows carry the assistant response's provider/model next to role attribution", async () => {
 		const ledger = path.join(makeTmpDir(), "staging");
-		await withExtension(ledger, { CODEFLOW_AGENT_ROLE: "planner", CODEFLOW_AGENT_DEPTH: "0" }, (handlers) => {
+		await withExtension(ledger, { CODEFLOW_AGENT_ROLE: "worker", CODEFLOW_AGENT_DEPTH: "0" }, (handlers) => {
 			fireMessageEnd(handlers, "prov-a", "model-a");
 			fireToolCall(handlers, "tc-1");
 			fireToolEnd(handlers, "tc-1", false);
@@ -370,11 +371,11 @@ describe("EXT: telemetry-ledger attributes tool calls to the emitting model", ()
 		for (const row of rows) {
 			expect(row.provider).toBe("prov-a");
 			expect(row.model).toBe("model-a");
-			expect(row.role).toBe("planner");
+			expect(row.role).toBe("worker");
 			expect(row.depth).toBe(0);
 			expect(row.run_id).toBe("run-ext");
 			expect(row.goal_id).toBeNull();
-			expect(row.lane).toBeNull();
+			expect(row.thread).toBeNull();
 		}
 		expect(rows[0].kind).toBe("requested");
 		expect(rows[1].kind).toBe("result");
@@ -382,7 +383,7 @@ describe("EXT: telemetry-ledger attributes tool calls to the emitting model", ()
 
 	test("EXT-2 a multi-model role attributes each call to the model that emitted it", async () => {
 		const ledger = path.join(makeTmpDir(), "staging");
-		await withExtension(ledger, { CODEFLOW_AGENT_ROLE: "coder", CODEFLOW_AGENT_DEPTH: "1" }, (handlers) => {
+		await withExtension(ledger, { CODEFLOW_AGENT_ROLE: "worker", CODEFLOW_AGENT_DEPTH: "1" }, (handlers) => {
 			fireMessageEnd(handlers, "prov-a", "model-a");
 			fireToolCall(handlers, "mc-1");
 			// Same role, a second response on a different model.
@@ -412,16 +413,16 @@ describe("EXT: telemetry-ledger attributes tool calls to the emitting model", ()
 		expect(byCall.get("mc-2")![1].status).toBe("failed");
 	});
 
-	test("EXT-3 delegated role keeps goal/lane attribution alongside provider/model", async () => {
+	test("EXT-3 delegated role keeps goal/thread attribution alongside provider/model", async () => {
 		const ledger = path.join(makeTmpDir(), "staging");
 		await withExtension(
 			ledger,
 			{
-				CODEFLOW_AGENT_ROLE: "coder",
+				CODEFLOW_AGENT_ROLE: "worker",
 				CODEFLOW_AGENT_DEPTH: "1",
 				CODEFLOW_HANDOFF_ID: "h-77",
 				CODEFLOW_GOAL_ID: "g-attr",
-				CODEFLOW_LANE: "code",
+				CODEFLOW_THREAD: "code",
 			},
 			(handlers) => {
 				fireMessageEnd(handlers, "prov-d", "model-delegated");
@@ -433,11 +434,11 @@ describe("EXT: telemetry-ledger attributes tool calls to the emitting model", ()
 		const rows = readJsonlFile(path.join(ledger, "tool-calls.jsonl"));
 		expect(rows).toHaveLength(2);
 		for (const row of rows) {
-			expect(row.role).toBe("coder");
+			expect(row.role).toBe("worker");
 			expect(row.depth).toBe(1);
 			expect(row.handoff_id).toBe("h-77");
 			expect(row.goal_id).toBe("g-attr");
-			expect(row.lane).toBe("code");
+			expect(row.thread).toBe("code");
 			expect(row.provider).toBe("prov-d");
 			expect(row.model).toBe("model-delegated");
 		}
@@ -464,11 +465,11 @@ describe("EXT: telemetry-ledger attributes tool calls to the emitting model", ()
 			ledger,
 			{
 				CODEFLOW_RUN_ID: "run-attr",
-				CODEFLOW_AGENT_ROLE: "coder",
+				CODEFLOW_AGENT_ROLE: "worker",
 				CODEFLOW_AGENT_DEPTH: "1",
 				CODEFLOW_HANDOFF_ID: "h-77",
 				CODEFLOW_GOAL_ID: "g-attr",
-				CODEFLOW_LANE: "code",
+				CODEFLOW_THREAD: "code",
 			},
 			(handlers) => {
 				handlers.get("turn_start")!({ type: "turn_start", turnIndex: 2 });
@@ -480,19 +481,19 @@ describe("EXT: telemetry-ledger attributes tool calls to the emitting model", ()
 		expect(rows[0]).toMatchObject({
 			schema_version: 2,
 			run_id: "run-ext",
-			role: "coder",
+			role: "worker",
 			depth: 1,
 			turn: 3,
 			handoff_id: "h-77",
 			goal_id: "g-attr",
-			lane: "code",
+			thread: "code",
 			request_started_at: null,
 		});
 	});
 
 	test("EXT-5 usage-less assistant messages stay failed attempts, not rounds or calls", async () => {
 		const ledger = path.join(makeTmpDir(), "staging");
-		await withExtension(ledger, { CODEFLOW_AGENT_ROLE: "coder", CODEFLOW_AGENT_DEPTH: "1" }, (handlers) => {
+		await withExtension(ledger, { CODEFLOW_AGENT_ROLE: "worker", CODEFLOW_AGENT_DEPTH: "1" }, (handlers) => {
 			fireMessageEnd(handlers, "prov-a", "model-a", false);
 		});
 		const failed = readJsonlFile(path.join(ledger, "failed-model-attempts.jsonl"));
@@ -505,7 +506,7 @@ describe("EXT: telemetry-ledger attributes tool calls to the emitting model", ()
 
 	test("EXT-6 the staging ledger never stores tool arguments, results, or secrets", async () => {
 		const ledger = path.join(makeTmpDir(), "staging");
-		await withExtension(ledger, { CODEFLOW_AGENT_ROLE: "coder", CODEFLOW_AGENT_DEPTH: "1" }, (handlers) => {
+		await withExtension(ledger, { CODEFLOW_AGENT_ROLE: "worker", CODEFLOW_AGENT_DEPTH: "1" }, (handlers) => {
 			fireMessageEnd(handlers, "prov-a", "model-a");
 			fireToolCall(handlers, "pv-1");
 			fireToolEnd(handlers, "pv-1", true);
@@ -545,8 +546,8 @@ function usage(totalTokens = 100): any {
 }
 
 /**
- * Four rounds: root planner, a coder on model-a, the SAME coder on model-b,
- * and a delegated tester — every round carrying its own tool calls.
+ * Four rounds: root worker, a worker on model-a, the SAME worker on model-b,
+ * and a delegated worker — every round carrying its own tool calls.
  */
 function attributedRoundsDriver() {
 	return {
@@ -555,12 +556,12 @@ function attributedRoundsDriver() {
 				yield {
 					type: "round",
 					round: {
-						role: "planner",
+						role: "worker",
 						provider: "p1",
 						model: "plan-a",
 						handoff_id: null,
 						goal_id: null,
-						lane: null,
+						thread: null,
 						usage: usage(100),
 						tool_calls: [{ call_id: "p1a", tool: "bash", status: "succeeded" }],
 					},
@@ -568,12 +569,12 @@ function attributedRoundsDriver() {
 				yield {
 					type: "round",
 					round: {
-						role: "coder",
+						role: "worker",
 						provider: "p2",
 						model: "code-a",
 						handoff_id: "h1",
 						goal_id: "g1",
-						lane: "code",
+						thread: "code",
 						usage: usage(100),
 						tool_calls: [
 							{ call_id: "c1a", tool: "bash", status: "succeeded" },
@@ -581,16 +582,16 @@ function attributedRoundsDriver() {
 						],
 					},
 				};
-				// The same coder role switches models mid-attempt.
+				// The same worker role switches models mid-attempt.
 				yield {
 					type: "round",
 					round: {
-						role: "coder",
+						role: "worker",
 						provider: "p2",
 						model: "code-b",
 						handoff_id: "h1",
 						goal_id: "g1",
-						lane: "code",
+						thread: "code",
 						usage: usage(100),
 						tool_calls: [
 							{ call_id: "c2a", tool: "bash", status: "rejected" },
@@ -601,12 +602,12 @@ function attributedRoundsDriver() {
 				yield {
 					type: "round",
 					round: {
-						role: "tester",
+						role: "worker",
 						provider: "p3",
 						model: "test-a",
 						handoff_id: "h2",
 						goal_id: "g1",
-						lane: "test",
+						thread: "test",
 						usage: usage(100),
 						tool_calls: [{ call_id: "t1a", tool: "read", status: "succeeded" }],
 					},
@@ -617,17 +618,17 @@ function attributedRoundsDriver() {
 	};
 }
 
-/** Expected (provider, model, role, goal, lane) per call id in the scenario. */
+/** Expected (provider, model, role, goal, thread) per call id in the scenario. */
 const EXPECTED_CALL_ATTRIBUTION: Record<
 	string,
 	[string, string, string, string | null, string | null]
 > = {
-	p1a: ["p1", "plan-a", "planner", null, null],
-	c1a: ["p2", "code-a", "coder", "g1", "code"],
-	c1b: ["p2", "code-a", "coder", "g1", "code"],
-	c2a: ["p2", "code-b", "coder", "g1", "code"],
-	c2b: ["p2", "code-b", "coder", "g1", "code"],
-	t1a: ["p3", "test-a", "tester", "g1", "test"],
+	p1a: ["p1", "plan-a", "worker", null, null],
+	c1a: ["p2", "code-a", "worker", "g1", "code"],
+	c1b: ["p2", "code-a", "worker", "g1", "code"],
+	c2a: ["p2", "code-b", "worker", "g1", "code"],
+	c2b: ["p2", "code-b", "worker", "g1", "code"],
+	t1a: ["p3", "test-a", "worker", "g1", "test"],
 };
 
 async function runWithDriver(driver: any): Promise<string> {
@@ -650,7 +651,7 @@ function attemptToolRows(outDir: string, instance = "demo/demo-1001"): any[] {
 }
 
 describe("RUN: the runner writes attributed rows into the per-attempt ledger", () => {
-	test("RUN-1 round-attached calls carry the emitting round's provider/model and goal/lane", async () => {
+	test("RUN-1 round-attached calls carry the emitting round's provider/model and goal/thread", async () => {
 		const outDir = await runWithDriver(attributedRoundsDriver());
 		const rows = attemptToolRows(outDir);
 		expect(rows.length).toBeGreaterThanOrEqual(10); // 6 calls, 5 with result rows
@@ -658,12 +659,12 @@ describe("RUN: the runner writes attributed rows into the per-attempt ledger", (
 		for (const row of rows) {
 			const expected = EXPECTED_CALL_ATTRIBUTION[row.call_id];
 			expect(expected).toBeDefined();
-			const [provider, model, role, goalId, lane] = expected;
+			const [provider, model, role, goalId, thread] = expected;
 			expect(row.provider).toBe(provider);
 			expect(row.model).toBe(model);
 			expect(row.role).toBe(role);
 			expect(row.goal_id).toBe(goalId);
-			expect(row.lane).toBe(lane);
+			expect(row.thread).toBe(thread);
 			seen.add(row.call_id);
 		}
 		expect([...seen].sort()).toEqual([...Object.keys(EXPECTED_CALL_ATTRIBUTION)].sort());
@@ -676,12 +677,12 @@ describe("RUN: the runner writes attributed rows into the per-attempt ledger", (
 					yield {
 						type: "round",
 						round: {
-							role: "coder",
+							role: "worker",
 							provider: "p2",
 							model: "code-a",
 							handoff_id: "h9",
 							goal_id: "g2",
-							lane: "review",
+							thread: "review",
 							usage: usage(100),
 						},
 					};
@@ -689,12 +690,12 @@ describe("RUN: the runner writes attributed rows into the per-attempt ledger", (
 					// as standalone events, attributed like their staging rows.
 					yield {
 						type: "tool_calls",
-						role: "coder",
+						role: "worker",
 						provider: "p2",
 						model: "code-a",
 						handoff_id: "h9",
 						goal_id: "g2",
-						lane: "review",
+						thread: "review",
 						calls: [
 							{ call_id: "s1", tool: "bash", status: "succeeded" },
 							{ call_id: "s2", tool: "bash", status: "incomplete" },
@@ -716,9 +717,9 @@ describe("RUN: the runner writes attributed rows into the per-attempt ledger", (
 		for (const row of byCall.get("s1")!) {
 			expect(row.provider).toBe("p2");
 			expect(row.model).toBe("code-a");
-			expect(row.role).toBe("coder");
+			expect(row.role).toBe("worker");
 			expect(row.goal_id).toBe("g2");
-			expect(row.lane).toBe("review");
+			expect(row.thread).toBe("review");
 		}
 		// s2 never terminated: exactly one requested row, still attributed.
 		const s2 = byCall.get("s2")!;
@@ -736,12 +737,12 @@ describe("RUN: the runner writes attributed rows into the per-attempt ledger", (
 						type: "round",
 						round: {
 							// One response, three tool calls: multi-call stays 3 calls.
-							role: "coder",
+							role: "worker",
 							provider: "p2",
 							model: "code-a",
 							handoff_id: null,
 							goal_id: null,
-							lane: null,
+							thread: null,
 							usage: usage(100),
 							tool_calls: [
 								{ call_id: "m1", tool: "bash", status: "succeeded" },
@@ -754,12 +755,12 @@ describe("RUN: the runner writes attributed rows into the per-attempt ledger", (
 						type: "round",
 						round: {
 							// A retry of the failed call is a NEW id: a new call.
-							role: "coder",
+							role: "worker",
 							provider: "p2",
 							model: "code-a",
 							handoff_id: null,
 							goal_id: null,
-							lane: null,
+							thread: null,
 							usage: usage(100),
 							tool_calls: [{ call_id: "m4", tool: "bash", status: "succeeded" }],
 						},
@@ -768,12 +769,12 @@ describe("RUN: the runner writes attributed rows into the per-attempt ledger", (
 						type: "round",
 						round: {
 							// Started, never terminated before process end.
-							role: "coder",
+							role: "worker",
 							provider: "p2",
 							model: "code-a",
 							handoff_id: null,
 							goal_id: null,
-							lane: null,
+							thread: null,
 							usage: usage(100),
 							tool_calls: [{ call_id: "m5", tool: "bash", status: "incomplete" }],
 						},
@@ -859,12 +860,12 @@ describe("CHAIN: the production driver forwards provider/model on tool events", 
 
 		expect(exitCode).toBe(0);
 		expect(events.map((event) => event.type)).toEqual(["round", "tool_calls", "round", "tool_calls"]);
-		// The fake inner writes staging rows for fake-anthropic/fake-coder;
+		// The fake inner writes staging rows for fake-anthropic/fake-worker;
 		// the driver must forward that attribution on every tool event.
 		for (const event of events.filter((event) => event.type === "tool_calls")) {
 			expect(event.provider).toBe("fake-anthropic");
-			expect(event.model).toBe("fake-coder");
-			expect(event.role).toBe("coder");
+			expect(event.model).toBe("fake-worker");
+			expect(event.role).toBe("worker");
 			for (const call of event.calls) {
 				expect(Date.parse(call.requested_at)).not.toBeNaN();
 				if (call.status === "incomplete") expect(call.result_at).toBeNull();
@@ -873,7 +874,7 @@ describe("CHAIN: the production driver forwards provider/model on tool events", 
 		}
 		// Rounds already carry provider/model (the usage-ledger attribution).
 		expect(events[0].round.provider).toBe("fake-anthropic");
-		expect(events[0].round.model).toBe("fake-coder");
+		expect(events[0].round.model).toBe("fake-worker");
 		expect(events[0].round.depth).toBe(0);
 		expect(events[0].round.turn).toBe(1);
 	}, 30_000);
@@ -1006,15 +1007,19 @@ function usageRow(
 	extra: Record<string, unknown> = {},
 ): any {
 	return {
-		schema_version: 1,
+		schema_version: 2,
 		at: "2026-01-01T00:00:00Z",
+		request_started_at: null,
 		attempt: 1,
+		run_id: null,
 		role,
 		provider,
 		model,
+		depth: 0,
+		turn: 1,
 		handoff_id: null,
 		goal_id: null,
-		lane: null,
+		thread: null,
 		usage: {
 			input: 90,
 			output: 10,
@@ -1043,11 +1048,11 @@ function toolRow(
 		status,
 		at: "2026-01-01T00:00:00Z",
 		run_id: "run-cnt",
-		role: "coder",
+		role: "worker",
 		depth: 0,
 		handoff_id: null,
 		goal_id: "g1",
-		lane: "code",
+		thread: "code",
 		provider,
 		model,
 		...extra,
@@ -1076,17 +1081,17 @@ describe("CNT: report by-model tool counts use the recorded fields", () => {
 			{
 				id: "demo/a",
 				usage: [
-					usageRow("coder", "p", "A", { lane: "code", goal_id: "g1" }),
-					usageRow("coder", "p", "A", { lane: "code", goal_id: "g1" }),
-					usageRow("coder", "p", "B", { lane: "code", goal_id: "g1" }),
-					usageRow("planner", "p", "P"),
+					usageRow("worker", "p", "A", { thread: "code", goal_id: "g1" }),
+					usageRow("worker", "p", "A", { thread: "code", goal_id: "g1" }),
+					usageRow("worker", "p", "B", { thread: "code", goal_id: "g1" }),
+					usageRow("worker", "p", "P"),
 				],
 				tools: [
 					...callPair("a1", "p", "A", "succeeded"),
 					...callPair("b1", "p", "B", "failed"),
 					...callPair("b2", "p", "B", "rejected"),
 					toolRow("b3", "p", "B", null), // incomplete
-					...callPair("p1", "p", "P", "succeeded", { role: "planner", goal_id: null, lane: null }),
+					...callPair("p1", "p", "P", "succeeded", { role: "worker", goal_id: null, thread: null }),
 				],
 			},
 		]);
@@ -1098,34 +1103,47 @@ describe("CNT: report by-model tool counts use the recorded fields", () => {
 		expect(report.breakdowns.by_model["p/A"].model_rounds).toBe(2);
 		expect(report.breakdowns.by_model["p/B"].model_rounds).toBe(1);
 		expect(report.breakdowns.by_model["p/P"].model_rounds).toBe(1);
-		// Role/lane breakdowns are unchanged by the attribution fix.
-		expect(report.breakdowns.by_role.coder.tool_calls).toBe(4);
-		expect(report.breakdowns.by_role.planner.tool_calls).toBe(1);
-		expect(report.breakdowns.by_lane.code.tool_calls).toBe(4);
+		// Goal/thread/depth breakdowns conserve both ledger dimensions.
+		expect(report.breakdowns.by_goal.g1).toEqual({
+			model_rounds: 3,
+			tool_calls: 4,
+			total_tokens: 300,
+		});
+		expect(report.breakdowns.by_goal._ungrouped).toEqual({
+			model_rounds: 1,
+			tool_calls: 1,
+			total_tokens: 100,
+		});
+		expect(report.breakdowns.by_thread.code.tool_calls).toBe(4);
+		expect(report.breakdowns.by_depth["0"]).toEqual({
+			model_rounds: 4,
+			tool_calls: 5,
+			total_tokens: 400,
+		});
 		// Conservation: no calls silently vanish from the model dimension.
 		const modelTotal = Object.values(report.breakdowns.by_model).reduce(
 			(sum: number, entry: any) => sum + entry.tool_calls,
 			0,
 		);
-		const roleTotal = Object.values(report.breakdowns.by_role).reduce(
+		const goalTotal = Object.values(report.breakdowns.by_goal).reduce(
 			(sum: number, entry: any) => sum + entry.tool_calls,
 			0,
 		);
-		expect(modelTotal).toBe(roleTotal);
+		expect(modelTotal).toBe(goalTotal);
 		expect(modelTotal).toBe(5);
 	});
 
 	test("CNT-2 recorded attribution wins when usage-side inference would guess wrong", async () => {
 		const mod = await bench();
 		const dir = makeTmpDir();
-		// The coder role shows exactly ONE model in the usage ledger (a
+		// The worker role shows exactly ONE model in the usage ledger (a
 		// wall stop can flush a tool row while its usage row is lost), but
 		// the tool rows record a different model. Any role→model inference
 		// would hand both calls to p/A; the recorded fields say p/B.
 		handBuiltOutDir(dir, [
 			{
 				id: "demo/c",
-				usage: [usageRow("coder", "p", "A", { lane: "code", goal_id: "g1" })],
+				usage: [usageRow("worker", "p", "A", { thread: "code", goal_id: "g1" })],
 				tools: [
 					...callPair("x1", "p", "B", "succeeded"),
 					...callPair("x2", "p", "B", "failed"),
@@ -1145,12 +1163,12 @@ describe("CNT: report by-model tool counts use the recorded fields", () => {
 		handBuiltOutDir(dir, [
 			{
 				id: "demo/complete-dimensions",
-				usage: [usageRow("planner", "p", "P")],
+				usage: [usageRow("worker", "p", "P")],
 				tools: [
 					...callPair("ghost-1", "p", "G", "succeeded", {
 						role: "ghost",
 						goal_id: "g-ghost",
-						lane: "verify",
+						thread: "worker",
 					}),
 				],
 			},
@@ -1163,10 +1181,19 @@ describe("CNT: report by-model tool counts use the recorded fields", () => {
 		});
 		expect(report.breakdowns.by_model["p/G"].tool_calls).toBe(1);
 		expect(report.breakdowns.by_model["p/G"].model_rounds).toBe(0);
-		expect(report.breakdowns.by_role.ghost.tool_calls).toBe(1);
-		expect(report.breakdowns.by_role.ghost.model_rounds).toBe(0);
-		expect(report.breakdowns.by_lane.verify.tool_calls).toBe(1);
-		expect(report.breakdowns.by_lane.verify.model_rounds).toBe(0);
+			expect(report.breakdowns.by_goal["g-ghost"]).toEqual({
+				model_rounds: 0,
+				tool_calls: 1,
+				total_tokens: 0,
+			});
+			expect(report.breakdowns.by_goal._ungrouped).toEqual({
+				model_rounds: 1,
+				tool_calls: 0,
+				total_tokens: 100,
+			});
+			expect(report.breakdowns.by_thread.worker.tool_calls).toBe(1);
+			expect(report.breakdowns.by_thread.worker.model_rounds).toBe(0);
+			expect(report.breakdowns.by_depth["0"].tool_calls).toBe(1);
 	});
 
 	test("CNT-4 fixture run: report by-model tool counts reproduce the recorded ledger grouping", async () => {
@@ -1200,7 +1227,7 @@ describe("CNT: report by-model tool counts use the recorded fields", () => {
 			}
 		}
 		// Never vacuous: the fixture run has real attributed calls.
-		expect(expected["fixture/fixture-coder"]).toBe(7);
+		expect(expected["fixture/fixture-worker"]).toBe(7);
 		const actual: Record<string, number> = {};
 		for (const [model, totals] of Object.entries<any>(report.breakdowns.by_model)) {
 			// Usage-only models are intentionally present with zero calls; this
@@ -1234,7 +1261,7 @@ describe("PRIV: serialized ledger and report artifacts stay payload-free", () =>
 		expect(scannedRows).toBeGreaterThanOrEqual(10); // the scenario's rows exist
 
 		// The report object tree, deep-scanned (identifier-valued map keys
-		// like lane "code" are exempt; their values are scanned).
+		// like thread "code" are exempt; their values are scanned).
 		expect(forbiddenReportKeysIn(report)).toEqual([]);
 		// Serialized report.json is the artifact that leaves the machine.
 		const serialized = JSON.parse(fs.readFileSync(path.join(outDir, "report.json"), "utf8"));

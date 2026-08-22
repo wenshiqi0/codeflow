@@ -66,7 +66,7 @@
       "instance_id": "demo/demo-1005",
       "repo": "demo/demo",
       "base_commit": "4f1e2d3c4b5a6978877665544332211ff1e2d3c8",
-      "problem_statement": "The migration planner spends unbounded effort on pathological schemas. Bound it while keeping the correct plan.",
+      "problem_statement": "The migration worker spends unbounded effort on pathological schemas. Bound it while keeping the correct plan.",
       "patch": "--- a/fix.py\n+++ b/fix.py\n@@\n+bound(\"CANARY_GOLD_PATCH_1005\")\n",
       "test_patch": "--- a/test_fix.py\n+++ b/test_fix.py\n@@\n+assert bounded == \"CANARY_TEST_PATCH_1005\"\n",
       "FAIL_TO_PASS": ["CANARY_F2P_1005"],

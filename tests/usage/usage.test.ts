@@ -26,17 +26,17 @@ beforeEach(() => {
 		"CODEFLOW_AGENT_DEPTH",
 		"CODEFLOW_HANDOFF_ID",
 		"CODEFLOW_GOAL_ID",
-		"CODEFLOW_LANE",
+		"CODEFLOW_THREAD",
 	]) {
 		savedEnv[key] = process.env[key];
 	}
 	process.env.CODEFLOW_RUN_ID = paths.runId;
 	process.env.CODEFLOW_RUNS_DIR = paths.code;
-	process.env.CODEFLOW_AGENT_ROLE = "coder";
+	process.env.CODEFLOW_AGENT_ROLE = "worker";
 	process.env.CODEFLOW_AGENT_DEPTH = "1";
-	process.env.CODEFLOW_HANDOFF_ID = "h00001-coder";
+	process.env.CODEFLOW_HANDOFF_ID = "h00001-worker";
 	process.env.CODEFLOW_GOAL_ID = "graph-bench";
-	process.env.CODEFLOW_LANE = "code";
+	process.env.CODEFLOW_THREAD = "code";
 });
 
 afterEach(() => {
@@ -73,11 +73,11 @@ describe("usage records", () => {
 		expect(record).toMatchObject({
 			schema_version: 1,
 			run_id: "run-usage-test",
-			role: "coder",
+			role: "worker",
 			depth: 1,
-			handoff_id: "h00001-coder",
+			handoff_id: "h00001-worker",
 			goal_id: "graph-bench",
-			lane: "code",
+			thread: "code",
 			turn: 3,
 			provider: "zhipuai-coding-plan",
 			model: "glm-5.3",
@@ -189,7 +189,7 @@ describe("usage extension", () => {
 
 		const records = readUsageRecords(paths);
 		expect(records).toHaveLength(1);
-		expect(records[0]).toMatchObject({ role: "coder", turn: 5 });
+		expect(records[0]).toMatchObject({ role: "worker", turn: 5 });
 	});
 
 	test("root and delegated role launchers load the ledger and final report", () => {

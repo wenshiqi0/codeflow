@@ -5,14 +5,14 @@ import { openRootHandoffForRun } from "../../runtime/cli/run";
 import { RunPaths, readJson } from "../../runtime/lib/paths";
 
 describe("run root handoff", () => {
-	test("exec has a mechanical root handoff for the planner", () => {
+	test("exec has a mechanical root handoff for the worker", () => {
 		const paths = new RunPaths(".codeflow/runs/code", "run-root-test");
 		fs.rmSync(paths.runDir, { recursive: true, force: true });
 		try {
-			const opened = openRootHandoffForRun(paths, "planner", "Add a playable puzzle game");
+			const opened = openRootHandoffForRun(paths, "worker", "Add a playable puzzle game");
 			const state = readJson<any>(opened.state);
 
-			expect(opened.handoff_id).toBe("h00001-planner");
+			expect(opened.handoff_id).toBe("h00001-worker");
 			expect(state.depth).toBe(0);
 			expect(state.lineage.parent_handoff_id).toBeNull();
 			expect(state.status).toBe("open");
@@ -33,6 +33,6 @@ describe("exec output boundary", () => {
 		expect(source).toContain('stderr: captureRootOutput ? "pipe" : "inherit"');
 		expect(source).toContain("const rootOutputDrained = captureRootOutput");
 		expect(source).toContain("ROOT_OUTPUT_DIAGNOSTIC_LIMIT");
-		expect(source).toContain("planner exited with code");
+		expect(source).toContain("worker exited with code");
 	});
 });

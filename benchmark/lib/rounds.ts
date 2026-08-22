@@ -1,21 +1,13 @@
 /**
- * Model-round role classification (design §6).
+ * Model-round context classification.
  *
- * Every role's completed rounds count in `model_rounds_total`; support models
- * are additionally single-listed. The roster mirrors the current
- * `runtime/roles.json` support set (tester, verify, supervisor,
- * title-compressor, zipper); planner/architect/coder are the primary roles.
- * An unknown role is counted as primary — never dropped, because a future
- * roster addition must not silently vanish from the ledger.
+ * Every completed round counts in `model_rounds_total`; internal support-model
+ * rounds are additionally single-listed. Project work is no longer classified
+ * by identity, and an unknown entry is counted as project work — never
+ * dropped.
  */
 
-export const SUPPORT_MODEL_ROLES: readonly string[] = [
-	"tester",
-	"verify",
-	"supervisor",
-	"title-compressor",
-	"zipper",
-];
+export const SUPPORT_MODEL_ROLES: readonly string[] = ["zipper"];
 
 const SUPPORT = new Set<string>(SUPPORT_MODEL_ROLES);
 

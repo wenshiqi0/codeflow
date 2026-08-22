@@ -140,6 +140,6 @@ describe("runtime architecture boundaries", () => {
 		expect(readme).toContain("runtime/lib");
 		expect(readme).toContain("runtime/extensions");
 		expect(readme).toContain("### 文件归属规则");
-		expect(readme).toContain("`scripts/doctor.sh` 不维护第二份角色清单");
+		expect(readme).toContain("`scripts/doctor.sh` 不维护第二份 worker 清单");
 	});
 });

@@ -224,8 +224,8 @@ describe("attempt ledgers", () => {
 		expect(caseFile.schema_version).toBe(1);
 		expect(usageRows).toHaveLength(5);
 		expect(attempt.metrics.model_rounds_total).toBe(5);
-		expect(attempt.metrics.primary_model_rounds).toBe(3);
-		expect(attempt.metrics.support_model_rounds).toBe(2);
+		expect(attempt.metrics.primary_model_rounds).toBe(4);
+		expect(attempt.metrics.support_model_rounds).toBe(1);
 		expect(attempt.metrics.failed_model_attempts).toBe(1);
 	});
 
@@ -285,8 +285,8 @@ describe("report.json", () => {
 		expect(report().model_rounds.total).toBe(13);
 		expect(report().model_rounds.median).toBe(2);
 		expect(report().model_rounds.p90).toBe(5);
-		expect(report().model_rounds.primary).toBe(11);
-		expect(report().model_rounds.support).toBe(2);
+		expect(report().model_rounds.primary).toBe(12);
+		expect(report().model_rounds.support).toBe(1);
 		expect(report().model_rounds.failed_attempts).toBe(1);
 		expect(report().tool_calls.total).toBe(14);
 		expect(report().tool_calls.median).toBe(3);
@@ -312,10 +312,13 @@ describe("report.json", () => {
 		});
 	});
 
-	test("breakdowns by role, model, and tool; wall time is not_ranked; no score", () => {
-		expect(report().breakdowns.by_role.coder.model_rounds).toBe(9);
-		expect(report().breakdowns.by_role.tester.model_rounds).toBe(1);
-		expect(report().breakdowns.by_model["fixture/fixture-coder"].model_rounds).toBe(9);
+	test("breakdowns by goal, model, and tool; wall time is not_ranked; no score", () => {
+		expect(report().breakdowns.by_goal._ungrouped).toEqual({
+			model_rounds: 13,
+			tool_calls: 14,
+			total_tokens: 3_403_625,
+		});
+		expect(report().breakdowns.by_model["fixture/fixture-worker"].model_rounds).toBe(12);
 		expect(report().breakdowns.by_tool).toEqual({ bash: 9, read: 3, write: 2 });
 		expect(report().wall_time.not_ranked).toBe(true);
 		for (const key of Object.keys(report())) {

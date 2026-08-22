@@ -4,7 +4,7 @@
  * Top-level calls dedup by id; a multi-command bash call stays one call;
  * rejected/errored/incomplete calls still count. The ledger may hold only
  * id/name/status/timestamps/attribution — where attribution includes role
- * AND provider/model (design §7 “by role、provider/model、goal/lane”) so
+ * AND provider/model (design §7 “by role、provider/model、goal/thread”) so
  * by-model counts never need role→model inference — and never arguments,
  * command text, results, source, or credentials. The append path must refuse
  * anything else. Cross-cutting attribution/privacy business cases live in
@@ -32,13 +32,13 @@ function row(callId: string, kind: "requested" | "result", extra: Record<string,
 		status: kind === "result" ? "succeeded" : null,
 		at: "2026-01-01T00:00:00Z",
 		run_id: "run-x",
-		role: "coder",
+		role: "worker",
 		depth: 1,
 		handoff_id: "h1",
 		goal_id: "g1",
-		lane: "code",
+		thread: "code",
 		provider: "fixture",
-		model: "fixture-coder",
+		model: "fixture-worker",
 		...extra,
 	};
 }
@@ -118,15 +118,15 @@ describe("ledger privacy and attribution", () => {
 			"depth",
 			"goal_id",
 			"handoff_id",
-			"kind",
-			"lane",
-			"model",
+				"kind",
+				"model",
 			"operation_kind",
 			"provider",
 			"role",
 			"run_id",
 			"schema_version",
-			"status",
+				"status",
+				"thread",
 			"tool",
 		]);
 	});
@@ -143,9 +143,9 @@ describe("ledger privacy and attribution", () => {
 		const mod = await bench();
 		const event = mod.parseDriverEvent({
 			type: "tool_calls",
-			role: "coder",
+			role: "worker",
 			provider: "fixture",
-			model: "fixture-coder",
+			model: "fixture-worker",
 			calls: [{
 				call_id: "c1",
 				tool: "bash",

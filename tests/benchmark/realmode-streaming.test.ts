@@ -27,7 +27,7 @@
  *   driver-terminated-<pid>                 written only by the SIGTERM handler
  *
  * A process that finished on its own always writes the natural-exit marker;
- * only the supervisor's signal can preempt it. So "terminated marker present
+ * only the worker's signal can preempt it. So "terminated marker present
  * AND natural-exit marker absent AND fewer events emitted than scripted"
  * proves the kill landed on a live process that would otherwise have
  * continued.
@@ -82,7 +82,7 @@ interface StreamOutcome {
 	spawn: Record<string, any>;
 	observations: any[];
 	emitted: any[];
-	/** SIGTERM marker JSON — present iff the supervisor terminated a LIVE process. */
+	/** SIGTERM marker JSON — present iff the worker terminated a LIVE process. */
 	terminated: any | null;
 	/** Natural-exit marker JSON — present iff the process finished its script. */
 	naturalExit: any | null;
@@ -265,7 +265,7 @@ describe("REAL-16: the production process seam streams ledgers while the nested 
 		expect(toolRows).toHaveLength(4); // 2 calls x (requested + result)
 		for (const row of usageRows) {
 			expect(row.usage.total_tokens).toBe(400_000); // the token ledger axis
-			expect(row.role).toBe("coder");
+			expect(row.role).toBe("worker");
 		}
 		expect(outcome.attempt.metrics.model_rounds_total).toBe(2);
 		expect(outcome.attempt.metrics.tool_calls_total).toBe(2); // calls, not rows

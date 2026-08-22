@@ -5,7 +5,7 @@ export interface WasteSummary {
 	rounds_in_non_pass_handoffs: number | null;
 	tokens_in_non_pass_handoffs: number | null;
 	waste_ratio_rounds: number | null;
-	planner_rounds_ratio: number | null;
+	root_rounds_ratio: number | null;
 	handoff_reopens_per_goal_thread_median: number | null;
 	metrics_available: boolean;
 }
@@ -32,7 +32,7 @@ export function summarizeWaste(
 			rounds_in_non_pass_handoffs: null,
 			tokens_in_non_pass_handoffs: null,
 			waste_ratio_rounds: null,
-			planner_rounds_ratio: null,
+			root_rounds_ratio: null,
 			handoff_reopens_per_goal_thread_median: null,
 			metrics_available: false,
 		};
@@ -46,7 +46,7 @@ export function summarizeWaste(
 			rounds_in_non_pass_handoffs: null,
 			tokens_in_non_pass_handoffs: null,
 			waste_ratio_rounds: null,
-			planner_rounds_ratio: null,
+			root_rounds_ratio: null,
 			handoff_reopens_per_goal_thread_median: null,
 			metrics_available: false,
 		};
@@ -78,7 +78,7 @@ export function summarizeWaste(
 		rounds_in_non_pass_handoffs: nonPassRounds,
 		tokens_in_non_pass_handoffs: nonPassTokens,
 		waste_ratio_rounds: usageRecords.length > 0 ? nonPassRounds / usageRecords.length : null,
-		planner_rounds_ratio: depthKnownRounds > 0 ? depthZeroRounds / depthKnownRounds : null,
+		root_rounds_ratio: depthKnownRounds > 0 ? depthZeroRounds / depthKnownRounds : null,
 		handoff_reopens_per_goal_thread_median: median([...groups.values()].map((count) => count - 1)),
 		metrics_available: true,
 	};

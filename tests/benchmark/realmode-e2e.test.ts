@@ -235,15 +235,15 @@ describe("REAL-5: usage instrumentation from the real process feeds the ledger",
 			artifact(path.join("cases", INSTANCE_RESOLVED.replace(/\//g, "__"), "attempts", "1", "usage.jsonl")),
 		);
 		expect(rows).toHaveLength(3);
-		expect(rows.map((r: any) => r.role)).toEqual(["planner", "coder", "verify"]);
+		expect(rows.map((r: any) => r.role)).toEqual(["worker", "worker", "worker"]);
 		expect(rows.map((r: any) => `${r.provider}/${r.model}`)).toEqual([
-			"fake-anthropic/fake-planner",
-			"fake-openai/fake-coder",
+			"fake-anthropic/fake-worker",
+			"fake-openai/fake-worker",
 			"fake-anthropic/fake-verify",
 		]);
 		expect(rows[1].handoff_id).toBe("h-2001");
 		expect(rows[1].goal_id).toBe("g-2001");
-		expect(rows[1].lane).toBe("main");
+		expect(rows[1].thread).toBe("main");
 		for (const row of rows) expect(row.schema_version).toBe(2);
 	});
 
@@ -253,7 +253,7 @@ describe("REAL-5: usage instrumentation from the real process feeds the ledger",
 		);
 		expect(failed).toHaveLength(1);
 		expect(failed[0].error_class).toBe("provider_timeout");
-		expect(failed[0].role).toBe("tester");
+		expect(failed[0].role).toBe("worker");
 		expect(Object.keys(failed[0]).sort()).toEqual(["at", "error_class", "model", "provider", "role", "schema_version"]);
 		const metrics = attemptOf(INSTANCE_RESOLVED).metrics;
 		expect(metrics.model_rounds_total).toBe(3);
@@ -283,7 +283,7 @@ describe("REAL-6: tool-call ledger from the real process", () => {
 		expect(rows.length).toBeGreaterThan(0);
 		// The allowed key set IS the module's contract constant (design §7:
 		// id/name/status/timestamps/attribution, where attribution includes
-		// role AND provider/model + goal/lane) — the same SSOT ATTR-1 pins, so
+		// role AND provider/model + goal/thread) — the same SSOT ATTR-1 pins, so
 		// this row can never drift behind a contract change again.
 		const bench = await loadBenchmarkModule();
 		const allowed = new Set<string>([...bench.TOOL_CALL_RECORD_FIELDS]);
@@ -314,7 +314,7 @@ describe("REAL-7: the report aggregates the real-mode run honestly", () => {
 	});
 
 	test("per-resolved numerators include infra_error and not_evaluated attempts", () => {
-		expect(report().model_rounds).toMatchObject({ total: 5, primary: 4, support: 1, failed_attempts: 1 });
+		expect(report().model_rounds).toMatchObject({ total: 5, primary: 5, support: 0, failed_attempts: 1 });
 		expect(report().per_resolved.rounds).toBe(5);
 		expect(report().per_resolved.tool_calls).toBe(7);
 		expect(report().per_resolved.tokens).toBe(5900);
@@ -339,7 +339,7 @@ describe("REAL-7: the report aggregates the real-mode run honestly", () => {
 			wall_seconds: 0,
 			none: 3,
 		});
-		expect(report().breakdowns.by_model["fake-openai/fake-coder"]).toEqual({
+		expect(report().breakdowns.by_model["fake-openai/fake-worker"]).toEqual({
 			model_rounds: 3,
 			tool_calls: 4,
 			total_tokens: 4300,

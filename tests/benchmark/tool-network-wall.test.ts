@@ -274,7 +274,7 @@ describe("NET-1/2/3: the production driver's spawned Codeflow tree", () => {
 
 		const probe = delegatedProbe(shared.driver.capture);
 		// The probe really was the delegated-role child of the real launcher.
-		expect(probe.role).toBe("coder");
+		expect(probe.role).toBe("worker");
 		expect(probe.depth).toBe("1");
 		expect(probe.prompt_head.length).toBeGreaterThan(0);
 		expect(probe.error).toBeNull();

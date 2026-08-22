@@ -47,7 +47,7 @@ printf '%s\n' "$*" >"$capture/inner-argv"
 now() { date -u "+%Y-%m-%dT%H:%M:%S.000Z"; }
 
 usage_row() { # $1=role $2=model $3=total_tokens
-	printf '{"schema_version":2,"at":"%s","request_started_at":null,"attempt":%d,"run_id":null,"role":"%s","provider":"fake-anthropic","model":"%s","depth":0,"turn":1,"handoff_id":null,"goal_id":null,"lane":null,"usage":{"input":%d,"output":100,"reasoning":0,"cache_read":0,"cache_write":0,"total_tokens":%d,"cost":null}}\n' \
+	printf '{"schema_version":2,"at":"%s","request_started_at":null,"attempt":%d,"run_id":null,"role":"%s","provider":"fake-anthropic","model":"%s","depth":0,"turn":1,"handoff_id":null,"goal_id":null,"thread":null,"usage":{"input":%d,"output":100,"reasoning":0,"cache_read":0,"cache_write":0,"total_tokens":%d,"cost":null}}\n' \
 		"$(now)" "${CODEFLOW_BENCHMARK_ATTEMPT:-1}" "$1" "$2" "$(($3 - 100))" "$3" >>"$ledger/usage.jsonl"
 }
 
@@ -56,8 +56,8 @@ tool_row() { # $1=kind $2=call_id $3=status ("-" for null) [$4=provider] [$5=mod
 	# carries DIRECT provider/model attribution from the emitting round.
 	local status="null"
 	[ "$3" != "-" ] && status="\"$3\""
-	printf '{"schema_version":1,"kind":"%s","call_id":"%s","tool":"bash","status":%s,"at":"%s","run_id":null,"role":"coder","provider":"%s","model":"%s","depth":0,"handoff_id":null,"goal_id":null,"lane":null}\n' \
-		"$1" "$2" "$status" "$(now)" "${4:-fake-anthropic}" "${5:-fake-coder}" >>"$ledger/tool-calls.jsonl"
+	printf '{"schema_version":1,"kind":"%s","call_id":"%s","tool":"bash","status":%s,"at":"%s","run_id":null,"role":"worker","provider":"%s","model":"%s","depth":0,"handoff_id":null,"goal_id":null,"thread":null}\n' \
+		"$1" "$2" "$status" "$(now)" "${4:-fake-anthropic}" "${5:-fake-worker}" >>"$ledger/tool-calls.jsonl"
 }
 
 # Fractional sleep that works on every macOS/bash host (no sleep 0.4 reliance).
@@ -98,12 +98,12 @@ probe_markers() { # names of set env vars that look proxy/benchmark related
 
 case "${FAKE_INNER_MODE:-scripted}" in
 scripted)
-	usage_row coder fake-coder 400000
+	usage_row worker fake-worker 400000
 	msleep 500
 	tool_row requested t-1 -
 	tool_row result t-1 succeeded
 	msleep 500
-	usage_row coder fake-coder 400000
+	usage_row worker fake-worker 400000
 	tool_row requested t-2 -
 	msleep 500
 	printf '{"mode":"scripted"}\n' >"$capture/inner-natural-exit"
@@ -114,7 +114,7 @@ forever)
 	i=0
 	while [ "$i" -lt 500 ]; do
 		i=$((i + 1))
-		usage_row coder fake-coder 400000
+		usage_row worker fake-worker 400000
 		msleep "$interval"
 		# Partial work exists from the first round on, so any cap stop has a
 		# non-empty patch to extract and grade.
@@ -124,13 +124,13 @@ forever)
 	exit 0
 	;;
 fail)
-	usage_row coder fake-coder 400000
+	usage_row worker fake-worker 400000
 	msleep 400
 	exit 3
 	;;
 netprobe)
 	# The attempt is a live benchmark attempt like any other: one round.
-	usage_row coder fake-coder 5000
+	usage_row worker fake-worker 5000
 	# ROOT-ROLE probes: real outbound attempts from the process the production
 	# driver spawned (where a root-role bash tool subprocess would run). The
 	# marker shape matches role-net-driver.ts: {exit, reached} per attempt.

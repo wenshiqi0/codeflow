@@ -5,17 +5,17 @@
     "demo/demo-1001": {
       "rounds": [
         {
-          "role": "planner",
+          "role": "worker",
           "provider": "fixture",
-          "model": "fixture-planner",
+          "model": "fixture-worker",
           "usage": { "input": 100, "output": 20, "reasoning": 0, "cache_read": 30, "cache_write": 5, "total_tokens": 155, "cost": { "input": 1.0, "output": 0.5, "cache_read": 0.05, "cache_write": 0.01, "total": 1.56 } },
           "tool_calls": [],
           "advance_ms": 1000
         },
         {
-          "role": "coder",
+          "role": "worker",
           "provider": "fixture",
-          "model": "fixture-coder",
+          "model": "fixture-worker",
           "usage": { "input": 200, "output": 40, "reasoning": 10, "cache_read": 0, "cache_write": 0, "total_tokens": 250, "cost": { "input": 0.4, "output": 0.3, "cache_read": 0, "cache_write": 0, "total": 0.7 } },
           "tool_calls": [
             { "call_id": "c1", "tool": "bash", "status": "succeeded" },
@@ -25,17 +25,17 @@
           "advance_ms": 5000
         },
         {
-          "role": "coder",
+          "role": "worker",
           "provider": "fixture",
-          "model": "fixture-coder",
+          "model": "fixture-worker",
           "usage": { "input": 150, "output": 30, "reasoning": 0, "total_tokens": 180, "cost": null },
           "tool_calls": [ { "call_id": "c4", "tool": "bash", "status": "incomplete" } ],
           "advance_ms": 2000
         },
         {
-          "role": "tester",
+          "role": "worker",
           "provider": "fixture",
-          "model": "fixture-tester",
+          "model": "fixture-worker",
           "usage": { "input": 80, "output": 10, "reasoning": 0, "total_tokens": 90, "cost": null },
           "tool_calls": [],
           "advance_ms": 3000
@@ -50,24 +50,24 @@
         }
       ],
       "failed_model_attempts": [
-        { "role": "coder", "provider": "fixture", "model": "fixture-coder", "error_class": "provider_timeout" }
+        { "role": "worker", "provider": "fixture", "model": "fixture-worker", "error_class": "provider_timeout" }
       ],
       "workspace_files": { "fix.py": "def fix():\n    return \"FIXED_1001\"\n" }
     },
     "demo/demo-1002": {
       "rounds": [
         {
-          "role": "coder",
+          "role": "worker",
           "provider": "fixture",
-          "model": "fixture-coder",
+          "model": "fixture-worker",
           "usage": { "input": 10, "output": 5, "reasoning": 0, "cache_read": 90, "cache_write": 0, "total_tokens": 105, "cost": null },
           "tool_calls": [ { "call_id": "d1", "tool": "bash", "status": "succeeded" } ],
           "advance_ms": 1000
         },
         {
-          "role": "coder",
+          "role": "worker",
           "provider": "fixture",
-          "model": "fixture-coder",
+          "model": "fixture-worker",
           "usage": { "input": 1000, "output": 50, "reasoning": 10, "cache_read": 0, "cache_write": 0, "total_tokens": 1060, "cost": null },
           "tool_calls": [
             { "call_id": "d2", "tool": "bash", "status": "succeeded" },
@@ -82,9 +82,9 @@
     "demo/demo-1003": {
       "rounds": [
         {
-          "role": "coder",
+          "role": "worker",
           "provider": "fixture",
-          "model": "fixture-coder",
+          "model": "fixture-worker",
           "usage": { "input": 400, "output": 100, "reasoning": 0, "total_tokens": 500, "cost": null },
           "tool_calls": [ { "call_id": "e1", "tool": "bash", "status": "incomplete" } ],
           "advance_ms": 500
@@ -97,9 +97,9 @@
     "demo/demo-1004": {
       "rounds": [
         {
-          "role": "planner",
+          "role": "worker",
           "provider": "fixture",
-          "model": "fixture-planner",
+          "model": "fixture-worker",
           "usage": { "input": 50, "output": 10, "reasoning": 0, "cache_read": 0, "cache_write": 0, "total_tokens": 60, "cost": null },
           "tool_calls": [],
           "advance_ms": 500
@@ -111,9 +111,9 @@
     "demo/demo-1005": {
       "rounds": [
         {
-          "role": "coder",
+          "role": "worker",
           "provider": "fixture",
-          "model": "fixture-coder",
+          "model": "fixture-worker",
           "usage": { "input": 0, "output": 0, "reasoning": 0, "cache_read": 1700000, "cache_write": 0, "total_tokens": 1700000, "cost": null },
           "tool_calls": [
             { "call_id": "g1", "tool": "bash", "status": "succeeded" },
@@ -123,9 +123,9 @@
           "advance_ms": 600000
         },
         {
-          "role": "coder",
+          "role": "worker",
           "provider": "fixture",
-          "model": "fixture-coder",
+          "model": "fixture-worker",
           "usage": { "input": 0, "output": 0, "reasoning": 0, "cache_read": 1700000, "cache_write": 0, "total_tokens": 1700000, "cost": null },
           "tool_calls": [
             { "call_id": "g4", "tool": "bash", "status": "succeeded" },
@@ -134,17 +134,17 @@
           "advance_ms": 600000
         },
         {
-          "role": "coder",
+          "role": "worker",
           "provider": "fixture",
-          "model": "fixture-coder",
+          "model": "fixture-worker",
           "usage": { "input": 500, "output": 100, "reasoning": 0, "cache_read": 0, "cache_write": 0, "total_tokens": 600, "cost": null },
           "tool_calls": [ { "call_id": "g6", "tool": "bash", "status": "succeeded" } ],
           "advance_ms": 600000
         },
         {
-          "role": "coder",
+          "role": "worker",
           "provider": "fixture",
-          "model": "fixture-coder",
+          "model": "fixture-worker",
           "usage": { "input": 500, "output": 100, "reasoning": 0, "cache_read": 0, "cache_write": 0, "total_tokens": 600, "cost": null },
           "tool_calls": [],
           "advance_ms": 600000

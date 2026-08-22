@@ -97,7 +97,7 @@ Verified instance
 - 一个 response 即使包含多个 tool calls，也只增加一个 model round。
 - tool result 之后再次请求模型并收到 response，增加一个 model round。
 - 并行模型 response 分别计数。
-- planner、architect、tester、coder、verify 以及压缩或摘要等支持模型都计入 `model_rounds_total`。
+- worker 以及压缩或摘要等内部支持模型都计入 `model_rounds_total`。
 - 支持模型同时单列为 `support_model_rounds`，其余列为 `primary_model_rounds`。
 - provider 请求在产生 assistant response 前失败，不计 completed model round，单列为 `failed_model_attempts`。
 
@@ -106,7 +106,7 @@ Verified instance
 - total；
 - role；
 - provider/model；
-- goal/lane；
+- goal/thread；
 - primary/support；
 - completed/failed attempt。
 
@@ -127,7 +127,7 @@ Verified instance
 - `tool_calls_total`；
 - requested/completed/succeeded/failed/incomplete；
 - by tool name；
-- by role、provider/model、goal/lane；
+- by goal、provider/model、thread/depth；
 - `tool_calls_per_model_round`；
 - `tool_calls_per_resolved`。
 
@@ -236,7 +236,7 @@ suite 级别至少展示：
 - total、median、P90 token；
 - rounds/tool calls/tokens per resolved；
 - cache read/write 与 token-weighted hit rate；
-- 按 role、model、goal/lane、tool name 的分解；
+- 按 goal、model、thread、depth、tool name 的分解；
 - budget termination counts；
 - wall time telemetry，但明确标注 `not_ranked`。
 

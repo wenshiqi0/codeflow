@@ -2,7 +2,7 @@
  * Shared harness for the benchmark acceptance suite.
  *
  * The benchmark capability does not exist yet (docs/benchmark-contract.md is
- * the contract; coder implements it). These tests must fail with a clear
+ * the contract; worker implements it). These tests must fail with a clear
  * contract message against the real CLI/module surface, never crash on
  * import — so the module is loaded dynamically and every CLI assertion goes
  * through the real `runtime/bin/codeflow` binary, exactly like tests/outer.

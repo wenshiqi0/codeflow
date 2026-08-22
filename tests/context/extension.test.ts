@@ -46,7 +46,7 @@ describe("codeflow context extension", () => {
 		try {
 			const systemPrompt = resolveRole(
 				path.join(repo, "runtime/roles.json"),
-				"planner",
+				"worker",
 			)?.systemPrompt ?? "";
 			const result = handler({
 				systemPrompt,
@@ -59,8 +59,8 @@ describe("codeflow context extension", () => {
 				};
 			};
 
-			expect(result.systemPrompt).toContain("# Planner Capability");
-			expect(result.systemPrompt).toContain("five read-only information calls or five minutes");
+			expect(result.systemPrompt).toContain("# Worker");
+			expect(result.systemPrompt).toContain("Methods for software work include");
 			expect(result.systemPrompt).not.toContain("codeflow:import");
 			expect(result.message.content).not.toContain("<context_imports>");
 			expect(result.message.details.sources.some((source) => source.kind === "context_import")).toBeFalse();
@@ -113,7 +113,7 @@ describe("codeflow context extension", () => {
 		const savedRole = process.env.CODEFLOW_AGENT_ROLE;
 		const savedRunId = process.env.CODEFLOW_RUN_ID;
 		const savedRunsDir = process.env.CODEFLOW_RUNS_DIR;
-		process.env.CODEFLOW_AGENT_ROLE = "coder";
+		process.env.CODEFLOW_AGENT_ROLE = "worker";
 		process.env.CODEFLOW_RUN_ID = runId;
 		process.env.CODEFLOW_RUNS_DIR = runsDir;
 
@@ -125,7 +125,7 @@ describe("codeflow context extension", () => {
 				JSON.stringify({
 					id: "f1",
 					kind: "fact",
-					role: "tester",
+					role: "worker",
 					handoff_id: "h1",
 					claim: "first fact",
 					value: "one",
@@ -142,7 +142,7 @@ describe("codeflow context extension", () => {
 					{
 						systemPrompt: resolveRole(
 							path.join(repo, "runtime/roles.json"),
-							"coder",
+							"worker",
 						)?.systemPrompt ?? "",
 						systemPromptOptions: { cwd },
 					},
@@ -154,7 +154,7 @@ describe("codeflow context extension", () => {
 			expect(first.message.details.mode).toBe("full");
 			expect(first.message.details.facts).toEqual({ fromCursor: 0, toCursor: 1 });
 			expect(first.message.content).toContain("<shared_rules>");
-			expect(first.message.content).toContain("f1: first fact — one [tester]");
+			expect(first.message.content).toContain("f1: first fact — one [worker]");
 
 			const firstEntry: SessionEntryLike = {
 				type: "custom_message",
@@ -182,7 +182,7 @@ describe("codeflow context extension", () => {
 				JSON.stringify({
 					id: "f2",
 					kind: "supersede",
-					role: "coder",
+					role: "worker",
 					handoff_id: "h2",
 					claim: "second fact",
 					value: "two",
@@ -196,7 +196,7 @@ describe("codeflow context extension", () => {
 			expect(third.message.details.mode).toBe("delta");
 			expect(third.message.details.facts).toEqual({ fromCursor: 1, toCursor: 2 });
 			expect(third.message.content).toContain("<shared_facts_delta>");
-			expect(third.message.content).toContain("f2: second fact — two [coder]; supersedes f1 (corrected)");
+			expect(third.message.content).toContain("f2: second fact — two [worker]; supersedes f1 (corrected)");
 			expect(third.message.content).not.toContain("f1: first fact");
 			expect(third.message.content).not.toContain("<shared_rules>");
 			expect(third.message.content).not.toContain("generated_at");
@@ -226,7 +226,7 @@ describe("codeflow context extension", () => {
 
 		const savedRole = process.env.CODEFLOW_AGENT_ROLE;
 		const savedRunId = process.env.CODEFLOW_RUN_ID;
-		process.env.CODEFLOW_AGENT_ROLE = "coder";
+		process.env.CODEFLOW_AGENT_ROLE = "worker";
 		delete process.env.CODEFLOW_RUN_ID;
 		try {
 			const result = handler(
@@ -238,7 +238,7 @@ describe("codeflow context extension", () => {
 								type: "custom_message",
 								customType: "codeflow:context",
 								details: {
-									role: "coder",
+									role: "worker",
 									level: "shared",
 									sources: [],
 									facts: {},
@@ -276,7 +276,7 @@ describe("codeflow context extension", () => {
 		const savedRole = process.env.CODEFLOW_AGENT_ROLE;
 		const savedRunId = process.env.CODEFLOW_RUN_ID;
 		const savedDelta = process.env.CODEFLOW_CONTEXT_DELTA;
-		process.env.CODEFLOW_AGENT_ROLE = "supervisor";
+		process.env.CODEFLOW_AGENT_ROLE = "zipper";
 		process.env.CODEFLOW_CONTEXT_DELTA = "off";
 		delete process.env.CODEFLOW_RUN_ID;
 		try {
@@ -289,7 +289,7 @@ describe("codeflow context extension", () => {
 								type: "custom_message",
 								customType: "codeflow:context",
 								details: {
-									role: "supervisor",
+									role: "zipper",
 									level: "none",
 									sources: [],
 									facts: { fromCursor: 0, toCursor: 0 },

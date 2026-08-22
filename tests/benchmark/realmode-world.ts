@@ -211,9 +211,9 @@ export function buildRealmodeWorld(): RealmodeWorld {
 				steps: [
 					{
 						event: round(
-							"planner",
+							"worker",
 							"fake-anthropic",
-							"fake-planner",
+							"fake-worker",
 							usage(1000, 100, { reasoning: 20 }),
 							[
 								{ call_id: "c1", tool: "bash", status: "succeeded" },
@@ -223,9 +223,9 @@ export function buildRealmodeWorld(): RealmodeWorld {
 					},
 					{
 						event: round(
-							"coder",
+							"worker",
 							"fake-openai",
-							"fake-coder",
+							"fake-worker",
 							usage(2000, 300, {
 								cache_read: 900,
 								cache_write: 100,
@@ -236,18 +236,18 @@ export function buildRealmodeWorld(): RealmodeWorld {
 								{ call_id: "c3", tool: "write", status: "failed" },
 								{ call_id: "c4", tool: "bash", status: "rejected" },
 							],
-							{ handoff_id: "h-2001", goal_id: "g-2001", lane: "main" },
+							{ handoff_id: "h-2001", goal_id: "g-2001", thread: "main" },
 						),
 					},
 					{
 						event: {
 							type: "failed_model_attempt",
-							attempt: { role: "tester", provider: "fake-anthropic", model: "fake-tester", error_class: "provider_timeout" },
+							attempt: { role: "worker", provider: "fake-anthropic", model: "fake-worker", error_class: "provider_timeout" },
 						},
 					},
 					{
 						event: round(
-							"verify",
+							"worker",
 							"fake-anthropic",
 							"fake-verify",
 							// cache_read/cache_write deliberately ABSENT: provider did not report.
@@ -261,7 +261,7 @@ export function buildRealmodeWorld(): RealmodeWorld {
 			[INSTANCE_INFRA]: {
 				steps: [
 					{
-						event: round("coder", "fake-openai", "fake-coder", usage(600, 100), [
+						event: round("worker", "fake-openai", "fake-worker", usage(600, 100), [
 							{ call_id: "c1", tool: "bash", status: "succeeded" },
 						]),
 					},
@@ -272,7 +272,7 @@ export function buildRealmodeWorld(): RealmodeWorld {
 			[INSTANCE_NOT_EVALUATED]: {
 				steps: [
 					{
-						event: round("coder", "fake-openai", "fake-coder", usage(200, 100), [
+						event: round("worker", "fake-openai", "fake-worker", usage(200, 100), [
 							{ call_id: "c1", tool: "read", status: "succeeded" },
 						]),
 					},
@@ -281,7 +281,7 @@ export function buildRealmodeWorld(): RealmodeWorld {
 			[INSTANCE_HUB]: {
 				steps: [
 					{
-						event: round("coder", "fake-anthropic", "fake-hub", usage(150, 100), [
+						event: round("worker", "fake-anthropic", "fake-hub", usage(150, 100), [
 							{ call_id: "c1", tool: "bash", status: "succeeded" },
 						]),
 					},

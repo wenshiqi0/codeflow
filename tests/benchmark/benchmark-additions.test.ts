@@ -27,7 +27,7 @@ function usage(input: number, cacheRead: number | null = 0) {
 
 function round(overrides: Partial<DriverRound> = {}): DriverRound {
 	return {
-		role: "coder",
+		role: "worker",
 		provider: "fixture",
 		model: "fixture-model",
 		usage: usage(100),
@@ -93,23 +93,23 @@ describe("B1 source-clock timing and TTFP", () => {
 		let setNow: ((value: number) => void) | undefined;
 		const driver = {
 			async *startAttempt(input: any) {
-				writeRuntimeHandoff(input.workspaceDir, "h00001-coder", {
-					role: "coder",
+				writeRuntimeHandoff(input.workspaceDir, "h00001-worker", {
+					role: "worker",
 					status: "done",
 					result: "PASS",
 					goal_id: "goal-1",
-					lane: "code",
+					thread: "code",
 				});
 				yield { type: "workspace_write", path: "new-file.py", content: "print('fix')\n" };
 				setNow?.(BASE_MS + 1000);
 				yield {
 					type: "tool_calls",
-					role: "coder",
+					role: "worker",
 					provider: "fixture",
 					model: "fixture-model",
 					goal_id: "goal-1",
-					lane: "code",
-					handoff_id: "h00001-coder",
+					thread: "code",
+					handoff_id: "h00001-worker",
 					calls: [
 						{
 							call_id: "a",
@@ -133,9 +133,9 @@ describe("B1 source-clock timing and TTFP", () => {
 					round: round({
 						depth: 1,
 						turn: 1,
-						handoff_id: "h00001-coder",
+						handoff_id: "h00001-worker",
 						goal_id: "goal-1",
-						lane: "code",
+						thread: "code",
 					}),
 				};
 			},
@@ -163,37 +163,37 @@ describe("B4 waste and context growth", () => {
 	test("usage depth/turn joins handoff terminal state without prose", async () => {
 		const driver = {
 			async *startAttempt(input: any) {
-				writeRuntimeHandoff(input.workspaceDir, "h00001-coder", {
-					role: "coder",
+				writeRuntimeHandoff(input.workspaceDir, "h00001-worker", {
+					role: "worker",
 					status: "done",
 					result: "FAIL",
 					goal_id: "goal-1",
-					lane: "code",
+					thread: "code",
 					summary: "secret failure prose",
 				});
-				writeRuntimeHandoff(input.workspaceDir, "h00002-coder", {
-					role: "coder",
+				writeRuntimeHandoff(input.workspaceDir, "h00002-worker", {
+					role: "worker",
 					status: "done",
 					result: "PASS",
 					goal_id: "goal-1",
-					lane: "code",
+					thread: "code",
 				});
-				writeRuntimeHandoff(input.workspaceDir, "h00003-coder", {
-					role: "coder",
+				writeRuntimeHandoff(input.workspaceDir, "h00003-worker", {
+					role: "worker",
 					status: "done",
 					result: "PASS",
 					goal_id: "goal-1",
-					lane: "code",
+					thread: "code",
 				});
-				yield { type: "round", round: round({ role: "planner", depth: 0, turn: 1, usage: usage(100) }) };
+				yield { type: "round", round: round({ role: "worker", depth: 0, turn: 1, usage: usage(100) }) };
 				yield {
 					type: "round",
 					round: round({
 						depth: 1,
 						turn: 1,
-						handoff_id: "h00001-coder",
+						handoff_id: "h00001-worker",
 						goal_id: "goal-1",
-						lane: "code",
+						thread: "code",
 						usage: usage(200, 100),
 					}),
 				};
@@ -202,9 +202,9 @@ describe("B4 waste and context growth", () => {
 					round: round({
 						depth: 1,
 						turn: 2,
-						handoff_id: "h00001-coder",
+						handoff_id: "h00001-worker",
 						goal_id: "goal-1",
-						lane: "code",
+						thread: "code",
 						usage: usage(300, 150),
 					}),
 				};
@@ -213,9 +213,9 @@ describe("B4 waste and context growth", () => {
 					round: round({
 						depth: 1,
 						turn: 1,
-						handoff_id: "h00002-coder",
+						handoff_id: "h00002-worker",
 						goal_id: "goal-1",
-						lane: "code",
+						thread: "code",
 						usage: usage(400, 200),
 					}),
 				};
@@ -226,8 +226,8 @@ describe("B4 waste and context growth", () => {
 			rounds_in_non_pass_handoffs: 2,
 			tokens_in_non_pass_handoffs: 770,
 			waste_ratio_rounds: 0.5,
-			planner_rounds_ratio: 0.25,
-			handoff_reopens_per_goal_lane_median: 2,
+			root_rounds_ratio: 0.25,
+			handoff_reopens_per_goal_thread_median: 2,
 			metrics_available: true,
 		});
 		expect(result.report.runtime_observability.context_growth).toEqual({
@@ -247,9 +247,9 @@ describe("B2 multiple attempts", () => {
 					round: round({
 						depth: 1,
 						turn: 1,
-						handoff_id: `h0000${input.attempt}-coder`,
+						handoff_id: `h0000${input.attempt}-worker`,
 						goal_id: "goal-1",
-						lane: "code",
+						thread: "code",
 					}),
 				};
 			},

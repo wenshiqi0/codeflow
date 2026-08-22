@@ -44,7 +44,7 @@ import { RunPaths } from "../../runtime/lib/paths";
 const REPO = path.resolve(import.meta.dir, "../..");
 const CODE_AGENT = path.join(REPO, "runtime", "bin", "code-agent");
 const RUN_ID = "run-evidence-timeout-test";
-const HANDOFF_ID = "h00002-verify";
+const HANDOFF_ID = "h00002-worker";
 
 /** 12 minutes: the contract default for one verification command. */
 const DEFAULT_TIMEOUT_MS = 720_000;
@@ -192,14 +192,14 @@ describe("verification-command execution timeout contract", () => {
 		]);
 	});
 
-	test("a registered timed-out child is mechanically BLOCKED for planner intervention", () => {
-		openHandoff(paths, { role: "planner", depth: 0, body: "Goal: own timeout recovery\n" });
-		const verify = openHandoff(paths, {
-			role: "verify",
+	test("a registered timed-out child is mechanically BLOCKED for delegator intervention", () => {
+		openHandoff(paths, { role: "worker", depth: 0, body: "Goal: own timeout recovery\n" });
+		const child = openHandoff(paths, {
+			role: "worker",
 			depth: 1,
 			body: "Goal: run the bounded check\n",
 		});
-		expect(verify.handoff_id).toBe(HANDOFF_ID);
+		expect(child.handoff_id).toBe(HANDOFF_ID);
 
 		expect(
 			evidence([
@@ -343,13 +343,13 @@ describe("verification-command execution timeout contract", () => {
 	});
 
 	test("completed evidence survives a later sibling timeout and still aggregates", () => {
-		openHandoff(paths, { role: "planner", depth: 0, body: "Goal: verify evidence\n" });
-		const verify = openHandoff(paths, {
-			role: "verify",
+		openHandoff(paths, { role: "worker", depth: 0, body: "Goal: verify evidence\n" });
+		const child = openHandoff(paths, {
+			role: "worker",
 			depth: 1,
 			body: "Goal: run checks\n",
 		});
-		expect(verify.handoff_id).toBe(HANDOFF_ID);
+		expect(child.handoff_id).toBe(HANDOFF_ID);
 
 		// Earlier command completes normally.
 		expect(evidence(["run", "--id", "early-ok", "--", "bash", "-c", "printf ok"]).exitCode).toBe(0);
@@ -387,13 +387,13 @@ describe("verification-command execution timeout contract", () => {
 		});
 		expect(() =>
 			finishHandoff(paths, {
-				handoffId: verify.handoff_id,
+					handoffId: child.handoff_id,
 				status: "FAIL",
 				summary: "one check timed out",
 				receipt: output,
 			}),
 		).toThrow();
-		const state = JSON.parse(fs.readFileSync(paths.statePath(verify.handoff_id), "utf8")) as {
+		const state = JSON.parse(fs.readFileSync(paths.statePath(child.handoff_id), "utf8")) as {
 			status?: string;
 			blocked?: { reasons?: string[] };
 		};
@@ -401,29 +401,19 @@ describe("verification-command execution timeout contract", () => {
 		expect(state.blocked?.reasons).toEqual(["EXECUTION_TIMEOUT"]);
 	});
 
-	test("the verification capability doc is the SSOT for the timeout surface", () => {
-		// The role-facing doc must teach the flag, the new error class, and
-		// the ownership rule: after an execution timeout the role finishes
-		// BLOCKED and never silently retries — only the planner decides
-		// whether to split the command, change timeout/environment, or
-		// redelegate.
-		const doc = fs.readFileSync(path.join(REPO, "references", "capabilities", "verification.md"), "utf8");
+	test("the shared worker contract is the SSOT for the timeout surface", () => {
+		// The worker contract teaches the flag, error class, and ownership
+		// rule: after an execution timeout the handoff is terminal and the
+		// worker returns control to its delegator.
+		const doc = fs.readFileSync(path.join(REPO, "runtime", "AGENTS.md"), "utf8");
 		expect(doc).toContain("--timeout-ms");
 		expect(doc).toContain("EXECUTION_TIMEOUT");
 		expect(doc).toContain("error_class");
-		expect(doc).toMatch(/never implicitly retry|do not retry/);
-		expect(doc).toContain("planner");
-
-		const planner = fs.readFileSync(
-			path.join(REPO, "references", "capabilities", "planning.md"),
-			"utf8",
-		);
-		expect(planner).toContain("`EXECUTION_TIMEOUT`");
-		expect(planner).toMatch(/split the command/);
-		expect(planner).toMatch(/Never replay the identical timed-out command/);
+		expect(doc).toMatch(/without an implicit retry/);
+		expect(doc).toContain("delegator");
 
 		const skill = fs.readFileSync(path.join(REPO, "SKILL.md"), "utf8");
-		expect(skill).toMatch(/EXECUTION_TIMEOUT.*root planner/);
-		expect(skill).toMatch(/keep subscribing/);
+		expect(skill).toContain("EXECUTION_TIMEOUT");
+		expect(skill).toContain("Root `PASS`");
 	});
 });

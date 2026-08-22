@@ -44,9 +44,9 @@ function spyingDriver(inputs: any[], workspaces: string[] = []) {
 				yield {
 					type: "round",
 					round: {
-						role: "coder",
+						role: "worker",
 						provider: "fixture",
-						model: "fixture-coder",
+						model: "fixture-worker",
 						usage: {
 							input: 100,
 							output: 20,
@@ -231,13 +231,13 @@ describe("workspace and artifacts stay clean", () => {
 				"goal_id",
 				"handoff_id",
 				"kind",
-				"lane",
 				"model",
 				"provider",
 				"role",
 				"run_id",
 				"schema_version",
 				"status",
+				"thread",
 				"tool",
 			]);
 		}

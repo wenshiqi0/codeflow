@@ -43,7 +43,7 @@ function environment(runsDir: string): Record<string, string> {
 	return {
 		...env,
 		CODEFLOW_PI_CLI: piCli,
-		CODEFLOW_AGENT_ROLE: "coder",
+		CODEFLOW_AGENT_ROLE: "worker",
 		CODEFLOW_RUN_ID: "run-pi-context-smoke",
 		CODEFLOW_RUNS_DIR: runsDir,
 		PI_CODING_AGENT_DIR: path.join(repo, "runtime"),
@@ -143,7 +143,7 @@ describe("real Pi persistent-session context continuation", () => {
 			JSON.stringify({
 				id: "f1",
 				kind: "fact",
-				role: "tester",
+				role: "worker",
 				handoff_id: "h1",
 				claim: "first smoke fact",
 				value: "one",
@@ -155,7 +155,7 @@ describe("real Pi persistent-session context continuation", () => {
 		expect(first.details.mode).toBe("full");
 		expect(first.details.facts).toEqual({ fromCursor: 0, toCursor: 1 });
 		expect(first.content).toContain("<shared_rules>");
-		expect(first.content).toContain("f1: first smoke fact — one [tester]");
+		expect(first.content).toContain("f1: first smoke fact — one [worker]");
 		expect(first.content).not.toContain("generated_at");
 
 		fs.appendFileSync(
@@ -163,7 +163,7 @@ describe("real Pi persistent-session context continuation", () => {
 			JSON.stringify({
 				id: "f2",
 				kind: "supersede",
-				role: "coder",
+				role: "worker",
 				handoff_id: "h2",
 				claim: "second smoke fact",
 				value: "two",
@@ -180,7 +180,7 @@ describe("real Pi persistent-session context continuation", () => {
 		expect(second.content).not.toContain("<shared_rules>");
 		expect(second.content).toContain('action="unchanged"');
 		expect(second.content).toContain("<shared_facts_delta>");
-		expect(second.content).toContain("f2: second smoke fact — two [coder]; supersedes f1 (corrected)");
+		expect(second.content).toContain("f2: second smoke fact — two [worker]; supersedes f1 (corrected)");
 		expect(second.content).not.toContain("f1: first smoke fact");
 		expect(second.content).not.toContain("generated_at");
 

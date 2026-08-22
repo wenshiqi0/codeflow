@@ -19,7 +19,7 @@ open -> running -> done(PASS|FAIL)
 
 Terminal states are immutable. Re-finishing a terminal handoff is rejected as an illegal transition rather than overwriting the record.
 
-`codeflow exec` opens a depth-0 root handoff for its planner. `codeflow resume <run-id>` preserves that run's immutable history and opens the next depth-0 planner handoff only after the latest attempt has emitted `run_finished` followed by `runner_exited`; terminal handoffs are never reopened. If the depth-0 runner exits while its handoff is still active, the mechanical layer closes every still-active handoff as `BLOCKED` with `DELEGATION_ARTIFACT_MISSING`, emits the terminal business event, and only then emits `runner_exited`. A prose final message is never promoted to success.
+`codeflow exec` opens a depth-0 root handoff for its root worker. `codeflow resume <run-id>` preserves that run's immutable history and opens the next depth-0 root worker handoff only after the latest attempt has emitted `run_finished` followed by `runner_exited`; terminal handoffs are never reopened. If the depth-0 runner exits while its handoff is still active, the mechanical layer closes every still-active handoff as `BLOCKED` with `DELEGATION_ARTIFACT_MISSING`, emits the terminal business event, and only then emits `runner_exited`. A prose final message is never promoted to success.
 
 ## Commands
 
@@ -44,16 +44,16 @@ Validated fields:
 | Field | Type | Notes |
 | --- | --- | --- |
 | `status` | enum | Required. Must match `--status`, or the finish is rejected |
-| `command` | string | Required for `verify` |
-| `exit_code` | int | Required for `verify` |
+| `command` | string | Command-evidence receipt field |
+| `exit_code` | int | Command-evidence receipt field |
 | `failed_checks` | array | Failing test names or gates |
 | `error_excerpt` | string | Spilled to `evidence/` past 2000 chars and replaced with a ref |
 | `reproduction` | string | Minimum command to reproduce |
 | `diagnosis` | string | Marked as inference, not fact |
-| `next_owner` | string | `tester`, `coder`, `planner`, or `environment` |
+| `next_owner` | string | `worker`, `root worker`, `environment`, or another explicit handoff owner |
 | `expected_red` | bool | Intended test-first failure; does not turn `FAIL` into `PASS` |
 | `failure_class` | enum | Optional; clean `PASS` entries omit it |
-| `facts` | array | Shared facts for later roles — see `facts.md` |
+| `facts` | array | Shared facts for later workers — see `facts.md` |
 
 Multiple commands go in a `receipts` array with the overall status at top level;
 the field is always an array rather than an object keyed by id. Each entry may
@@ -78,7 +78,7 @@ Batch:
 {"status":"PASS","receipts":[{"id":"unit","status":"PASS","command":"bun test","exit_code":0}]}
 ```
 
-`--artifact` verifies a non-empty file exists on disk at finish time, so a delegator never has to take a role's word for it.
+`--artifact` verifies a non-empty file exists on disk at finish time, so a delegator never has to take a worker's word for it.
 
 ## Blocked reasons
 
@@ -88,14 +88,14 @@ A closed enum. Free-text prose is not an acceptable failure report.
 | --- | --- |
 | `CONTEXT_BUDGET_EXCEEDED` | Protected context exceeded the model window; split the work |
 | `DELEGATION_ARTIFACT_MISSING` | Mandatory artifact absent at finish |
-| `EXECUTION_TIMEOUT` | A command exceeded its per-command timeout and its process tree was terminated; only the planner decides what happens next |
+| `EXECUTION_TIMEOUT` | A command exceeded its per-command timeout and its process tree was terminated; only the root worker decides what happens next |
 | `OUTPUT_TRUNCATED` | Response ended `finish=length`; not an empty success |
 | `PROVIDER_FAILURE` | Timeout, auth failure, quota, overload, transport error |
 | `USER_CANCELLED` | Explicit cancellation |
 
 Several may apply at once; pass `--blocked-reason` more than once. Any of these finishes the handoff `BLOCKED` — never an implicit retry, which would hide a real failure behind a second attempt.
 
-An `EXECUTION_TIMEOUT` is reconciled cause-first: a delegated child aborted by the bash watchdog's marker line is classified `EXECUTION_TIMEOUT` (never a bare `DELEGATION_ARTIFACT_MISSING`), a missing receipt trails it, and explicit user cancellation still outranks the marker. A timed-out verification command returns exit code 124 with `failure_class: RUNNER_BLOCKED` and `error_class: EXECUTION_TIMEOUT`; after the record is durable, the recorder mechanically finishes the registered child handoff `BLOCKED`, so the planner receives the cause even if the role fails to issue a final handoff command.
+An `EXECUTION_TIMEOUT` is reconciled cause-first: a delegated child aborted by the bash watchdog's marker line is classified `EXECUTION_TIMEOUT` (never a bare `DELEGATION_ARTIFACT_MISSING`), a missing receipt trails it, and explicit user cancellation still outranks the marker. A timed-out recorded command returns exit code 124 with `failure_class: RUNNER_BLOCKED` and `error_class: EXECUTION_TIMEOUT`; after the record is durable, the recorder mechanically finishes the registered child handoff `BLOCKED`, so the root worker receives the cause even if the child fails to issue a final handoff command.
 
 ## Events
 
@@ -129,4 +129,4 @@ Sequence numbers are allocated under an exclusive lock, so `--since` is a reliab
 
 ## Scope conflicts
 
-A handoff may declare `--scope` paths. When two active handoffs claim overlapping scope, the CLI records `scope_conflicts` in `state.json` and warns. Treat it as a planning error and serialize the work — parallel roles editing the same file produce a diff nobody authored.
+A handoff may declare `--scope` paths. When two active handoffs claim overlapping scope, the CLI records `scope_conflicts` in `state.json` and warns. Treat it as a handoff-boundary error and serialize the work — parallel workers editing the same file produce a diff nobody authored.
