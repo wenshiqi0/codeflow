@@ -38,4 +38,19 @@ describe("capability prompt contracts", () => {
 			"Once a goal's join is satisfied, do not open further lane handoffs for it",
 		);
 	});
+
+	test("archived tool logs are retrievable only through the bounded CLI channel", () => {
+		const agents = fs.readFileSync(path.join(ROOT, "runtime/AGENTS.md"), "utf8");
+		expect(agents).toContain(
+			"Archived tool logs are the one exception: retrieve them only through `code-agent evidence log`",
+		);
+		expect(agents).toContain("never by reading the files directly");
+	});
+
+	test("all generated evidence prompts point outside the target repository", () => {
+		const planning = prompt("planning.md");
+		const architecture = prompt("architecture.md");
+		expect(planning).toContain("under `$CODEFLOW_EVIDENCE_DIR/`");
+		expect(architecture).toContain("$CODEFLOW_EVIDENCE_DIR/architecture/");
+	});
 });

@@ -227,12 +227,11 @@ tests, diff, and verify receipts as one evidence story" 使 tester 在实现
 
 **机制**（`runtime/extensions/codeflow-context`，新模块 `eviction.ts`）：
 
-- 作用面：**provider 请求的 payload 组装层**，不是磁盘 session 文件。
+- 作用面：**provider 请求前的 context 消息层**，不是磁盘 session 文件。
   on-disk transcript 保持完整原文（审计契约不变）；eviction 只改变
-  重放给 provider 的历史消息内容。实现挂在 pi 的 context 组装 seam
-  （与 `ctx.sessionManager.buildContextEntries()` 同层的 transform
-  hook；若当前 pi 版本无此 hook，先在 pi-coding-agent 侧补 hook，作为
-  本 PR 的前置 task——**不做**监听+改写磁盘 session 文件的旁路方案）；
+  重放给 provider 的历史消息内容。当前 pi-coding-agent 已提供
+  `pi.on("context")` deep-copy transform hook，直接使用该官方 seam；
+  **不做**监听+改写磁盘 session 文件的旁路方案；
 - 策略（纯函数进 `eviction.ts`，便于单测）：
   - 候选：`tool_result` 类历史条目，字节数 > `EVICT_MIN_BYTES`（默认
     4KB）且距今超过 `EVICT_AFTER_ROUNDS`（默认 8 轮）；

@@ -11,6 +11,7 @@ import { currentRun } from "./shared";
 import { finishHandoff } from "../../lib/handoff";
 import {
 	assertGoalLaneAvailable,
+	handoffHistory,
 	openHandoff,
 	reconcileHandoff,
 	resolveGoalTask,
@@ -104,6 +105,25 @@ export function assertTaskPrompt(prompt: string): void {
 	}
 }
 
+export function childHandoffPrompt(
+	prompt: string,
+	handoffId: string | undefined,
+	goal: GoalTaskRef | null,
+): string {
+	if (!goal || !handoffId) return prompt;
+	const paths = currentRun();
+	if (!paths) return prompt;
+	const hasEarlierLaneHandoff = handoffHistory(paths).some(
+		(state) =>
+			state.handoff_id !== handoffId &&
+			state.goal_id === goal.goalId &&
+			state.lane === goal.lane,
+	);
+	if (!hasEarlierLaneHandoff) return prompt;
+	const title = prompt.split("\n", 1)[0].slice(0, 160);
+	return `handoff ${handoffId} opened for goal ${goal.goalId} lane ${goal.lane}: ${title}\nRead the full contract with: code-agent handoff body --id ${handoffId}`;
+}
+
 export default function (pi: ExtensionAPI) {
 	// Delegation is an explicit role permission and is available only at depth
 	// 0. Children always run at depth 1, so they can never re-register tools
@@ -169,9 +189,10 @@ export default function (pi: ExtensionAPI) {
 
 			const paths = currentRun();
 			const handoff = openHandoff(agent, params.prompt, ctx.cwd, goal ?? undefined);
+			const childPrompt = childHandoffPrompt(params.prompt, handoff?.handoffId, goal);
 			const result = await runRoleChild(
 				agent,
-				params.prompt,
+				childPrompt,
 				signal,
 				ctx.cwd,
 				handoff?.handoffId,
@@ -265,9 +286,10 @@ export default function (pi: ExtensionAPI) {
 					}
 					const paths = currentRun();
 					const handoff = openHandoff(agent, task.prompt, ctx.cwd, goal ?? undefined);
+					const childPrompt = childHandoffPrompt(task.prompt, handoff?.handoffId, goal);
 					const result = await runRoleChild(
 						agent,
-						task.prompt,
+						childPrompt,
 						signal,
 						ctx.cwd,
 						handoff?.handoffId,

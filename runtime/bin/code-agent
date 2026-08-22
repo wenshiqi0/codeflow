@@ -40,7 +40,7 @@ usage() {
 usage: code-agent <command> [options]
 
   delegate --role <role> [--handoff-file <file>]   run a role in this run
-  handoff open|start|finish|status|list            handoff state machine
+  handoff open|start|finish|body|status|list       handoff state machine
   facts render|list                                this run's fact ledger
   evidence run|receipt                             execute and aggregate command evidence
   check source [paths...]                          source safety check

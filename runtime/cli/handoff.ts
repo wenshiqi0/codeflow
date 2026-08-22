@@ -9,6 +9,7 @@
  */
 
 import * as fs from "node:fs";
+import * as path from "node:path";
 import {
 	agentsList,
 	BLOCKED_REASONS,
@@ -213,6 +214,14 @@ async function runHandoff(command: string, args: Args): Promise<number> {
 			return 0;
 		}
 
+		case "body": {
+			const id = resolveHandoffId(args);
+			const file = path.join(paths.handoffDir(id), "handoff.md");
+			if (!fs.existsSync(file)) throw new CliError(`handoff body not found: ${id}`);
+			process.stdout.write(fs.readFileSync(file, "utf8"));
+			return 0;
+		}
+
 		case "list": {
 			emit(handoffList(paths, args.booleans.has("active")), true);
 			return 0;
@@ -236,7 +245,7 @@ async function runHandoff(command: string, args: Args): Promise<number> {
 
 		default:
 			throw new CliError(
-				`unknown handoff subcommand: ${command}; expected open, start, finish, ` +
+				`unknown handoff subcommand: ${command}; expected open, start, finish, body, ` +
 					"status, list, run-start, or runner-exited",
 			);
 	}

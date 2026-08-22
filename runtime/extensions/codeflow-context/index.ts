@@ -27,6 +27,7 @@ import {
 	type PreviousContext,
 } from "./context";
 import { loadContextImports, stripImportDirectives } from "./imports";
+import { evictToolResults } from "./eviction";
 import { type FactRecord, ledgerPath, readFactRecords, renderFactRecords } from "../../lib/facts";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
 import { readRoleDefinition } from "../../lib/roles";
@@ -63,6 +64,7 @@ interface SessionEntryLike {
 
 interface SessionManagerLike {
 	buildContextEntries?: () => SessionEntryLike[];
+	getSessionId?: () => string;
 }
 
 interface FactState {
@@ -249,6 +251,34 @@ export default function (pi: ExtensionAPI) {
 			},
 			systemPrompt: stripImportDirectives(event.systemPrompt),
 		};
+	});
+
+	pi.on("context", (event, ctx) => {
+		if (process.env.CODEFLOW_CONTEXT_EVICTION === "off") return;
+		const runId = process.env.CODEFLOW_RUN_ID;
+		const handoffId = process.env.CODEFLOW_HANDOFF_ID;
+		const sessionId = ctx.sessionManager?.getSessionId?.();
+		if (!runId || !handoffId || !sessionId) return;
+		const paths = new RunPaths(process.env.CODEFLOW_RUNS_DIR ?? DEFAULT_RUNS_DIR, runId);
+		let currentHandoffStartedAt: number | undefined;
+		try {
+			const state = JSON.parse(fs.readFileSync(paths.statePath(handoffId), "utf8")) as {
+				started_at?: string;
+				opened_at?: string;
+			};
+			const boundary = state.started_at ?? state.opened_at;
+			if (boundary === undefined) return;
+			currentHandoffStartedAt = Date.parse(boundary);
+			if (Number.isNaN(currentHandoffStartedAt)) return;
+		} catch {
+			return;
+		}
+		const messages = evictToolResults(event.messages, {
+			archiveDir: paths.evidence,
+			sessionId,
+			currentHandoffStartedAt,
+		});
+		return { messages };
 	});
 
 	// Compaction is never acceptable: a silently summarized handoff produces

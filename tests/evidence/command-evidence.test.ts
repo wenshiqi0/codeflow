@@ -248,3 +248,65 @@ describe("content-aware evidence dedupe", () => {
 		});
 	});
 });
+
+describe("bounded evidence log retrieval", () => {
+	test("tool-log defaults to bounded head and tail bytes", () => {
+		const directory = path.join(paths.evidence, "tool-log", "session-a");
+		fs.mkdirSync(directory, { recursive: true });
+		fs.writeFileSync(path.join(directory, "tool-log.txt"), "a".repeat(5_000) + "\nTAIL-MARKER\n", "utf8");
+		const result = evidence(["log", "tool-log"]);
+		expect(result.exitCode).toBe(0);
+		const output = result.stdout.toString();
+		expect(output.length).toBeLessThan(4_300);
+		expect(output).toContain("[omitted ");
+		expect(output).toContain("TAIL-MARKER");
+	});
+
+	test("grep returns matching lines with three lines of context", () => {
+		const directory = path.join(paths.evidence, "tool-log", "session-b");
+		fs.mkdirSync(directory, { recursive: true });
+		fs.writeFileSync(
+			path.join(directory, "grep-log.txt"),
+			["one", "two", "three", "NEEDLE", "four", "five", "six", "seven"].join("\n") + "\n",
+			"utf8",
+		);
+		const result = evidence(["log", "grep-log", "--grep", "NEEDLE"]);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout.toString().split("\n")).toEqual([
+			"one",
+			"two",
+			"three",
+			"NEEDLE",
+			"four",
+			"five",
+			"six",
+			"",
+		]);
+	});
+
+	test("recorder entries read their stdout and stderr refs", () => {
+		commitBase();
+		evidence([
+			"run",
+			"--id",
+			"retrievable",
+			"--",
+			"bash",
+			"-c",
+			"printf 'command stdout\\n'; printf 'command stderr\\n' >&2",
+		]);
+		const result = evidence(["log", "retrievable", "--grep", "command"]);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout.toString()).toContain("command: bash -c");
+		expect(result.stdout.toString()).toContain("command stdout");
+		expect(result.stdout.toString()).toContain("command stderr");
+	});
+
+	test("an unknown id is a single-line non-zero error", () => {
+		const result = evidence(["log", "does-not-exist"]);
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr.toString().trim()).toBe(
+			"code-agent evidence: error: evidence log not found: does-not-exist",
+		);
+	});
+});

@@ -76,7 +76,7 @@ Do not paste source, documentation, API payloads, command transcripts, or a spec
 
 ## Root closure
 
-When all goal joins are terminal, write a non-empty JSON root receipt and a concise closure artifact under `.codeflow/runs/evidence/<run-id>/`. Report goal outcomes, changed files, evidence pointers, risks, and incomplete work. Finish mechanically:
+When all goal joins are terminal, write a non-empty JSON root receipt and a concise closure artifact under `$CODEFLOW_EVIDENCE_DIR/`. Report goal outcomes, changed files, evidence pointers, risks, and incomplete work. Finish mechanically:
 
 Once a goal's join is satisfied, do not open further lane handoffs for it; re-verification of an already satisfied join is waste, not diligence.
 

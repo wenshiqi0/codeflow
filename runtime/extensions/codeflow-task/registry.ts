@@ -29,6 +29,8 @@ import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
 import { readRoleDefinition } from "../../lib/roles";
 import type { RoleRunResult } from "./shared";
 
+export { handoffHistory };
+
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ROLES_FILE = path.join(RUNTIME_DIR, "roles.json");
 const WATCHDOG_EXTENSION = path.join(RUNTIME_DIR, "extensions", "agent-watchdog", "index.ts");

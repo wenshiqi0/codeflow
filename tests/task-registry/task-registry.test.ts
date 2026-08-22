@@ -11,6 +11,7 @@ import {
 } from "../../runtime/extensions/codeflow-task/registry";
 import {
 	assertTaskPrompt,
+	childHandoffPrompt,
 	MAX_CONCURRENCY,
 	MAX_TASK_PROMPT_CHARS,
 	taskResolutionFailure,
@@ -82,6 +83,39 @@ describe("task registry", () => {
 			sessionId: `${paths.runId}-movement-r1-test`,
 		});
 		expect(goal?.contract.lanes.test.role).toBe("tester");
+	});
+
+	test("lane continuations receive a bounded body pointer; first and unlaned handoffs do not", () => {
+		defineMovementGoal();
+		const goal = resolveGoalTask("coder", "movement-r1", "code");
+		const full = "Outcome: implement movement\nIntent: preserve behavior\n";
+		const first = openHandoff(paths, {
+			role: "coder",
+			depth: 1,
+			body: full,
+			goalId: goal!.goalId,
+			lane: goal!.lane,
+		});
+		expect(childHandoffPrompt(full, first!.handoff_id, goal)).toBe(full);
+		finishHandoff(paths, {
+			handoffId: first!.handoff_id,
+			status: "BLOCKED",
+			blockedReasons: ["EXECUTION_TIMEOUT"],
+			summary: "split needed",
+		});
+
+		const second = openHandoff(paths, {
+			role: "coder",
+			depth: 1,
+			body: full,
+			goalId: goal!.goalId,
+			lane: goal!.lane,
+		});
+		const pointer = childHandoffPrompt(full, second!.handoff_id, goal);
+		expect(pointer).toContain(`handoff ${second!.handoff_id} opened for goal movement-r1 lane code:`);
+		expect(pointer).toContain(`code-agent handoff body --id ${second!.handoff_id}`);
+		expect(pointer.length).toBeLessThan(400);
+		expect(childHandoffPrompt(full, second!.handoff_id, null)).toBe(full);
 	});
 
 	test("rejects invalid lanes and lane ownership mismatches", () => {
