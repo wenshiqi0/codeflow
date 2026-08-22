@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+	applySemanticHandoffIndexCard,
 	listHandoffIndex,
 	recallHandoff,
 	writeDeterministicHandoffIndexCard,
@@ -136,6 +137,65 @@ describe("pull-based collaboration index", () => {
 		expect(listHandoffIndex(paths, { goalId: "movement-r1", status: "pass" })).toHaveLength(1);
 		expect(listHandoffIndex(paths, { goalId: "movement-r1", status: "blocked" })).toHaveLength(0);
 		expect(listHandoffIndex(paths, { goalId: "movement-r1", query: "bounds" })).toHaveLength(1);
+	});
+
+	test("handoff landing writes deterministic cards before semantic upgrade", () => {
+		defineGoal(paths, { id: "movement-r1", goal: "Deterministic movement" });
+		const opened = openHandoff(paths, {
+			role: "coder",
+			depth: 1,
+			body: "Outcome: implement movement bounds fix\n",
+			goalId: "movement-r1",
+			lane: "code",
+		});
+		const openCard = JSON.parse(
+			fs.readFileSync(
+				path.join(paths.collaborationIndexDir("movement-r1"), `${opened.handoff_id}.open.json`),
+				"utf8",
+			),
+		);
+		expect(openCard).toMatchObject({ phase: "open", fallback: true });
+
+		finishHandoff(paths, {
+			handoffId: opened.handoff_id,
+			status: "BLOCKED",
+			blockedReasons: ["CONTEXT_BUDGET_EXCEEDED"],
+			summary: "movement bounds hypothesis established; split implementation",
+		});
+		const finalCard = JSON.parse(
+			fs.readFileSync(
+				path.join(paths.collaborationIndexDir("movement-r1"), `${opened.handoff_id}.final.json`),
+				"utf8",
+			),
+		);
+		expect(finalCard).toMatchObject({ phase: "final", status: "blocked", fallback: true });
+	});
+
+	test("semantic zipper output upgrades bounded fields without changing source hashes", () => {
+		defineGoal(paths, { id: "movement-r1", goal: "Deterministic movement" });
+		const opened = openHandoff(paths, {
+			role: "coder",
+			depth: 1,
+			body: "Outcome: implement movement fix\n",
+			goalId: "movement-r1",
+			lane: "code",
+		});
+		const state = JSON.parse(fs.readFileSync(paths.statePath(opened.handoff_id), "utf8"));
+		const base = writeDeterministicHandoffIndexCard(paths, state, "open");
+		const semantic = applySemanticHandoffIndexCard(base, JSON.stringify({
+			title: "Movement fix",
+			digest: "Localized the defect to movement bounds and prepared the focused fix.",
+			established: ["movement bounds mutation is the defect"],
+			ruled_out: ["coordinate transform regression"],
+		}));
+		expect(semantic).toMatchObject({
+			title: "Movement fix",
+			fallback: false,
+			generator: { kind: "zipper" },
+			established: ["movement bounds mutation is the defect"],
+			ruled_out: ["coordinate transform regression"],
+			source: base.source,
+		});
 	});
 
 	test("exact recall may cross goals and missing receipt is explicit", () => {

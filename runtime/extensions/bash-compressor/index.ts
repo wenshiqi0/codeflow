@@ -43,7 +43,7 @@ function readZipperRole(): ZipperRole {
 	return zipperRole;
 }
 
-function runZipper(prompt: string, externalSignal?: AbortSignal): Promise<string> {
+export function runZipper(prompt: string, externalSignal?: AbortSignal): Promise<string> {
 	return new Promise<string>((resolve, reject) => {
 		const role = readZipperRole();
 		const args = [

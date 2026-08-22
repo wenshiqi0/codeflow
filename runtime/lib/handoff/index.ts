@@ -18,6 +18,10 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import {
+	spawnSemanticHandoffIndexer,
+	writeDeterministicHandoffIndexCard,
+} from "../collaboration-index";
 import { appendFacts, FactError, ledgerPath, type FactRecord } from "../facts";
 import { deliverEvent, MAX_SUBJECT_CHARS, type DeliveredEvent } from "../events";
 import { nowIso, readJson, RunPaths, slug, writeJsonAtomic } from "../paths";
@@ -237,6 +241,15 @@ function titleFor(paths: RunPaths, state: HandoffState): string {
 		return goal.slice(0, TITLE_BUDGET - 1).trimEnd() + "\u2026";
 	}
 	return goal;
+}
+
+function indexHandoff(paths: RunPaths, state: HandoffState, phase: "open" | "final"): void {
+	try {
+		writeDeterministicHandoffIndexCard(paths, state, phase);
+		spawnSemanticHandoffIndexer(paths, state.handoff_id, phase);
+	} catch {
+		// Collaboration metadata is derived state and must never alter an authoritative transition.
+	}
 }
 
 // --- events ---------------------------------------------------------------
@@ -531,6 +544,7 @@ export function openHandoff(paths: RunPaths, options: OpenOptions): OpenResult {
 
 	fs.mkdirSync(paths.active, { recursive: true });
 	fs.writeFileSync(path.join(paths.active, handoffId), "", "utf-8");
+	indexHandoff(paths, state, "open");
 
 	if (options.title) {
 		fs.writeFileSync(
@@ -728,6 +742,7 @@ export function finishHandoff(paths: RunPaths, options: FinishOptions): FinishRe
 	if (spills.length > 0) state.evidence_refs = spills;
 	if (artifacts.length > 0) state.artifacts = artifacts;
 	writeJsonAtomic(paths.statePath(handoffId), state);
+	indexHandoff(paths, state, "final");
 
 	const sentinel = path.join(paths.active, handoffId);
 	if (fs.existsSync(sentinel)) fs.rmSync(sentinel);

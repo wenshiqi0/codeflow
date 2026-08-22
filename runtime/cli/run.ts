@@ -331,6 +331,7 @@ export async function run(
 				CODEFLOW_AGENT_DEPTH: freshRun ? "0" : "1",
 				CODEFLOW_RUN_ID: runId,
 				CODEFLOW_RUNS_DIR: runsDir,
+				CODEFLOW_HANDOFF_INDEX_ZIPPER: process.env.CODEFLOW_HANDOFF_INDEX_ZIPPER ?? "on",
 				...(handoffId ? { CODEFLOW_HANDOFF_ID: handoffId } : {}),
 			},
 		},
