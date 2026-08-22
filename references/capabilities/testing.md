@@ -19,7 +19,15 @@ For each case record:
 
 Prefer the repository's established test layout, with business tests distinct from product code and developer unit tests. Polling and state-machine tests inject short `poll_interval` and `max_wait` values so a focused run completes within 30–60 seconds. After the first unexpected timeout, run the single named test and inspect the protocol/state transition before extending a harness timeout.
 
-The goal's test evidence root is `$CODEFLOW_EVIDENCE_DIR/<goal-id>/test/`. Write a non-empty test-index artifact there. On repair, preserve assertion intent and record the mistaken assumption plus exact correction. On review, assess the business tests, developer tests, diff, and verify receipts as one evidence story; route requested product changes to coder.
+Execute every test command through the recorder, not a raw shell:
+
+```bash
+code-agent evidence run --id <case-id> -- <runner command> [args...]
+```
+
+In this lane run exactly one test node id, such as `pytest path/test_file.py::test_case -x -q --no-header`; do not run a directory-level or full suite. Full regression belongs to `verify`, at most once per goal. Do not repeat a command that already has a receipt with the same content fingerprint; the recorder deduplicates it mechanically.
+
+The goal's test evidence root is `$CODEFLOW_EVIDENCE_DIR/<goal-id>/test/`. Write a non-empty test-index artifact there. On repair, preserve assertion intent and record the mistaken assumption plus exact correction. This lane is assertion-intent consultation only: return after implementation when the planner explicitly disputes assertion intent.
 
 Finish with:
 

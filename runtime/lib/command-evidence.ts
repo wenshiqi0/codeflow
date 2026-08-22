@@ -16,6 +16,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { finishHandoff } from "./handoff";
@@ -74,6 +75,12 @@ export interface CommandEvidenceEntry {
 	error_class?: "EXECUTION_TIMEOUT";
 	/** The timeout that terminated this command, when one fired. */
 	timeout_ms?: number;
+	/** Content-aware argv/workspace fingerprint used for deterministic replay. */
+	fingerprint?: string;
+	/** True when this entry referenced an earlier identical record instead of re-running. */
+	deduped?: boolean;
+	/** The original evidence id for a deduped entry. */
+	deduped_from?: string;
 }
 
 function parseTimeoutMs(raw: string, source: string): number {
@@ -109,6 +116,8 @@ export function resolveEvidenceTimeoutMs(
 export interface RunCommandEvidenceOptions {
 	/** Raw --timeout-ms flag value; see resolveEvidenceTimeoutMs for precedence. */
 	timeoutMs?: string;
+	/** Disable dedupe even when both env and git fingerprint are available. */
+	noDedupe?: boolean;
 }
 
 function currentPaths(): { paths: RunPaths; handoffId: string } {
@@ -163,6 +172,69 @@ function renderCommand(argv: string[]): string {
 	return argv.map(shellQuote).join(" ");
 }
 
+function spawnText(command: string, args: string[], cwd: string): { ok: boolean; output: string } {
+	const result = Bun.spawnSync([command, ...args], { cwd });
+	return {
+		ok: result.exitCode === 0,
+		output: result.stdout.toString(),
+	};
+}
+
+/**
+ * Fingerprint both command identity and the complete git working-tree state.
+ * `git status` alone is insufficient: a file can remain ` M path` while its
+ * bytes change. Include the tracked diff and untracked contents so a repaired
+ * tree can never replay an obsolete FAIL/PASS.
+ */
+export function commandEvidenceFingerprint(
+	argv: string[],
+	cwd: string,
+	excludePath?: string,
+): string | null {
+	const head = spawnText("git", ["rev-parse", "HEAD"], cwd);
+	const status = spawnText("git", ["status", "--porcelain=v1", "--untracked-files=all"], cwd);
+	const tracked = spawnText("git", ["diff", "--binary", "HEAD"], cwd);
+	const files = Bun.spawnSync(
+		["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+		{ cwd },
+	);
+	if (!head.ok || !status.ok || !tracked.ok || files.exitCode !== 0) return null;
+
+	const excluded = (value: string): boolean =>
+		excludePath !== undefined && (value === excludePath || value.startsWith(`${excludePath}/`));
+	const hash = createHash("sha256");
+	const feed = (value: string): void => {
+		hash.update(value);
+		hash.update("\0");
+	};
+	feed(argv.join("\0"));
+	feed(head.output);
+	feed(status.output.split("\n").filter((line) => !excluded(line.slice(3))).join("\n"));
+	feed(tracked.output);
+	for (const relative of files.stdout.toString().split("\0").filter((value) => !excluded(value))) {
+		if (relative === "") continue;
+		let content: Buffer;
+		try {
+			content = fs.readFileSync(path.join(cwd, relative));
+		} catch {
+			return null;
+		}
+		feed(relative);
+		hash.update(content);
+		hash.update("\0");
+	}
+	return hash.digest("hex");
+}
+
+function readEvidenceEntries(directory: string): CommandEvidenceEntry[] {
+	if (!fs.existsSync(directory)) return [];
+	return fs
+	.readdirSync(directory)
+		.filter((name) => name.endsWith(".json"))
+		.sort()
+		.map((name) => JSON.parse(fs.readFileSync(path.join(directory, name), "utf8")) as CommandEvidenceEntry);
+}
+
 function closeStream(stream: fs.WriteStream): Promise<void> {
 	return new Promise((resolve, reject) => {
 		stream.once("error", reject);
@@ -184,9 +256,22 @@ export async function runCommandEvidence(
 	// Rejected before any filesystem work: a refused run leaves no partial
 	// evidence state behind.
 	const timeoutMs = resolveEvidenceTimeoutMs(options.timeoutMs);
+	const dedupeEnabled =
+		options.noDedupe !== true && process.env.CODEFLOW_EVIDENCE_DEDUPE !== "off";
 
 	const { paths, handoffId } = currentPaths();
 	const directory = commandDir(paths, handoffId);
+	const commandCwd = process.env.CODEFLOW_PROJECT_DIR ?? process.cwd();
+	const realCommandCwd = fs.realpathSync(commandCwd);
+	const realRunsRoot = fs.existsSync(paths.runsRoot) ? fs.realpathSync(paths.runsRoot) : paths.runsRoot;
+	const evidenceExclude = path.relative(realCommandCwd, realRunsRoot);
+	const fingerprint = dedupeEnabled
+		? commandEvidenceFingerprint(
+				argv,
+				commandCwd,
+				evidenceExclude.startsWith("..") || path.isAbsolute(evidenceExclude) ? undefined : evidenceExclude,
+			)
+		: null;
 	fs.mkdirSync(directory, { recursive: true });
 	const recordPath = path.join(directory, `${id}.json`);
 	const claimPath = path.join(directory, `${id}.claim`);
@@ -195,6 +280,9 @@ export async function runCommandEvidence(
 	if ([recordPath, claimPath, stdoutPath, stderrPath].some((target) => fs.existsSync(target))) {
 		throw new EvidenceError(`evidence id already exists for this handoff: ${id}`);
 	}
+	const original = fingerprint === null
+		? undefined
+		: readEvidenceEntries(directory).find((entry) => entry.fingerprint === fingerprint);
 	let claim: number;
 	try {
 		// Reserve the id without exposing the final .json path. Readers either
@@ -209,6 +297,21 @@ export async function runCommandEvidence(
 	}
 	fs.closeSync(claim);
 
+	if (original !== undefined) {
+		const deduped: CommandEvidenceEntry = {
+			...original,
+			id,
+			deduped: true,
+			deduped_from: original.id,
+			fingerprint: fingerprint ?? undefined,
+			recorded_at: new Date().toISOString(),
+		};
+		writeJsonAtomic(recordPath, deduped);
+		fs.unlinkSync(claimPath);
+		console.error(`code-agent evidence: deduped ${id} from ${original.id}`);
+		return deduped.exit_code;
+	}
+
 	const stdoutLog = fs.createWriteStream(stdoutPath, { flags: "wx" });
 	const stderrLog = fs.createWriteStream(stderrPath, { flags: "wx" });
 	const startedAt = Date.now();
@@ -216,7 +319,7 @@ export async function runCommandEvidence(
 	let timedOut = false;
 
 	const child = spawn(argv[0], argv.slice(1), {
-		cwd: process.cwd(),
+		cwd: commandCwd,
 		env: process.env,
 		shell: false,
 		stdio: ["inherit", "pipe", "pipe"],
@@ -348,6 +451,7 @@ export async function runCommandEvidence(
 					timeout_ms: timeoutMs,
 				}
 			: {}),
+		...(fingerprint !== null ? { fingerprint } : {}),
 	};
 	writeJsonAtomic(recordPath, entry);
 	fs.unlinkSync(claimPath);
@@ -397,5 +501,9 @@ export function writeCommandReceipt(output: string): { output: string; status: "
 	const status = entries.every((entry) => entry.status === "PASS") ? "PASS" : "FAIL";
 	const target = path.resolve(output);
 	writeJsonAtomic(target, { status, receipts: entries });
-	return { output: target, status, count: entries.length };
+	return {
+		output: target,
+		status,
+		count: entries.filter((entry) => entry.deduped !== true).length,
+	};
 }

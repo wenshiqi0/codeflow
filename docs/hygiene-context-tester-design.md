@@ -136,10 +136,16 @@ receipt（~200B），失败时按 `stdout_ref` / C3.2 的 `evidence log`
 计算 key：
 
 ```
-key = sha256( argv.join('\0') + '\0' + rev-parse HEAD + '\0' + git status --porcelain=v1 输出 )
+key = sha256(
+  argv.join('\0') + '\0' + rev-parse HEAD + '\0'
+  + git status --porcelain=v1 输出 + '\0'
+  + git diff --binary HEAD 输出 + '\0'
+  + tracked/untracked path 与文件内容摘要
+)
 ```
 
-（两个只读 git 命令；非 git 目录取到任一失败 ⇒ 去重整体禁用。）
+（只读 git 命令 + 当前文件内容摘要；`git status` 只能看到路径状态，不能证明
+同一 ` M path` 的内容未变。非 git 目录取到任一失败 ⇒ 去重整体禁用。）
 命中同 key 的既有 record 时：
 
 - 不重新执行；返回既有 record 的副本并标 `deduped: true`、
@@ -190,7 +196,7 @@ tests, diff, and verify receipts as one evidence story" 使 tester 在实现
 | # | 断言 |
 |---|---|
 | C2-T1 | 同一 argv、工作树未变，连续两次 `runCommandEvidence`：副作用命令（向文件追加一行）只执行一次；第二次返回 `deduped: true` 且 `exit_code`/`status` 与第一次一致 |
-| C2-T2 | 两次调用之间修改工作树任一文件 → 第二次真实执行（追加两行） |
+| C2-T2 | 两次调用之间修改 tracked/untracked 内容 → 第二次真实执行（副作用目标必须在 workspace 外） |
 | C2-T3 | FAIL（exit≠0）记录同样参与 dedupe：工作树未变时重跑命中缓存返回原 FAIL 记录；修复（工作树变化）后 key 失效、真实重跑——锁定"dedupe 不掩盖修复验证"的语义 |
 | C2-T4 | `--no-dedupe` 与 `CODEFLOW_EVIDENCE_DEDUPE=off` 均绕过缓存、真实执行 |
 | C2-T5 | 非 git 目录（无 HEAD）→ 去重静默禁用，行为与现状逐字节一致 |

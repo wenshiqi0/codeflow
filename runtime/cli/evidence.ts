@@ -9,6 +9,7 @@ import {
 function usage(): string {
 	return (
 		"usage: code-agent evidence run --id <id> [--timeout-ms <ms>] -- <command> [args...]\n" +
+		"       code-agent evidence run --id <id> [--no-dedupe] [--timeout-ms <ms>] -- <command> [args...]\n" +
 		"       code-agent evidence receipt --output <file>\n" +
 		"\n" +
 		"--timeout-ms overrides CODEFLOW_EVIDENCE_TIMEOUT_MS; 0 disables the guard.\n" +
@@ -23,15 +24,21 @@ function flagValue(argv: string[], flag: string): string | undefined {
 }
 
 const RUN_FLAGS = new Set(["--id", "--timeout-ms"]);
+const RUN_BOOLEAN_FLAGS = new Set(["--no-dedupe"]);
 
 /** Parse strict flag/value pairs before the `--` separator. */
-function parseRunFlags(options: string[]): { id?: string; timeoutMs?: string } {
-	const parsed: { id?: string; timeoutMs?: string } = {};
-	for (let index = 0; index < options.length; index += 2) {
+function parseRunFlags(options: string[]): { id?: string; timeoutMs?: string; noDedupe?: boolean } {
+	const parsed: { id?: string; timeoutMs?: string; noDedupe?: boolean } = {};
+	for (let index = 0; index < options.length; index++) {
 		const flag = options[index];
+		if (RUN_BOOLEAN_FLAGS.has(flag)) {
+			parsed.noDedupe = true;
+			continue;
+		}
 		if (!RUN_FLAGS.has(flag) || index + 1 >= options.length) throw new EvidenceError(usage());
-		if (flag === "--id") parsed.id = options[index + 1];
-		else parsed.timeoutMs = options[index + 1];
+		const value = options[++index];
+		if (flag === "--id") parsed.id = value;
+		else parsed.timeoutMs = value;
 	}
 	return parsed;
 }
@@ -42,11 +49,11 @@ export async function main(argv: string[]): Promise<number> {
 		if (command === "run") {
 			const separator = rest.indexOf("--");
 			const options = separator >= 0 ? rest.slice(0, separator) : rest;
-			const { id, timeoutMs } = parseRunFlags(options);
+			const { id, timeoutMs, noDedupe } = parseRunFlags(options);
 			if (!id || separator < 0) {
 				throw new EvidenceError(usage());
 			}
-			return await runCommandEvidence(id, rest.slice(separator + 1), { timeoutMs });
+			return await runCommandEvidence(id, rest.slice(separator + 1), { timeoutMs, noDedupe });
 		}
 		if (command === "receipt") {
 			const output = flagValue(rest, "--output");

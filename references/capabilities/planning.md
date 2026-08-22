@@ -51,6 +51,7 @@ Choose the next owner from the current evidence gap, not from a fixed ceremony:
 - unknown technical surface, defect localization, implementation, or developer tests -> `coder`;
 - consequential and difficult-to-reverse direction -> `architect`;
 - missing or disputed execution evidence -> `verify`.
+- post-implementation evidence review -> `verify`; re-engage `tester` only for disputed assertion intent.
 
 `architect` is advisory and intentionally unlaned. Delegate it with only `agent` and `prompt`; omit `goal_id` and `lane`. Tester, coder, and verify own the fixed goal lanes.
 

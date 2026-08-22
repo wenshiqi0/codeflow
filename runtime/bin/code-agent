@@ -18,6 +18,11 @@ CLI_DIR="$RUNTIME_DIR/cli"
 LIB_DIR="$RUNTIME_DIR/lib"
 QUALITY_DIR="$RUNTIME_DIR/quality"
 
+# Preserve the caller's target checkout even if this launcher later moves to
+# the git root; evidence commands and fingerprints must describe that tree.
+CODEFLOW_PROJECT_DIR="$(pwd)"
+export CODEFLOW_PROJECT_DIR
+
 if [[ -z "${CODEFLOW_RUN_ID:-}" ]]; then
   echo "code-agent: error: CODEFLOW_RUN_ID is not set; code-agent runs only inside a codeflow run" >&2
   exit 1
