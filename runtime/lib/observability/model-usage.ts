@@ -20,8 +20,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-export const ATTEMPT_USAGE_SCHEMA_VERSION = 2;
-export const LEGACY_ATTEMPT_USAGE_SCHEMA_VERSION = 1;
+export const ATTEMPT_USAGE_SCHEMA_VERSION = 1;
 
 export interface AttemptUsageCost {
 	input: number;
@@ -46,50 +45,34 @@ export interface AttemptUsage {
 
 /** One completed model round as recorded per attempt. */
 export interface AttemptUsageRecord {
-	schema_version: 2;
+	schema_version: 1;
 	/** ISO timestamp. */
 	at: string;
 	/** Null for provider requests whose start boundary was not observed. */
 	request_started_at: string | null;
 	attempt: number;
-	run_id: string | null;
-	role: string;
+	task_id: string | null;
+	worker_kind: "worker" | "service";
 	provider: string;
 	model: string;
-	depth: number | null;
 	turn: number | null;
 	handoff_id: string | null;
 	goal_id: string | null;
-	thread: string | null;
 	usage: AttemptUsage;
 }
 
-const RECORD_KEYS_V2 = [
+const RECORD_KEYS = [
 	"schema_version",
 	"at",
 	"request_started_at",
 	"attempt",
-	"run_id",
-	"role",
+	"task_id",
+	"worker_kind",
 	"provider",
 	"model",
-	"depth",
 	"turn",
 	"handoff_id",
 	"goal_id",
-	"thread",
-	"usage",
-] as const;
-const RECORD_KEYS_V1 = [
-	"schema_version",
-	"at",
-	"attempt",
-	"role",
-	"provider",
-	"model",
-	"handoff_id",
-	"goal_id",
-	"thread",
 	"usage",
 ] as const;
 const USAGE_KEYS = [
@@ -111,7 +94,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 export function validateAttemptUsageRecord(record: unknown): string[] {
 	const violations: string[] = [];
 	if (!isObject(record)) return ["record must be a JSON object"];
-	const keys = record.schema_version === LEGACY_ATTEMPT_USAGE_SCHEMA_VERSION ? RECORD_KEYS_V1 : RECORD_KEYS_V2;
+	const keys = RECORD_KEYS;
 	for (const key of Object.keys(record)) {
 		if (!(keys as readonly string[]).includes(key)) {
 			violations.push(`unexpected key: ${key} (usage rows carry attribution and numbers only)`);
@@ -120,8 +103,8 @@ export function validateAttemptUsageRecord(record: unknown): string[] {
 	for (const key of keys) {
 		if (!(key in record)) violations.push(`missing key: ${key}`);
 	}
-	if (record.schema_version !== ATTEMPT_USAGE_SCHEMA_VERSION && record.schema_version !== LEGACY_ATTEMPT_USAGE_SCHEMA_VERSION) {
-		violations.push(`schema_version must be ${LEGACY_ATTEMPT_USAGE_SCHEMA_VERSION} or ${ATTEMPT_USAGE_SCHEMA_VERSION}`);
+	if (record.schema_version !== ATTEMPT_USAGE_SCHEMA_VERSION) {
+		violations.push(`schema_version must be ${ATTEMPT_USAGE_SCHEMA_VERSION}`);
 	}
 	if (typeof record.at !== "string" || Number.isNaN(Date.parse(record.at))) {
 		violations.push("at must be an ISO timestamp string");
@@ -129,18 +112,20 @@ export function validateAttemptUsageRecord(record: unknown): string[] {
 	if (typeof record.attempt !== "number" || !Number.isInteger(record.attempt) || record.attempt < 1) {
 		violations.push("attempt must be a positive integer");
 	}
-	for (const key of ["role", "provider", "model"] as const) {
+	for (const key of ["provider", "model"] as const) {
 		if (typeof record[key] !== "string" || record[key].length === 0) {
 			violations.push(`${key} must be a non-empty string`);
 		}
 	}
-	for (const key of ["handoff_id", "goal_id", "thread"] as const) {
+	if (record.worker_kind !== "worker" && record.worker_kind !== "service") {
+		violations.push("worker_kind must be worker or service");
+	}
+	for (const key of ["task_id", "handoff_id", "goal_id"] as const) {
 		if (record[key] !== null && typeof record[key] !== "string") {
 			violations.push(`${key} must be a string or null`);
 		}
 	}
-	for (const key of ["request_started_at", "run_id"] as const) {
-		if (record.schema_version === LEGACY_ATTEMPT_USAGE_SCHEMA_VERSION) continue;
+	for (const key of ["request_started_at"] as const) {
 		if (record[key] !== null && typeof record[key] !== "string") {
 			violations.push(`${key} must be a string or null`);
 		}
@@ -148,12 +133,8 @@ export function validateAttemptUsageRecord(record: unknown): string[] {
 		if (key === "request_started_at" && Number.isNaN(Date.parse(record[key] as string))) {
 			violations.push("request_started_at must be an ISO timestamp string or null");
 		}
-		if (key === "run_id" && (record[key] as string).length === 0) {
-			violations.push("run_id must be a non-empty string or null");
-		}
 	}
-	for (const key of ["depth", "turn"] as const) {
-		if (record.schema_version === LEGACY_ATTEMPT_USAGE_SCHEMA_VERSION) continue;
+	for (const key of ["turn"] as const) {
 		const value = record[key];
 		if (value !== null && (typeof value !== "number" || !Number.isInteger(value) || value < 0)) {
 			violations.push(`${key} must be a non-negative integer or null`);
@@ -246,15 +227,7 @@ export function readAttemptUsageRecords(file: string): AttemptUsageRecord[] {
 		if (violations.length > 0) {
 			throw new Error(`usage row ${index + 1} in ${file}: ${violations.join("; ")}`);
 		}
-		if (row.schema_version === ATTEMPT_USAGE_SCHEMA_VERSION) return row as unknown as AttemptUsageRecord;
-		return {
-			...row,
-			schema_version: ATTEMPT_USAGE_SCHEMA_VERSION,
-			request_started_at: null,
-			run_id: null,
-			depth: null,
-			turn: null,
-		} as AttemptUsageRecord;
+		return row as unknown as AttemptUsageRecord;
 	});
 }
 

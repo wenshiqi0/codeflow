@@ -3,7 +3,7 @@
 import {
 	EvidenceError,
 	runCommandEvidence,
-	writeCommandReceipt,
+	writeCommandEvidenceBatch,
 } from "../lib/command-evidence";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../lib/paths";
 import * as fs from "node:fs";
@@ -16,7 +16,7 @@ function usage(): string {
 	return (
 		"usage: code-agent evidence run --id <id> [--timeout-ms <ms>] -- <command> [args...]\n" +
 		"       code-agent evidence run --id <id> [--no-dedupe] [--timeout-ms <ms>] -- <command> [args...]\n" +
-		"       code-agent evidence receipt --output <file>\n" +
+		"       code-agent evidence batch --output <file>\n" +
 		"       code-agent evidence log <id> [--head N] [--tail N] [--grep <pattern>]\n" +
 		"\n" +
 		"--timeout-ms overrides CODEFLOW_EVIDENCE_TIMEOUT_MS; 0 disables the guard.\n" +
@@ -138,12 +138,12 @@ export async function main(argv: string[]): Promise<number> {
 			}
 			return await runCommandEvidence(id, rest.slice(separator + 1), { timeoutMs, noDedupe });
 		}
-		if (command === "receipt") {
+		if (command === "batch") {
 			const output = flagValue(rest, "--output");
 			if (!output || rest.length !== 2 || rest[0] !== "--output") {
 				throw new EvidenceError(usage());
 			}
-			console.log(JSON.stringify(writeCommandReceipt(output)));
+			console.log(JSON.stringify(writeCommandEvidenceBatch(output)));
 			return 0;
 		}
 		if (command === "log") {

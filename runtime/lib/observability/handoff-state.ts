@@ -1,49 +1,32 @@
-/**
- * Privacy-safe handoff-state observability.
- *
- * This module is the metadata-plane boundary between Codeflow runtime and a
- * benchmark/report consumer. It projects only closed enum and attribution
- * fields from `state.json`; prose, receipts, artifacts, and evidence refs are
- * intentionally unrepresentable in the output shape.
- */
+/** Privacy-safe projection of canonical Handoff / Receipt runtime state. */
 
 import * as fs from "node:fs";
-import * as path from "node:path";
+import { EVENT_REASONS } from "../events";
+import { handoffHistory, RECEIPT_STATUSES, type ReceiptStatus } from "../handoff";
+import { RunPaths } from "../paths";
+import { scan } from "../wait";
 
 export const HANDOFF_STATE_PROJECTION_SCHEMA_VERSION = 1;
-
-export const OBSERVABILITY_BLOCKED_REASONS = [
-	"CONTEXT_BUDGET_EXCEEDED",
-	"DELEGATION_ARTIFACT_MISSING",
-	"EXECUTION_TIMEOUT",
-	"OUTPUT_TRUNCATED",
-	"PROVIDER_FAILURE",
-	"USER_CANCELLED",
-] as const;
-
-export type ObservabilityBlockedReason = (typeof OBSERVABILITY_BLOCKED_REASONS)[number];
-export type HandoffProjectionStatus = "open" | "running" | "done" | "blocked";
-export type HandoffProjectionResult = "PASS" | "FAIL" | "BLOCKED";
+export const OBSERVABILITY_RUNTIME_FAILURE_REASONS = EVENT_REASONS;
+export type ObservabilityRuntimeFailureReason = (typeof EVENT_REASONS)[number];
+export type HandoffProjectionStatus = "open" | "running" | "interrupted" | ReceiptStatus;
 
 export interface HandoffStateProjection {
 	schema_version: 1;
-	run_id: string;
+	task_id: string;
 	handoff_id: string;
-	role: string;
-	depth: number;
+	goal_id: string;
+	parent_handoff_id: string | null;
+	worker_kind: "worker";
 	status: HandoffProjectionStatus;
-	result: HandoffProjectionResult | null;
-	goal_id: string | null;
-	thread: string | null;
-	blocked_reasons: ObservabilityBlockedReason[];
-	/** Count of non-enum values found in runtime blocked.reasons. */
-	unknown_blocked_reasons: number;
-	retry_of: string | null;
+	receipt_id: string | null;
+	runtime_failure_reasons: ObservabilityRuntimeFailureReason[];
+	unknown_runtime_failure_reasons: number;
 }
 
 export interface HandoffStateScan {
 	states: HandoffStateProjection[];
-	unknownBlockedReasons: number;
+	unknownRuntimeFailureReasons: number;
 }
 
 export interface HandoffStateTelemetryFile {
@@ -60,187 +43,134 @@ export class HandoffObservabilityError extends Error {
 	}
 }
 
-const BLOCKED_REASON_SET: ReadonlySet<string> = new Set(OBSERVABILITY_BLOCKED_REASONS);
-
 function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function optionalString(value: unknown): string | null {
-	if (value === undefined || value === null) return null;
-	if (typeof value !== "string" || value.length === 0) {
-		throw new HandoffObservabilityError("expected a non-empty string or null");
-	}
-	return value;
+function interruptedReasons(paths: RunPaths, handoffId: string): {
+	reasons: ObservabilityRuntimeFailureReason[];
+	unknown: number;
+} | null {
+	const events = scan(paths.events, 0, ["execution_interrupted"]).events
+		.filter((event) => event.subject === handoffId.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""));
+	const latest = events.at(-1);
+	if (!latest) return null;
+	const reasons = latest.reasons ?? [];
+	return { reasons: reasons as ObservabilityRuntimeFailureReason[], unknown: 0 };
 }
 
-/** Projects the allowlisted metadata fields; all other state fields are discarded. */
-export function projectHandoffState(runId: string, value: unknown): HandoffStateProjection {
-	if (!isObject(value)) throw new HandoffObservabilityError("handoff state must be an object");
-	if (typeof runId !== "string" || runId.length === 0) {
-		throw new HandoffObservabilityError("run_id must be a non-empty string");
-	}
-	const status = value.status;
-	if (status !== "open" && status !== "running" && status !== "done" && status !== "blocked") {
-		throw new HandoffObservabilityError(`invalid handoff status: ${String(status)}`);
-	}
-	const result = value.result ?? null;
-	if (result !== null && result !== "PASS" && result !== "FAIL" && result !== "BLOCKED") {
-		throw new HandoffObservabilityError(`invalid handoff result: ${String(result)}`);
-	}
-	const role = value.role;
-	const depth = value.depth;
-	if (typeof role !== "string" || role.length === 0) {
-		throw new HandoffObservabilityError("handoff role must be a non-empty string");
-	}
-	if (typeof depth !== "number" || !Number.isInteger(depth) || depth < 0) {
-		throw new HandoffObservabilityError("handoff depth must be a non-negative integer");
-	}
-	const handoffId = optionalString(value.handoff_id);
-	if (handoffId === null) throw new HandoffObservabilityError("handoff_id is required");
-
-	const blocked = isObject(value.blocked) ? value.blocked : {};
-	const rawReasons = Array.isArray(blocked.reasons) ? blocked.reasons : [];
-	const blockedReasons: ObservabilityBlockedReason[] = [];
-	let unknownReasons = 0;
-	for (const reason of rawReasons) {
-		if (typeof reason === "string" && BLOCKED_REASON_SET.has(reason)) {
-			blockedReasons.push(reason as ObservabilityBlockedReason);
-		} else {
-			unknownReasons++;
-		}
-	}
-
+/** Project one canonical runtime Handoff without exposing semantic prose or Effects. */
+export function projectHandoffState(paths: RunPaths, handoffId: string): HandoffStateProjection {
+	const view = handoffHistory(paths).find((entry) => entry.handoff.id === handoffId);
+	if (!view) throw new HandoffObservabilityError(`unknown handoff: ${handoffId}`);
+	const interrupted = view.receipt === null ? interruptedReasons(paths, handoffId) : null;
+	const status: HandoffProjectionStatus = view.receipt?.status
+		?? (view.status === "running" ? "running" : interrupted ? "interrupted" : "open");
 	return {
 		schema_version: HANDOFF_STATE_PROJECTION_SCHEMA_VERSION,
-		run_id: runId,
-		handoff_id: handoffId,
-		role,
-		depth,
+		task_id: paths.runId,
+		handoff_id: view.handoff.id,
+		goal_id: view.handoff.goal_id,
+		parent_handoff_id: view.handoff.parent_handoff_id,
+		worker_kind: "worker",
 		status,
-		result,
-		goal_id: optionalString(value.goal_id),
-		thread: optionalString(value.thread),
-		blocked_reasons: [...new Set(blockedReasons)].sort(),
-		unknown_blocked_reasons: unknownReasons,
-		retry_of: optionalString(value.retry_of),
+		receipt_id: view.receipt?.id ?? null,
+		runtime_failure_reasons: interrupted?.reasons ?? [],
+		unknown_runtime_failure_reasons: interrupted?.unknown ?? 0,
 	};
 }
 
-function readStateFile(file: string, runId: string): HandoffStateProjection {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-	} catch (error) {
-		throw new HandoffObservabilityError(`could not read handoff state ${file}: ${(error as Error).message}`);
-	}
-	try {
-		return projectHandoffState(runId, parsed);
-	} catch (error) {
-		throw new HandoffObservabilityError(`${file}: ${(error as HandoffObservabilityError).message}`);
-	}
-}
-
-/**
- * Bounded scan of one attempt's Codeflow runs root:
- * `<runs>/<run-id>/handoffs/<handoff-id>/state.json`.
- */
+/** Scan canonical handoff and receipt documents below each Task directory. */
 export function scanHandoffStates(runsRoot: string): HandoffStateScan {
-	if (!fs.existsSync(runsRoot)) return { states: [], unknownBlockedReasons: 0 };
+	if (!fs.existsSync(runsRoot)) return { states: [], unknownRuntimeFailureReasons: 0 };
 	const states: HandoffStateProjection[] = [];
-	let unknownBlockedReasons = 0;
-	for (const runEntry of fs.readdirSync(runsRoot, { withFileTypes: true }).sort((a, b) =>
-		a.name.localeCompare(b.name),
-	)) {
-		if (!runEntry.isDirectory()) continue;
-		const handoffsRoot = path.join(runsRoot, runEntry.name, "handoffs");
-		if (!fs.existsSync(handoffsRoot)) continue;
-		for (const handoffEntry of fs.readdirSync(handoffsRoot, { withFileTypes: true }).sort((a, b) =>
-			a.name.localeCompare(b.name),
-		)) {
-			if (!handoffEntry.isDirectory()) continue;
-			const statePath = path.join(handoffsRoot, handoffEntry.name, "state.json");
-			if (!fs.existsSync(statePath)) continue;
-			const state = readStateFile(statePath, runEntry.name);
-			states.push(state);
-			unknownBlockedReasons += state.unknown_blocked_reasons;
+	for (const entry of fs.readdirSync(runsRoot, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+		if (!entry.isDirectory() || entry.name.startsWith("_")) continue;
+		const paths = new RunPaths(runsRoot, entry.name);
+		if (!fs.existsSync(paths.task)) continue;
+		try {
+			for (const view of handoffHistory(paths)) states.push(projectHandoffState(paths, view.handoff.id));
+		} catch (error) {
+			throw new HandoffObservabilityError(`${entry.name}: ${(error as Error).message}`);
 		}
 	}
-	return { states, unknownBlockedReasons };
+	return {
+		states,
+		unknownRuntimeFailureReasons: states.reduce(
+			(sum, state) => sum + state.unknown_runtime_failure_reasons,
+			0,
+		),
+	};
 }
+
+const PROJECTION_KEYS = new Set([
+	"schema_version",
+	"task_id",
+	"handoff_id",
+	"goal_id",
+	"parent_handoff_id",
+	"worker_kind",
+	"status",
+	"receipt_id",
+	"runtime_failure_reasons",
+	"unknown_runtime_failure_reasons",
+]);
 
 function validateProjection(value: unknown, index: number): HandoffStateProjection {
-	if (!isObject(value)) {
-		throw new HandoffObservabilityError(`handoff projection ${index + 1} must be an object`);
-	}
-	const expectedKeys = new Set([
-		"schema_version",
-		"run_id",
-		"handoff_id",
-		"role",
-		"depth",
-		"status",
-		"result",
-		"goal_id",
-		"thread",
-		"blocked_reasons",
-		"unknown_blocked_reasons",
-		"retry_of",
-	]);
+	if (!isObject(value)) throw new HandoffObservabilityError(`handoff projection ${index + 1} must be an object`);
 	for (const key of Object.keys(value)) {
-		if (!expectedKeys.has(key)) {
-			throw new HandoffObservabilityError(`handoff projection ${index + 1}: unexpected key ${key}`);
-		}
+		if (!PROJECTION_KEYS.has(key)) throw new HandoffObservabilityError(`handoff projection ${index + 1}: unexpected key ${key}`);
 	}
-	for (const key of expectedKeys) {
-		if (!(key in value)) {
-			throw new HandoffObservabilityError(`handoff projection ${index + 1}: missing key ${key}`);
-		}
+	for (const key of PROJECTION_KEYS) {
+		if (!(key in value)) throw new HandoffObservabilityError(`handoff projection ${index + 1}: missing key ${key}`);
 	}
 	if (value.schema_version !== HANDOFF_STATE_PROJECTION_SCHEMA_VERSION) {
 		throw new HandoffObservabilityError(`handoff projection ${index + 1}: unsupported schema_version`);
 	}
-	if (
-		typeof value.unknown_blocked_reasons !== "number" ||
-		!Number.isInteger(value.unknown_blocked_reasons) ||
-		value.unknown_blocked_reasons < 0
-	) {
-		throw new HandoffObservabilityError(
-			`handoff projection ${index + 1}: unknown_blocked_reasons must be a non-negative integer`,
-		);
+	for (const key of ["task_id", "handoff_id", "goal_id"] as const) {
+		if (typeof value[key] !== "string" || value[key].length === 0) {
+			throw new HandoffObservabilityError(`handoff projection ${index + 1}: ${key} must be non-empty`);
+		}
 	}
-	if (!Array.isArray(value.blocked_reasons)) {
-		throw new HandoffObservabilityError(`handoff projection ${index + 1}: blocked_reasons must be an array`);
+	for (const key of ["parent_handoff_id", "receipt_id"] as const) {
+		if (value[key] !== null && (typeof value[key] !== "string" || value[key].length === 0)) {
+			throw new HandoffObservabilityError(`handoff projection ${index + 1}: ${key} must be a string or null`);
+		}
 	}
-	const projected = projectHandoffState(value.run_id as string, {
-		...value,
-		blocked: { reasons: value.blocked_reasons },
-	});
-	return {
-		...projected,
-		unknown_blocked_reasons: value.unknown_blocked_reasons,
-	};
+	if (value.worker_kind !== "worker") {
+		throw new HandoffObservabilityError(`handoff projection ${index + 1}: worker_kind must be worker`);
+	}
+	const statuses = ["open", "running", "interrupted", ...RECEIPT_STATUSES];
+	if (!statuses.includes(String(value.status))) {
+		throw new HandoffObservabilityError(`handoff projection ${index + 1}: invalid status ${String(value.status)}`);
+	}
+	if (!Array.isArray(value.runtime_failure_reasons)) {
+		throw new HandoffObservabilityError(`handoff projection ${index + 1}: runtime_failure_reasons must be an array`);
+	}
+	for (const reason of value.runtime_failure_reasons) {
+		if (!(EVENT_REASONS as readonly unknown[]).includes(reason)) {
+			throw new HandoffObservabilityError(`handoff projection ${index + 1}: invalid runtime failure reason`);
+		}
+	}
+	if (!Number.isSafeInteger(value.unknown_runtime_failure_reasons) || Number(value.unknown_runtime_failure_reasons) < 0) {
+		throw new HandoffObservabilityError(`handoff projection ${index + 1}: unknown_runtime_failure_reasons must be non-negative`);
+	}
+	return value as unknown as HandoffStateProjection;
 }
 
-/** Reads the canonical telemetry artifact written by the benchmark runner. */
+/** Read the canonical telemetry projection written by the benchmark runner. */
 export function readHandoffStateProjections(file: string): HandoffStateProjection[] {
 	let content: string;
-	try {
-		content = fs.readFileSync(file, "utf8");
-	} catch (error) {
+	try { content = fs.readFileSync(file, "utf8"); }
+	catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
 		throw error;
 	}
 	let parsed: unknown;
-	try {
-		parsed = JSON.parse(content);
-	} catch (error) {
-		throw new HandoffObservabilityError(`malformed handoff telemetry ${file}: ${(error as Error).message}`);
-	}
+	try { parsed = JSON.parse(content); }
+	catch (error) { throw new HandoffObservabilityError(`malformed handoff telemetry ${file}: ${(error as Error).message}`); }
 	if (!isObject(parsed) || parsed.schema_version !== HANDOFF_STATE_PROJECTION_SCHEMA_VERSION || !Array.isArray(parsed.states)) {
-		throw new HandoffObservabilityError(
-			`handoff telemetry ${file} must be schema_version 1 with a states array`,
-		);
+		throw new HandoffObservabilityError(`handoff telemetry ${file} must be schema_version 1 with a states array`);
 	}
-	return parsed.states.map((value, index) => validateProjection(value, index));
+	return parsed.states.map(validateProjection);
 }

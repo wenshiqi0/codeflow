@@ -35,7 +35,7 @@ export {
 	type BenchmarkClock,
 } from "./budgets";
 
-export { SUPPORT_MODEL_ROLES, classifyModelRole } from "./rounds";
+export { classifyWorkerKind } from "./rounds";
 
 export {
 	TOOL_CALL_SCHEMA_VERSION,
@@ -97,7 +97,6 @@ export {
 	caseDirName,
 	prepareBenchmarkWorkspace,
 	seedBenchmarkWorkspaceHygiene,
-	extractPatch,
 	extractPatchDetailed,
 	type PatchExtraction,
 } from "./workspace";
@@ -163,12 +162,12 @@ export {
 
 export {
 	HANDOFF_STATE_PROJECTION_SCHEMA_VERSION,
-	OBSERVABILITY_BLOCKED_REASONS,
+	OBSERVABILITY_RUNTIME_FAILURE_REASONS,
 	HandoffObservabilityError,
 	type HandoffStateProjection,
 	type HandoffStateScan,
 	type HandoffStateTelemetryFile,
-	type ObservabilityBlockedReason,
+	type ObservabilityRuntimeFailureReason,
 	projectHandoffState,
 	scanHandoffStates,
 	readHandoffStateProjections,

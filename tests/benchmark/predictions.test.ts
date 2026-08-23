@@ -89,14 +89,14 @@ describe("workspace patch extraction (offline git)", () => {
 		const mod = await bench();
 		const dir = path.join(makeTmpDir(), "workspace");
 		mod.prepareBenchmarkWorkspace(dir);
-		expect(mod.extractPatch(dir)).toBe("");
+		expect(mod.extractPatchDetailed(dir).patch).toBe("");
 		fs.mkdirSync(path.dirname(path.join(dir, "fix.py")), { recursive: true });
 		fs.writeFileSync(path.join(dir, "fix.py"), "def fix():\n    return 'FIXED'\n", "utf8");
-		const patch = mod.extractPatch(dir);
+		const patch = mod.extractPatchDetailed(dir).patch;
 		expect(patch).toContain("fix.py");
 		expect(patch).toContain("FIXED");
 		expect(patch).toMatch(/^diff --git/m);
 		// Extraction is idempotent: reading twice does not grow the patch.
-		expect(mod.extractPatch(dir)).toBe(patch);
+		expect(mod.extractPatchDetailed(dir).patch).toBe(patch);
 	});
 });

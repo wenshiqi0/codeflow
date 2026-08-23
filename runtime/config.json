@@ -1,0 +1,12 @@
+{
+  "worker": {
+    "model": "mimo/mimo-v2.5-pro",
+    "prompt": "references/worker.md"
+  },
+  "services": {
+    "output_compression": {
+      "model": "deepseek/deepseek-v4-flash",
+      "prompt": "references/output-compression.md"
+    }
+  }
+}

@@ -9,7 +9,7 @@
  */
 
 import type { BudgetName } from "./budgets";
-import { classifyModelRole } from "./rounds";
+import { classifyWorkerKind } from "./rounds";
 import { summarizeToolCalls } from "../../runtime/lib/observability/tool-execution";
 import { summarizeTokenUsage, type AttemptUsageRecord, type TokenUsageSummary } from "../../runtime/lib/observability/model-usage";
 import type { ToolCallRecord } from "../../runtime/lib/observability/tool-execution";
@@ -33,7 +33,8 @@ export interface FailedModelAttempt {
 	schema_version: 1;
 	/** ISO timestamp. */
 	at: string;
-	role: string;
+	task_id: string | null;
+	worker_kind: "worker" | "service";
 	provider: string;
 	model: string;
 	/** Short token, e.g. "provider_timeout"; never message text. */
@@ -56,8 +57,8 @@ export interface AttemptMetricsInput {
 export interface AttemptMetrics {
 	/** == usageRecords.length. */
 	model_rounds_total: number;
-	primary_model_rounds: number;
-	support_model_rounds: number;
+	worker_model_rounds: number;
+	service_model_rounds: number;
 	failed_model_attempts: number;
 	tool_calls_total: number;
 	tool_call_counts: {
@@ -84,11 +85,11 @@ export interface AttemptMetrics {
 
 export function buildAttemptMetrics(input: AttemptMetricsInput): AttemptMetrics {
 	const tools = summarizeToolCalls(input.toolCallRecords);
-	let primary = 0;
-	let support = 0;
+	let worker = 0;
+	let service = 0;
 	for (const record of input.usageRecords) {
-		if (classifyModelRole(record.role) === "support") support++;
-		else primary++;
+		if (classifyWorkerKind(record.worker_kind) === "service") service++;
+		else worker++;
 	}
 	const rounds = input.usageRecords.length;
 	const handoffs = summarizeHandoffStates(
@@ -98,8 +99,8 @@ export function buildAttemptMetrics(input: AttemptMetricsInput): AttemptMetrics 
 	const telemetryAvailable = input.handoffTelemetryAvailable ?? false;
 	return {
 		model_rounds_total: rounds,
-		primary_model_rounds: primary,
-		support_model_rounds: support,
+		worker_model_rounds: worker,
+		service_model_rounds: service,
 		failed_model_attempts: input.failedModelAttempts.length,
 		tool_calls_total: tools.total,
 		tool_call_counts: {

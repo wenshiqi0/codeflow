@@ -209,23 +209,25 @@ function optionalNonnegativeInteger(value: unknown): number | null {
 	return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : -1;
 }
 
+function workerKind(value: unknown): "worker" | "service" | null {
+	return value === "worker" || value === "service" ? value : null;
+}
+
 function parseRound(value: unknown): DriverRound | null {
 	if (!isObject(value)) return null;
-	const role = nonEmptyString(value.role);
+	const kind = workerKind(value.worker_kind);
 	const provider = nonEmptyString(value.provider);
 	const model = nonEmptyString(value.model);
 	const usage = parseUsage(value.usage);
-	const depth = optionalNonnegativeInteger(value.depth);
 	const turn = optionalNonnegativeInteger(value.turn);
 	const requestStartedAt = optionalString(value.request_started_at);
 	const respondedAt = optionalString(value.at);
-	const runId = optionalString(value.run_id);
+	const taskId = optionalString(value.task_id);
 	if (
-		role === null ||
+		kind === null ||
 		provider === null ||
 		model === null ||
 		usage === null ||
-		depth === -1 ||
 		turn === -1 ||
 		(requestStartedAt !== null && Number.isNaN(Date.parse(requestStartedAt)))
 		|| (respondedAt !== null && Number.isNaN(Date.parse(respondedAt)))
@@ -235,17 +237,15 @@ function parseRound(value: unknown): DriverRound | null {
 	const toolCalls = parseToolCalls(value.tool_calls);
 	if (toolCalls === null) return null;
 	return {
-		role,
+		worker_kind: kind,
 		provider,
 		model,
-		depth,
 		turn,
 		...(respondedAt === null ? {} : { at: respondedAt }),
-		run_id: runId,
+		task_id: taskId,
 		request_started_at: requestStartedAt,
 		handoff_id: optionalString(value.handoff_id),
 		goal_id: optionalString(value.goal_id),
-		thread: optionalString(value.thread),
 		usage,
 		tool_calls: toolCalls,
 	};
@@ -273,35 +273,40 @@ export function parseDriverEvent(value: unknown): DriverEvent | null {
 			return round === null ? null : { type: "round", round };
 		}
 		case "tool_calls": {
-			const role = nonEmptyString(value.role);
+			const kind = workerKind(value.worker_kind);
 			const provider = nonEmptyString(value.provider);
 			const model = nonEmptyString(value.model);
 			const calls = parseToolCalls(value.calls);
-			if (role === null || provider === null || model === null || calls === null || calls.length === 0) {
+			if (kind === null || provider === null || model === null || calls === null || calls.length === 0) {
 				return null;
 			}
 			return {
 				type: "tool_calls",
-				role,
+				worker_kind: kind,
 				provider,
 				model,
 				handoff_id: optionalString(value.handoff_id),
 				goal_id: optionalString(value.goal_id),
-				thread: optionalString(value.thread),
 				calls,
 			};
 		}
 		case "failed_model_attempt": {
 			const attempt = isObject(value.attempt) ? value.attempt : null;
 			if (attempt === null) return null;
-			const role = nonEmptyString(attempt.role);
+			const kind = workerKind(attempt.worker_kind);
 			const provider = nonEmptyString(attempt.provider);
 			const model = nonEmptyString(attempt.model);
 			const errorClass = nonEmptyString(attempt.error_class);
-			if (role === null || provider === null || model === null || errorClass === null) return null;
+			if (kind === null || provider === null || model === null || errorClass === null) return null;
 			return {
 				type: "failed_model_attempt",
-				attempt: { role, provider, model, error_class: errorClass },
+				attempt: {
+					task_id: optionalString(attempt.task_id),
+					worker_kind: kind,
+					provider,
+					model,
+					error_class: errorClass,
+				},
 			};
 		}
 		case "workspace_write": {

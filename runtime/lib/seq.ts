@@ -4,7 +4,7 @@
  * The outer loop passes the highest sequence it has seen back as `--since`,
  * so two events sharing a number would silently hide one of them. Uniqueness
  * is therefore the property that matters, and it has to hold across separate
- * processes: delegated roles run as their own `pi` invocations and emit events
+ * processes: spawned Workers run as their own `pi` invocations and emit events
  * concurrently.
  *
  * The Python original took an `fcntl.flock` on a counter file. Bun has no

@@ -2,10 +2,10 @@
  * Privacy-safe tool-call ledger (design §7).
  *
  * A ledger row may carry ONLY the call id, tool name, status, timestamp, and
- * Codeflow attribution fields — role AND provider/model plus goal/thread —
+ * Codeflow attribution fields — Task/Goal/Handoff, Worker kind, and model —
  * sourced from the context that EMITTED the call (the assistant response,
  * the same attribution the usage ledger records). Direct provider/model on
- * every row is what lets reports count tools by model without role→model
+ * every row is what lets reports count tools by model without identity-based
  * inference. No arguments, command text, tool results, source, or
  * credentials can be represented — the write path refuses any other key,
  * so a future field cannot smuggle a payload in.
@@ -29,12 +29,10 @@ export const TOOL_CALL_RECORD_FIELDS: readonly string[] = [
 	"tool",
 	"status",
 	"at",
-	"run_id",
-	"role",
-	"depth",
+	"task_id",
+	"worker_kind",
 	"handoff_id",
 	"goal_id",
-	"thread",
 	"provider",
 	"model",
 	"operation_kind",
@@ -43,16 +41,16 @@ export const TOOL_CALL_RECORD_FIELDS: readonly string[] = [
 export type ToolCallRecordKind = "requested" | "result";
 export type ToolCallTerminalStatus = "succeeded" | "failed" | "rejected";
 export type ToolOperationKind =
-	| "goal_list"
-	| "goal_show"
-	| "handoff_index"
-	| "handoff_recall"
+	| "goal_create"
+	| "goal_dependencies"
+	| "handoff_create"
+	| "recall"
 	| "evidence_log"
 	| "evidence_run"
 	| "explore"
 	| "edit"
 	| "execute"
-	| "ceremony"
+	| "organization"
 	| "other";
 
 export interface ToolCallRecord {
@@ -67,15 +65,13 @@ export interface ToolCallRecord {
 	status: ToolCallTerminalStatus | null;
 	/** ISO timestamp. */
 	at: string;
-	run_id: string | null;
-	role: string;
-	depth: number;
+	task_id: string | null;
+	worker_kind: "worker" | "service";
 	handoff_id: string | null;
 	goal_id: string | null;
-	thread: string | null;
-	/** Provider of the assistant response that emitted the call — never inferred from the role. */
+	/** Provider of the assistant response that emitted the call. */
 	provider: string;
-	/** Model of the assistant response that emitted the call — never inferred from the role. */
+	/** Model of the assistant response that emitted the call. */
 	model: string;
 	/** Privacy-safe operation classification; never command text or arguments. */
 	operation_kind?: ToolOperationKind;
@@ -83,18 +79,18 @@ export interface ToolCallRecord {
 
 const ALLOWED_KEYS = new Set<string>(TOOL_CALL_RECORD_FIELDS);
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set(["succeeded", "failed", "rejected"]);
-const NULLABLE_STRINGS = ["handoff_id", "goal_id", "thread"] as const;
+const NULLABLE_STRINGS = ["task_id", "handoff_id", "goal_id"] as const;
 export const OPERATION_KINDS: readonly ToolOperationKind[] = [
-	"goal_list",
-	"goal_show",
-	"handoff_index",
-	"handoff_recall",
+	"goal_create",
+	"goal_dependencies",
+	"handoff_create",
+	"recall",
 	"evidence_log",
 	"evidence_run",
 	"explore",
 	"edit",
 	"execute",
-	"ceremony",
+	"organization",
 	"other",
 ] as const;
 const OPERATION_KIND_SET: ReadonlySet<string> = new Set(OPERATION_KINDS);
@@ -134,14 +130,8 @@ export function validateToolCallRecord(record: unknown): string[] {
 	if (typeof row.at !== "string" || Number.isNaN(Date.parse(row.at))) {
 		violations.push("at must be an ISO timestamp string");
 	}
-	if (row.run_id !== null && typeof row.run_id !== "string") {
-		violations.push("run_id must be a string or null");
-	}
-	if (typeof row.role !== "string") {
-		violations.push("role must be a string");
-	}
-	if (typeof row.depth !== "number" || !Number.isInteger(row.depth) || row.depth < 0) {
-		violations.push("depth must be a non-negative integer");
+	if (row.worker_kind !== "worker" && row.worker_kind !== "service") {
+		violations.push("worker_kind must be worker or service");
 	}
 	for (const key of NULLABLE_STRINGS) {
 		if (row[key] !== null && typeof row[key] !== "string") {
@@ -149,7 +139,7 @@ export function validateToolCallRecord(record: unknown): string[] {
 		}
 	}
 	// Direct attribution is mandatory: a row without provider/model cannot be
-	// counted by model, and back-filling it later would be role→model inference.
+	// counted by model, and back-filling it later would be inference.
 	if (typeof row.provider !== "string" || row.provider.length === 0) {
 		violations.push("provider must be a non-empty string (the emitting context's provider)");
 	}

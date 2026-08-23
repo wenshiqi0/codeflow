@@ -75,7 +75,7 @@ describe("scanning", () => {
 		writeEvent(2, "h00002-tester", "handoff_finished", "BLOCKED", {
 			reasons: ["PROVIDER_FAILURE", "DELEGATION_ARTIFACT_MISSING"],
 			summary: "provider request ended with error",
-			ref: "handoffs/h00002/state.json",
+			ref: "handoffs/h00002/receipt.json",
 			error: "monthly quota exhausted",
 			prose: "long diagnostic narrative",
 		});

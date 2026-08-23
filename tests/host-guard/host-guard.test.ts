@@ -39,7 +39,7 @@ describe("host runtime guard", () => {
 		const evidence = path.join(os.tmpdir(), "codeflow-host-guard-evidence");
 		const runs = path.join(project, ".codeflow/runs/code");
 		const env = environment(project, evidence, runs);
-		const state = path.join(runs, "run-host-guard/h000001/state.json");
+		const state = path.join(runs, "run-host-guard/task.json");
 		const receipt = path.join(runs, "run-host-guard/h000001/receipt.json");
 		expect(runtimeWriteViolation(state, env)).toContain("read-only during a run");
 		expect(runtimeWriteViolation(receipt, env)).toContain("read-only during a run");

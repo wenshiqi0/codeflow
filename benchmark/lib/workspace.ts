@@ -133,8 +133,3 @@ export function extractPatchDetailed(dir: string): PatchExtraction {
 	const patch = stripBinarySections(git(diffArgs), strippedBinaryPaths);
 	return { patch, strippedBinaryPaths };
 }
-
-/** Backward-compatible string patch API used by older callers and tests. */
-export function extractPatch(dir: string): string {
-	return extractPatchDetailed(dir).patch;
-}

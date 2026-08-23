@@ -1,11 +1,8 @@
 /**
  * Shared harness for the benchmark acceptance suite.
  *
- * The benchmark capability does not exist yet (docs/benchmark-contract.md is
- * the contract; worker implements it). These tests must fail with a clear
- * contract message against the real CLI/module surface, never crash on
- * import — so the module is loaded dynamically and every CLI assertion goes
- * through the real `runtime/bin/codeflow` binary, exactly like tests/outer.
+ * Tests load the public benchmark module dynamically and exercise the real
+ * `runtime/bin/codeflow` binary at the CLI boundary.
  */
 
 import * as fs from "node:fs";
@@ -65,7 +62,7 @@ export async function loadBenchmarkModule(): Promise<any> {
 	if (!fs.existsSync(BENCHMARK_MODULE)) missing.push(BENCHMARK_MODULE);
 	if (missing.length > 0) {
 		throw new Error(
-			`benchmark contract surface not implemented yet: ${missing.join(", ")}.\n` +
+			`benchmark module is missing: ${missing.join(", ")}.\n` +
 				`Implement the public API from ${CONTRACT}; these tests assert that contract.`,
 		);
 	}

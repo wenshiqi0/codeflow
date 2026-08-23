@@ -8,7 +8,7 @@
  * (benchmark/scripts/codeflow-driver.ts) sets the variable for every
  * worker process of the attempt's Codeflow run (root and delegated
  * children alike, via inherited env), so rounds are attributed by
- * role/provider/model/goal-thread exactly as the run's own usage ledger does
+ * Task/Goal/Handoff, Worker kind, provider, and model
  * (design §6/§14: reuse the existing usage/attribution machinery — one
  * assistant usage record is one model round, no transcript parsing).
  *
@@ -17,7 +17,7 @@
  * (the same provider/model the usage/failed-attempt ledgers record for that
  * response). The emitting context is remembered per call id at request time,
  * so a late tool_execution_end row keeps the original model even after the
- * role switched models mid-attempt; a call with no prior assistant context
+ * Worker switched models mid-attempt; a call with no prior assistant context
  * still records non-empty attribution ("unknown"), never an empty row.
  *
  * Ledger rows are written through the benchmark module's own validators
@@ -74,17 +74,16 @@ function commandText(input: unknown): string {
 
 function operationKind(tool: string, input: unknown): ToolCallRecord["operation_kind"] {
 	if (tool === "edit" || tool === "write") return "edit";
-	if (tool === "task" || tool === "goal" || tool === "task_group") return "ceremony";
+	if (tool === "goal_create") return "goal_create";
+	if (tool === "goal_dependencies") return "goal_dependencies";
+	if (tool === "handoff_create") return "handoff_create";
+	if (tool === "recall") return "recall";
+	if (tool === "worker_spawn" || tool === "worker_group") return "organization";
 	if (tool === "read") return "explore";
 	if (tool !== "bash") return "other";
 
 	const command = commandText(input);
-	if (/^code-agent\s+goal\s+list(?:\s|$)/.test(command)) return "goal_list";
-	if (/^code-agent\s+goal\s+show(?:\s|$)/.test(command)) return "goal_show";
-	if (/^code-agent\s+handoff\s+index(?:\s|$)/.test(command)) return "handoff_index";
-	if (/^code-agent\s+handoff\s+(?:get|body|receipt)(?:\s|$)/.test(command)) {
-		return "handoff_recall";
-	}
+	if (/^code-agent\s+recall\s+goal(?:\s|$)/.test(command)) return "recall";
 	if (/^code-agent\s+evidence\s+log(?:\s|$)/.test(command)) return "evidence_log";
 	if (/^code-agent\s+evidence\s+run(?:\s|$)/.test(command)) return "evidence_run";
 	if (/(^|\s)(?:pytest|py\.test|bun|npm|pnpm|yarn|go|cargo|make)(?:\s|$)/.test(command)) {
@@ -126,22 +125,20 @@ export default function (pi: ExtensionAPI): void {
 		emitting: EmittingContext,
 	): Pick<
 		ToolCallRecord,
-		"at" | "run_id" | "role" | "depth" | "handoff_id" | "goal_id" | "thread" | "provider" | "model"
+		"at" | "task_id" | "worker_kind" | "handoff_id" | "goal_id" | "provider" | "model"
 	> {
 		return {
 			at,
-			run_id: env("CODEFLOW_RUN_ID") ?? null,
-			role: env("CODEFLOW_AGENT_ROLE") ?? "unknown",
-			depth: Number(env("CODEFLOW_AGENT_DEPTH") ?? "0") || 0,
+			task_id: env("CODEFLOW_RUN_ID") ?? null,
+			worker_kind: env("CODEFLOW_PROCESS_KIND") === "service" ? "service" : "worker",
 			handoff_id: optionalEnv("CODEFLOW_HANDOFF_ID"),
 			goal_id: optionalEnv("CODEFLOW_GOAL_ID"),
-			thread: optionalEnv("CODEFLOW_THREAD"),
 			provider: emitting.provider,
 			model: emitting.model,
 		};
 	}
 
-	/** The assistant response that most recently emitted in this role process. */
+	/** The assistant response that most recently emitted in this Worker process. */
 	let lastEmitting: EmittingContext = UNKNOWN_CONTEXT;
 	/** call_id -> the context that EMITTED that call (result rows keep it). */
 	const callEmitting = new Map<string, EmittingContext>();
@@ -161,7 +158,8 @@ export default function (pi: ExtensionAPI): void {
 		const hasUsage = typeof event.message === "object" && event.message !== null && "usage" in message;
 		const timestamp = plainNumber(message.timestamp);
 		const at = timestamp > 0 ? new Date(timestamp).toISOString() : new Date().toISOString();
-		const role = env("CODEFLOW_AGENT_ROLE") ?? "unknown";
+		const taskId = optionalEnv("CODEFLOW_RUN_ID");
+		const workerKind = env("CODEFLOW_PROCESS_KIND") === "service" ? "service" : "worker";
 		const provider = String(message.provider ?? "") || "unknown";
 		const model = String(message.responseModel ?? message.model ?? "") || "unknown";
 		// This assistant response IS the emitting context for the tool calls it
@@ -174,7 +172,8 @@ export default function (pi: ExtensionAPI): void {
 			appendRow(failedFile, {
 				schema_version: 1,
 				at,
-				role,
+				task_id: taskId,
+				worker_kind: workerKind,
 				provider,
 				model,
 				error_class: errorClassToken(message.stopReason ?? message.errorMessage ?? "provider_error"),
@@ -196,19 +195,17 @@ export default function (pi: ExtensionAPI): void {
 		const rawCost = asRecord(rawUsage.cost);
 
 		const record: AttemptUsageRecord = {
-			schema_version: 2,
+			schema_version: 1,
 			at,
 			request_started_at: null,
 			attempt,
-			run_id: optionalEnv("CODEFLOW_RUN_ID"),
-			role,
+			task_id: taskId,
+			worker_kind: workerKind,
 			provider,
 			model,
-			depth: Number(env("CODEFLOW_AGENT_DEPTH") ?? "0") || 0,
 			turn: currentTurn,
 			handoff_id: optionalEnv("CODEFLOW_HANDOFF_ID"),
 			goal_id: optionalEnv("CODEFLOW_GOAL_ID"),
-			thread: optionalEnv("CODEFLOW_THREAD"),
 			usage: {
 				input,
 				output,

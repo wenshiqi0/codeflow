@@ -24,11 +24,9 @@ import { nowIso } from "../../runtime/lib/paths";
 import type { BenchmarkManifest, CaseAttemptRecord, CaseFile } from "./artifacts";
 import {
 	BENCHMARK_MANIFEST_SCHEMA_VERSION,
-	LEGACY_BENCHMARK_MANIFEST_SCHEMA_VERSION,
-	LEGACY_BUDGETED_BENCHMARK_MANIFEST_SCHEMA_VERSION,
 	} from "./artifacts";
 import { BENCHMARK_CASE_SCHEMA_VERSION } from "./artifacts";
-import { DEFAULT_BENCHMARK_BUDGETS, type BudgetName } from "./budgets";
+import { type BudgetName } from "./budgets";
 import { readPredictions } from "./predictions";
 import { readAttemptUsageRecords } from "../../runtime/lib/observability/model-usage";
 import { readToolCallRecords } from "../../runtime/lib/observability/tool-execution";
@@ -38,12 +36,13 @@ import {
 	type HandoffStateProjection,
 } from "../../runtime/lib/observability/handoff-state";
 import {
+	addHandoffState as accumulateHandoffState,
 	emptyHandoffObservabilitySummary,
 	type HandoffObservabilitySummary,
 } from "../../runtime/lib/observability/summary";
 import type { ContextGrowthSummary, WasteSummary } from "../../runtime/lib/observability/usage-analysis";
 
-export const BENCHMARK_REPORT_SCHEMA_VERSION = 2;
+export const BENCHMARK_REPORT_SCHEMA_VERSION = 3;
 
 export class BenchmarkReportError extends Error {
 	constructor(message: string) {
@@ -59,7 +58,7 @@ export interface BreakdownTotals {
 }
 
 export interface BenchmarkReport {
-	schema_version: 2;
+	schema_version: 3;
 	benchmark_run_id: string;
 	generated_at: string;
 	attempts_per_instance: number;
@@ -93,7 +92,7 @@ export interface BenchmarkReport {
 		stripped_binary_path_count: number;
 		stripped_binary_paths: string[];
 	};
-	model_rounds: { total: number; median: number; p90: number; primary: number; support: number; failed_attempts: number };
+	model_rounds: { total: number; median: number; p90: number; worker: number; service: number; failed_attempts: number };
 	tool_calls: { total: number; median: number; p90: number };
 	tokens: { total: number; median: number; p90: number };
 	per_resolved: { rounds: number | null; tool_calls: number | null; tokens: number | null };
@@ -112,17 +111,11 @@ export interface BenchmarkReport {
 		recall_operations: number;
 		explore_operations: number;
 		redundant_discovery_rate: number | null;
-		index_cards: {
-			total: number;
-			semantic: number;
-			fallback: number;
-		};
 	};
 	breakdowns: {
 		by_goal: Record<string, BreakdownTotals>;
 		by_model: Record<string, BreakdownTotals>;
-		by_thread: Record<string, BreakdownTotals>;
-		by_depth: Record<string, BreakdownTotals>;
+		by_worker_kind: Record<string, BreakdownTotals>;
 		by_tool: Record<string, number>;
 		by_operation: Record<string, number>;
 	};
@@ -139,8 +132,6 @@ export interface BenchmarkReport {
 	runtime_observability: {
 		handoffs: HandoffObservabilitySummary & {
 			by_goal: Record<string, HandoffObservabilitySummary>;
-			by_thread: Record<string, HandoffObservabilitySummary>;
-			by_depth: Record<string, HandoffObservabilitySummary>;
 		};
 		waste: WasteSummary;
 		context_growth: ContextGrowthSummary;
@@ -209,43 +200,43 @@ function aggregateWaste(attempts: CaseAttemptRecord[]): WasteSummary {
 	const available = attempts.length > 0 && attempts.every((attempt) => attempt.metrics.waste.metrics_available);
 	if (!available) {
 		return {
-			rounds_in_non_pass_handoffs: null,
-			tokens_in_non_pass_handoffs: null,
-			waste_ratio_rounds: null,
-			root_rounds_ratio: null,
-			handoff_reopens_per_goal_thread_median: null,
+			rounds_in_non_completed_handoffs: null,
+			tokens_in_non_completed_handoffs: null,
+			non_completed_round_ratio: null,
+			worker_rounds_ratio: null,
+			handoffs_per_goal_median: null,
 			metrics_available: false,
 		};
 	}
-	const nonPassRounds = attempts.reduce(
-		(sum, attempt) => sum + (attempt.metrics.waste.rounds_in_non_pass_handoffs ?? 0),
+	const nonCompletedRounds = attempts.reduce(
+		(sum, attempt) => sum + (attempt.metrics.waste.rounds_in_non_completed_handoffs ?? 0),
 		0,
 	);
-	const nonPassTokens = attempts.reduce(
-		(sum, attempt) => sum + (attempt.metrics.waste.tokens_in_non_pass_handoffs ?? 0),
+	const nonCompletedTokens = attempts.reduce(
+		(sum, attempt) => sum + (attempt.metrics.waste.tokens_in_non_completed_handoffs ?? 0),
 		0,
 	);
-	const rootWeighted = attempts.filter((attempt) => attempt.metrics.waste.root_rounds_ratio !== null);
-	const rootDenominator = rootWeighted.reduce(
+	const workerWeighted = attempts.filter((attempt) => attempt.metrics.waste.worker_rounds_ratio !== null);
+	const workerDenominator = workerWeighted.reduce(
 		(sum, attempt) => sum + attempt.metrics.model_rounds_total,
 		0,
 	);
 	const totalRounds = attempts.reduce((sum, attempt) => sum + attempt.metrics.model_rounds_total, 0);
-	const reopenValues = attempts
-		.map((attempt) => attempt.metrics.waste.handoff_reopens_per_goal_thread_median)
+	const handoffsPerGoal = attempts
+		.map((attempt) => attempt.metrics.waste.handoffs_per_goal_median)
 		.filter((value): value is number => value !== null);
 	return {
-		rounds_in_non_pass_handoffs: nonPassRounds,
-		tokens_in_non_pass_handoffs: nonPassTokens,
-		waste_ratio_rounds: totalRounds > 0 ? nonPassRounds / totalRounds : null,
-		root_rounds_ratio:
-			rootDenominator > 0
-				? rootWeighted.reduce(
-						(sum, attempt) => sum + attempt.metrics.model_rounds_total * (attempt.metrics.waste.root_rounds_ratio ?? 0),
+		rounds_in_non_completed_handoffs: nonCompletedRounds,
+		tokens_in_non_completed_handoffs: nonCompletedTokens,
+		non_completed_round_ratio: totalRounds > 0 ? nonCompletedRounds / totalRounds : null,
+		worker_rounds_ratio:
+			workerDenominator > 0
+				? workerWeighted.reduce(
+						(sum, attempt) => sum + attempt.metrics.model_rounds_total * (attempt.metrics.waste.worker_rounds_ratio ?? 0),
 						0,
-					) / rootDenominator
+					) / workerDenominator
 				: null,
-		handoff_reopens_per_goal_thread_median: medianOrNull(reopenValues),
+		handoffs_per_goal_median: medianOrNull(handoffsPerGoal),
 		metrics_available: true,
 	};
 }
@@ -290,30 +281,11 @@ function readManifest(outDir: string): BenchmarkManifest {
 	if (!fs.existsSync(file)) {
 		throw new BenchmarkReportError(`not a benchmark run directory (missing benchmark-run.json): ${outDir}`);
 	}
-	const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as BenchmarkManifest & {
-		attempts_per_instance?: number;
-	};
-	if (
-		parsed.schema_version !== BENCHMARK_MANIFEST_SCHEMA_VERSION &&
-		parsed.schema_version !== LEGACY_BUDGETED_BENCHMARK_MANIFEST_SCHEMA_VERSION &&
-		parsed.schema_version !== LEGACY_BENCHMARK_MANIFEST_SCHEMA_VERSION
-	) {
+	const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as BenchmarkManifest;
+	if (parsed.schema_version !== BENCHMARK_MANIFEST_SCHEMA_VERSION) {
 		throw new BenchmarkReportError(`unsupported manifest schema_version: ${String(parsed.schema_version)}`);
 	}
-	if (parsed.schema_version === BENCHMARK_MANIFEST_SCHEMA_VERSION) return parsed;
-	return {
-		...parsed,
-		schema_version: BENCHMARK_MANIFEST_SCHEMA_VERSION,
-		attempts_per_instance: parsed.attempts_per_instance ?? 1,
-		termination_budgets: parsed.termination_budgets ?? {
-			defaults: DEFAULT_BENCHMARK_BUDGETS,
-			overrides: null,
-			effective: DEFAULT_BENCHMARK_BUDGETS,
-		},
-		consumption_metrics: parsed.consumption_metrics ?? {
-			axes: ["model_rounds", "tool_calls", "fresh_tokens", "total_tokens"],
-		},
-	};
+	return parsed;
 }
 
 function readCases(outDir: string): CaseFile[] {
@@ -342,47 +314,9 @@ function readCases(outDir: string): CaseFile[] {
 			if (!TERMINATION_KEYS.includes(terminated)) {
 				throw new BenchmarkReportError(`invalid terminated_by in ${file}: ${String(attempt.terminated_by)}`);
 			}
-			const metrics = attempt.metrics as CaseAttemptRecord["metrics"] & {
-				wall_breakdown?: CaseAttemptRecord["metrics"]["wall_breakdown"];
-				time_to_first_patch_seconds?: number | null;
-				waste?: WasteSummary;
-				context_growth?: ContextGrowthSummary;
-				handoffs?: CaseAttemptRecord["metrics"]["handoffs"];
-			};
-			attempt.metrics = {
-				...metrics,
-				handoffs: metrics.handoffs ?? {
-					total: 0,
-					pass: 0,
-					fail: 0,
-					blocked: 0,
-					nonterminal: 0,
-					blocked_reasons: {},
-					unknown_blocked_reasons: 0,
-					redelegations: 0,
-					metrics_available: false,
-				},
-				wall_breakdown: metrics.wall_breakdown ?? {
-					tool_execution_seconds: 0,
-					provider_wait_derived_seconds: 0,
-					local_overhead_derived_seconds: 0,
-					attribution: "derived",
-					metrics_available: false,
-				},
-				time_to_first_patch_seconds: metrics.time_to_first_patch_seconds ?? null,
-				waste: metrics.waste ?? {
-					rounds_in_non_pass_handoffs: null,
-					tokens_in_non_pass_handoffs: null,
-					waste_ratio_rounds: null,
-					root_rounds_ratio: null,
-					handoff_reopens_per_goal_thread_median: null,
-					metrics_available: false,
-				},
-				context_growth: metrics.context_growth ?? {
-					first_turn_input_by_handoff_index: null,
-					metrics_available: false,
-				},
-			};
+			if (!attempt.metrics?.handoffs || !attempt.metrics.wall_breakdown || !attempt.metrics.waste || !attempt.metrics.context_growth) {
+				throw new BenchmarkReportError(`incomplete current-schema metrics in ${file}`);
+			}
 		}
 		cases.push(parsed);
 	}
@@ -392,25 +326,24 @@ function readCases(outDir: string): CaseFile[] {
 interface LedgerBreakdownInput {
 	byGoal: Record<string, BreakdownTotals>;
 	byModel: Record<string, BreakdownTotals>;
-	byThread: Record<string, BreakdownTotals>;
-	byDepth: Record<string, BreakdownTotals>;
+	byWorkerKind: Record<string, BreakdownTotals>;
 }
 
 /**
- * Goal/model/thread/depth breakdowns come from the per-attempt ledgers under
+ * Goal/model/Worker-kind breakdowns come from the per-attempt ledgers under
  * `cases/` when present (hand-built report fixtures without ledgers simply
  * produce empty breakdowns).
  *
  * by_model joins two independently attributed ledgers (design §7):
  * - tool_calls are grouped by each requested row's RECORDED provider/model —
- *   never by role→model inference, so a role that switched models mid-attempt
+ *   never by identity inference, so a Worker that switched models mid-attempt
  *   still gets exact per-model counts, and a model with zero rounds can carry
  *   calls (a wall stop can flush a tool row whose usage row was lost);
  * - rounds/tokens are grouped directly from every usage row's provider/model,
  *   including models that emitted zero tools. No dimension silently drops a
  *   zero-round tool call or a zero-tool model round.
  *
- * by_goal, by_thread, and by_depth keep both dimensions from both ledgers.
+ * by_goal and by_worker_kind keep both dimensions from both ledgers.
  */
 function accumulateLedgers(outDir: string, cases: CaseFile[], out: LedgerBreakdownInput): void {
 	for (const caseFile of cases) {
@@ -422,38 +355,27 @@ function accumulateLedgers(outDir: string, cases: CaseFile[], out: LedgerBreakdo
 
 			const callsByModel = new Map<string, number>();
 			const callsByGoal = new Map<string, number>();
-			const callsByThread = new Map<string, number>();
-			const callsByDepth = new Map<string, number>();
+			const callsByWorkerKind = new Map<string, number>();
 			// Tool side first: the recorded attribution decides the model groups
-			// without any role→model inference.
+			// without any identity inference.
 			for (const record of toolRecords) {
 				if (record.kind !== "requested") continue;
 				const modelKey = `${record.provider}/${record.model}`;
 				callsByModel.set(modelKey, (callsByModel.get(modelKey) ?? 0) + 1);
-				const goalKey = record.goal_id ?? "_ungrouped";
-				const depthKey = String(record.depth);
+				const goalKey = record.goal_id ?? record.task_id ?? "unknown";
 				callsByGoal.set(goalKey, (callsByGoal.get(goalKey) ?? 0) + 1);
-				callsByDepth.set(depthKey, (callsByDepth.get(depthKey) ?? 0) + 1);
-				if (record.thread !== null) {
-					const threadKey = record.thread;
-					callsByThread.set(threadKey, (callsByThread.get(threadKey) ?? 0) + 1);
-				}
+				callsByWorkerKind.set(record.worker_kind, (callsByWorkerKind.get(record.worker_kind) ?? 0) + 1);
 			}
 
 			for (const record of usageRecords) {
-				const goalKey = record.goal_id ?? "_ungrouped";
-				const depthKey = record.depth === null ? "unknown" : String(record.depth);
+				const goalKey = record.goal_id ?? record.task_id ?? "unknown";
 				bump(out.byGoal, goalKey).model_rounds++;
 				out.byGoal[goalKey].total_tokens += record.usage.total_tokens;
-				bump(out.byDepth, depthKey).model_rounds++;
-				out.byDepth[depthKey].total_tokens += record.usage.total_tokens;
+				bump(out.byWorkerKind, record.worker_kind).model_rounds++;
+				out.byWorkerKind[record.worker_kind].total_tokens += record.usage.total_tokens;
 				const modelKey = `${record.provider}/${record.model}`;
 				bump(out.byModel, modelKey).model_rounds++;
 				out.byModel[modelKey].total_tokens += record.usage.total_tokens;
-				if (record.thread !== null) {
-					bump(out.byThread, record.thread).model_rounds++;
-					out.byThread[record.thread].total_tokens += record.usage.total_tokens;
-				}
 			}
 
 			// Recorded-field grouping: calls land on the model their rows name.
@@ -463,11 +385,8 @@ function accumulateLedgers(outDir: string, cases: CaseFile[], out: LedgerBreakdo
 			for (const [goal, count] of callsByGoal) {
 				bump(out.byGoal, goal).tool_calls += count;
 			}
-			for (const [thread, count] of callsByThread) {
-				bump(out.byThread, thread).tool_calls += count;
-			}
-			for (const [depth, count] of callsByDepth) {
-				bump(out.byDepth, depth).tool_calls += count;
+			for (const [kind, count] of callsByWorkerKind) {
+				bump(out.byWorkerKind, kind).tool_calls += count;
 			}
 		}
 	}
@@ -476,48 +395,16 @@ function accumulateLedgers(outDir: string, cases: CaseFile[], out: LedgerBreakdo
 function addHandoffState(
 	total: HandoffObservabilitySummary,
 	byGoal: Record<string, HandoffObservabilitySummary>,
-	byThread: Record<string, HandoffObservabilitySummary>,
-	byDepth: Record<string, HandoffObservabilitySummary>,
 	state: HandoffStateProjection,
 ): void {
 	total.metrics_available = true;
-	addHandoffTerminal(total, state);
+	accumulateHandoffState(total, state);
 
-	const goalKey = state.goal_id ?? "_ungrouped";
+	const goalKey = state.goal_id;
 	const goal = byGoal[goalKey] ?? emptyHandoffObservabilitySummary();
 	goal.metrics_available = true;
 	byGoal[goalKey] = goal;
-	addHandoffTerminal(goal, state);
-
-	const threadKey = state.thread ?? "(ungrouped)";
-	const thread = byThread[threadKey] ?? emptyHandoffObservabilitySummary();
-	thread.metrics_available = true;
-	byThread[threadKey] = thread;
-	addHandoffTerminal(thread, state);
-
-	const depthKey = String(state.depth);
-	const depth = byDepth[depthKey] ?? emptyHandoffObservabilitySummary();
-	depth.metrics_available = true;
-	byDepth[depthKey] = depth;
-	addHandoffTerminal(depth, state);
-}
-
-function addHandoffTerminal(total: HandoffObservabilitySummary, state: HandoffStateProjection): void {
-	total.total++;
-	if (state.status === "blocked") {
-		total.blocked++;
-		total.unknown_blocked_reasons += state.unknown_blocked_reasons;
-		for (const reason of state.blocked_reasons) {
-			total.blocked_reasons[reason] = (total.blocked_reasons[reason] ?? 0) + 1;
-		}
-	} else if (state.status === "done") {
-		if (state.result === "PASS") total.pass++;
-		else if (state.result === "FAIL") total.fail++;
-		else total.nonterminal++;
-	} else {
-		total.nonterminal++;
-	}
-	if (state.retry_of !== null) total.redelegations++;
+	accumulateHandoffState(goal, state);
 }
 
 function accumulateHandoffObservability(
@@ -525,25 +412,21 @@ function accumulateHandoffObservability(
 	cases: CaseFile[],
 ): HandoffObservabilitySummary & {
 	by_goal: Record<string, HandoffObservabilitySummary>;
-	by_thread: Record<string, HandoffObservabilitySummary>;
-	by_depth: Record<string, HandoffObservabilitySummary>;
 } {
 	const total = emptyHandoffObservabilitySummary();
 	const byGoal: Record<string, HandoffObservabilitySummary> = {};
-	const byThread: Record<string, HandoffObservabilitySummary> = {};
-	const byDepth: Record<string, HandoffObservabilitySummary> = {};
 	for (const caseFile of cases) {
 		const slug = caseFile.instance_id.replace(/\//g, "__");
 		for (const attempt of caseFile.attempts) {
-			const file = path.join(outDir, "cases", slug, "attempts", String(attempt.attempt), "telemetry", "handoff-states.json");
+			const file = path.join(outDir, "cases", slug, "attempts", String(attempt.attempt), "telemetry", "handoffs.json");
 			if (!fs.existsSync(file)) continue;
 			total.metrics_available = true;
 			for (const state of readHandoffStateProjections(file)) {
-				addHandoffState(total, byGoal, byThread, byDepth, state);
+				addHandoffState(total, byGoal, state);
 			}
 		}
 	}
-	return { ...total, by_goal: byGoal, by_thread: byThread, by_depth: byDepth };
+	return { ...total, by_goal: byGoal };
 }
 
 /** Reads <outDir> artifacts only — manifest, case files, predictions. */
@@ -653,58 +536,20 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 			byOperation[operation] = (byOperation[operation] ?? 0) + count;
 		}
 	}
-	const recallOperations = ["goal_list", "goal_show", "handoff_index", "handoff_recall", "evidence_log"]
+	const recallOperations = ["recall", "evidence_log"]
 		.reduce((sum, kind) => sum + (byOperation[kind] ?? 0), 0);
 	const exploreOperations = byOperation.explore ?? 0;
 	const discoveryDenominator = recallOperations + exploreOperations;
-	const indexCards = { total: 0, semantic: 0, fallback: 0 };
-	for (const caseFile of cases) {
-		const caseDir = path.join(outDir, "cases", caseFile.instance_id.replace(/\//g, "__"));
-		for (const attempt of caseFile.attempts) {
-			const goalIndexRoots = path.join(
-				caseDir,
-				"attempts",
-				String(attempt.attempt),
-				"codeflow-runs",
-			);
-			if (!fs.existsSync(goalIndexRoots)) continue;
-			for (const runEntry of fs.readdirSync(goalIndexRoots, { withFileTypes: true })) {
-				if (!runEntry.isDirectory() || runEntry.name.startsWith("_")) continue;
-				const goalsRoot = path.join(goalIndexRoots, runEntry.name, "goals");
-				if (!fs.existsSync(goalsRoot)) continue;
-				for (const goalEntry of fs.readdirSync(goalsRoot, { withFileTypes: true })) {
-					if (!goalEntry.isDirectory()) continue;
-					const indexRoot = path.join(goalsRoot, goalEntry.name, "index");
-					if (!fs.existsSync(indexRoot)) continue;
-					for (const cardFile of fs.readdirSync(indexRoot)) {
-						if (!cardFile.endsWith(".json")) continue;
-						try {
-							const card = JSON.parse(fs.readFileSync(path.join(indexRoot, cardFile), "utf8")) as {
-								fallback?: unknown;
-								generator?: { kind?: unknown };
-							};
-							indexCards.total++;
-							if (card.generator?.kind === "zipper" && card.fallback !== true) indexCards.semantic++;
-							else indexCards.fallback++;
-						} catch {
-							// A malformed derived card must not break authoritative report rebuilding.
-						}
-					}
-				}
-			}
-		}
-	}
 	const breakdownInput: LedgerBreakdownInput = {
 		byGoal: {},
 		byModel: {},
-		byThread: {},
-		byDepth: {},
+		byWorkerKind: {},
 	};
 	accumulateLedgers(outDir, cases, breakdownInput);
 
-	const effective = manifest.termination_budgets?.effective ?? DEFAULT_BENCHMARK_BUDGETS;
+	const effective = manifest.termination_budgets.effective;
 	const handoffObservability = accumulateHandoffObservability(outDir, cases);
-	const attemptsPerInstance = manifest.attempts_per_instance ?? 1;
+	const attemptsPerInstance = manifest.attempts_per_instance;
 	const validCases = cases
 		.map((caseFile) => caseFile.attempts.filter((attempt) => attempt.verdict === "resolved" || attempt.verdict === "unresolved"))
 		.filter((attemptList) => attemptList.length > 0);
@@ -772,8 +617,8 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 			total: roundsTotal,
 			median: median(roundsPerAttempt),
 			p90: percentile90(roundsPerAttempt),
-			primary: attempts.reduce((sum, a) => sum + a.metrics.primary_model_rounds, 0),
-			support: attempts.reduce((sum, a) => sum + a.metrics.support_model_rounds, 0),
+			worker: attempts.reduce((sum, a) => sum + a.metrics.worker_model_rounds, 0),
+			service: attempts.reduce((sum, a) => sum + a.metrics.service_model_rounds, 0),
 			failed_attempts: attempts.reduce((sum, a) => sum + a.metrics.failed_model_attempts, 0),
 		},
 		tool_calls: { total: callsTotal, median: median(callsPerAttempt), p90: percentile90(callsPerAttempt) },
@@ -802,13 +647,11 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 			explore_operations: exploreOperations,
 			redundant_discovery_rate:
 				discoveryDenominator > 0 ? exploreOperations / discoveryDenominator : null,
-			index_cards: indexCards,
 		},
 		breakdowns: {
 			by_goal: breakdownInput.byGoal,
 			by_model: breakdownInput.byModel,
-			by_thread: breakdownInput.byThread,
-			by_depth: breakdownInput.byDepth,
+			by_worker_kind: breakdownInput.byWorkerKind,
 			by_tool: byTool,
 			by_operation: byOperation,
 		},
@@ -843,15 +686,15 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 			context_growth: aggregateContextGrowth(attempts),
 		},
 		comparison_keys: {
-			dataset_id: manifest.dataset?.dataset_id ?? "",
-			dataset_split: manifest.dataset?.split ?? "",
-			dataset_revision: manifest.dataset?.revision ?? "",
+				dataset_id: manifest.dataset.dataset_id,
+				dataset_split: manifest.dataset.split,
+				dataset_revision: manifest.dataset.revision,
 			instance_set_digest: createHash("sha256").update([...selected].sort().join("\n")).digest("hex"),
 			termination_budgets: {
 				wall_seconds: effective.wall_seconds,
 			},
-			tool_network: manifest.tool_network ?? "disabled",
-			harness_commit: manifest.harness?.commit ?? "",
+				tool_network: manifest.tool_network,
+				harness_commit: manifest.harness.commit,
 		},
 	};
 }

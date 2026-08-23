@@ -1,4 +1,4 @@
-/** Fails closed when a role tries to modify the host Codeflow runtime. */
+/** Fails closed when a Worker tries to modify the host Codeflow runtime. */
 
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { runtimeBashViolation, runtimeWriteViolation } from "./policy";

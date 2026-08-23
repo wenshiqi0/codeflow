@@ -3,7 +3,7 @@
  * §1.7.1, tests/benchmark/fakes/README.md §6, TESTPLAN "NET-*").
  *
  * Benchmark mode must MECHANICALLY deny outbound network access for Agent
- * tool execution — in the root role AND in every delegated-role child —
+ * tool execution — in the root Worker and every spawned Worker —
  * while the model-provider network stays separately reachable. A manifest
  * field or a prompt line is a declaration, not enforcement; the wall must
  * fail REAL outbound attempts made by ORDINARY HTTP clients (a curl
@@ -25,8 +25,7 @@
  *    exempt — not "*", not blanket loopback ("127.0.0.1"), no ambient
  *    NO_PROXY merge — so a loopback address that is not a configured
  *    provider endpoint stays walled;
- *  - delegated roles inherit the wall: runtime/extensions/codeflow-task/
- *    role-launcher.ts spreads { ...process.env } into its spawned children.
+ *  - spawned Workers inherit the wall through the organization launcher.
  *
  * Scope: applied ONLY by the benchmark driver to its spawned Codeflow run.
  * No Codeflow command or exec outside benchmark mode reads or inherits it,

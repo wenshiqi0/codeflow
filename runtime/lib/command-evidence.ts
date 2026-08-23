@@ -4,13 +4,13 @@
  * A model-written pipeline can accidentally report the status of `tail` or
  * `tee` instead of the command under test. This module executes the supplied
  * argv directly, streams both output channels to complete log files, and
- * records the child's real exit code in a validator-compatible receipt entry.
+ * records the child's real exit code in a reusable evidence entry.
  *
  * Each command also runs under a configurable wall-time timeout (12-minute
  * default, `--timeout-ms` / CODEFLOW_EVIDENCE_TIMEOUT_MS overrides, 0 = off).
  * On timeout the whole process tree is terminated, the recorder — not the
  * agent-watchdog — records exit code 124 with failure_class RUNNER_BLOCKED
- * and error_class EXECUTION_TIMEOUT, and control returns to the calling role
+ * and error_class EXECUTION_TIMEOUT, and control returns to the calling Worker
  * with the record already on disk. Earlier commands' records are written
  * incrementally, so they survive a later sibling's timeout.
  */
@@ -19,7 +19,6 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { finishHandoff } from "./handoff";
 import { DEFAULT_RUNS_DIR, RunPaths, writeJsonAtomic } from "./paths";
 
 const EVIDENCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -31,7 +30,7 @@ const EVIDENCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
  * (BASH_TIMEOUT_DEFAULT_MS) so the recorder — which returns control with a
  * structured record — always fires before the turn-wide abort, which would
  * kill the whole agent turn instead. A command that owns a run past both
- * bounds is a hang either way; the point of this default is that the role,
+ * bounds is a hang either way; the point of this default is that the Worker,
  * not the watchdog, owns the failure.
  */
 export const EVIDENCE_TIMEOUT_DEFAULT_MS = 720_000;
@@ -131,36 +130,6 @@ function currentPaths(): { paths: RunPaths; handoffId: string } {
 
 function commandDir(paths: RunPaths, handoffId: string): string {
 	return path.join(paths.evidence, handoffId, "commands");
-}
-
-/**
- * A recorder-owned timeout is a mechanical handoff transition, not a model
- * judgment. Finish the registered child immediately after its evidence is
- * durable so the delegator receives EXECUTION_TIMEOUT even if the role fails
- * to issue a final handoff command. A missing/terminal state is harmless for
- * standalone use and must not hide the command record.
- */
-function finishExecutionTimeout(
-	paths: RunPaths,
-	handoffId: string,
-	id: string,
-	timeoutMs: number,
-): void {
-	if (!fs.existsSync(paths.statePath(handoffId))) return;
-	try {
-		finishHandoff(paths, {
-			handoffId,
-			status: "BLOCKED",
-			summary: `evidence command ${id} exceeded its per-command timeout`,
-			blockedReasons: [EVIDENCE_TIMEOUT_ERROR_CLASS],
-			detail:
-				`code-agent evidence run terminated the process tree after ${timeoutMs}ms ` +
-				`and recorded exit ${EVIDENCE_TIMEOUT_EXIT_CODE}`,
-		});
-	} catch {
-		// Terminal handoffs are immutable. Preserve the verdict already stored
-		// by the role or an earlier mechanical failure path.
-	}
 }
 
 function shellQuote(value: string): string {
@@ -455,7 +424,6 @@ export async function runCommandEvidence(
 	};
 	writeJsonAtomic(recordPath, entry);
 	fs.unlinkSync(claimPath);
-	if (timedOut) finishExecutionTimeout(paths, handoffId, id, timeoutMs);
 	console.error(`code-agent evidence: recorded ${id} at ${recordPath}`);
 	return exitCode;
 }
@@ -495,12 +463,12 @@ function loadEntries(paths: RunPaths, handoffId: string): CommandEvidenceEntry[]
 	return entries as CommandEvidenceEntry[];
 }
 
-export function writeCommandReceipt(output: string): { output: string; status: "PASS" | "FAIL"; count: number } {
+export function writeCommandEvidenceBatch(output: string): { output: string; status: "PASS" | "FAIL"; count: number } {
 	const { paths, handoffId } = currentPaths();
 	const entries = loadEntries(paths, handoffId);
 	const status = entries.every((entry) => entry.status === "PASS") ? "PASS" : "FAIL";
 	const target = path.resolve(output);
-	writeJsonAtomic(target, { status, receipts: entries });
+	writeJsonAtomic(target, { status, entries });
 	return {
 		output: target,
 		status,

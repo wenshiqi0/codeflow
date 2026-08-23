@@ -1,12 +1,10 @@
 #!/usr/bin/env bun
 /**
- * The outer ring: `codeflow ls`, `sub`, `stop`, and the declared-but-unbuilt
- * `memo` and `audit`.
+ * The outer ring: Task-level `codeflow ls`, `sub`, `stop`, and `audit`.
  *
- * Everything here is about a whole run, never about a unit of work inside one.
- * That split is the point of the two binaries: a role process reaching the
- * state plane directly would bypass the handoff state machine, so the inner
- * verbs live in `code-agent` and cannot be spelled here at all.
+ * Everything here is about a whole Task, never about one Work Commitment.
+ * Handoff closure, Recall, and mechanical evidence stay on the Worker-facing
+ * `code-agent` surface.
  *
  * Output is one JSON object per line on stdout and diagnostics on stderr, so a
  * follower can read incrementally without waiting for a document to close.
@@ -14,8 +12,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { handoffHistory, type HandoffState } from "../lib/handoff";
-import { goalViews } from "../lib/goals";
+import { handoffHistory } from "../lib/handoff";
+import { taskState } from "../lib/state";
 import { probeAll } from "../lib/liveness";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../lib/paths";
 import { scan, wait } from "../lib/wait";
@@ -29,10 +27,10 @@ export class OuterError extends Error {}
 export type RunStatus = "running" | "finished" | "unknown";
 
 export interface RunRow {
-	run_id: string;
+	task_id: string;
 	status: RunStatus;
 	duration_seconds: number | null;
-	requirement: string;
+	objective: string;
 }
 
 interface Runner {
@@ -40,8 +38,7 @@ interface Runner {
 	child_pid?: number;
 	pgid?: number;
 	started_at?: string;
-	requirement?: string;
-	role?: string;
+	objective?: string;
 }
 
 function readRunner(runDir: string): Runner | null {
@@ -64,7 +61,7 @@ function pidAlive(pid: number): boolean {
 	}
 }
 
-export function truncateRequirement(text: string): string {
+export function truncateObjective(text: string): string {
 	if (text.length <= REQUIREMENT_WIDTH) return text;
 	return text.slice(0, REQUIREMENT_WIDTH) + "...";
 }
@@ -84,7 +81,7 @@ function seconds(fromIso: string | undefined, toMs: number): number | null {
  * meaningful without it. Here the only question is "did something exit, and
  * when", so a record missing its pid still answers it.
  */
-const LIVENESS_NAME = /^(?<pid>\d+)--(?<role>[a-z0-9-]+)--(?<depth>\d+)\.json$/;
+const LIVENESS_NAME = /^(?<pid>\d+)--(?<process>root|worker)\.json$/;
 
 function readExit(
 	livenessDir: string,
@@ -103,14 +100,13 @@ function readExit(
 		try {
 			const record = JSON.parse(fs.readFileSync(path.join(livenessDir, name), "utf-8")) as {
 				pid?: number;
-				depth?: number;
+				process?: "root" | "worker";
 				status?: string;
 				exited_at?: string;
 			};
 			const pid = record.pid ?? (match?.groups ? Number.parseInt(match.groups.pid, 10) : undefined);
-			const depth = record.depth ??
-				(match?.groups ? Number.parseInt(match.groups.depth, 10) : undefined);
-			if (record.status === "exited" && pid === expected && depth === 0) return record;
+			const processKind = record.process ?? match?.groups?.process;
+			if (record.status === "exited" && pid === expected && processKind === "root") return record;
 		} catch {
 			// A damaged heartbeat is one missing signal, not a failure.
 		}
@@ -119,7 +115,7 @@ function readExit(
 }
 
 /**
- * Classify one run from its own recorded facts.
+ * Classify one Task from its runner and liveness records.
  *
  * A recorded exit outranks a pid probe: pids are reused, and the watchdog's
  * record is the only evidence that survives the process itself.
@@ -127,20 +123,20 @@ function readExit(
 export function classify(runsDir: string, runId: string, now = Date.now()): RunRow {
 	const paths = new RunPaths(runsDir, runId);
 	const runner = readRunner(paths.runDir);
-	const requirement = truncateRequirement(runner?.requirement ?? "");
+	const objective = truncateObjective(runner?.objective ?? "");
 
 	if (runner === null) {
-		return { run_id: runId, status: "unknown", duration_seconds: null, requirement };
+		return { task_id: runId, status: "unknown", duration_seconds: null, objective };
 	}
 
 	const exited = readExit(paths.liveness, runner);
 	if (exited) {
 		const end = exited.exited_at ? Date.parse(exited.exited_at) : Number.NaN;
 		return {
-			run_id: runId,
+			task_id: runId,
 			status: "finished",
 			duration_seconds: seconds(runner.started_at, Number.isNaN(end) ? now : end),
-			requirement,
+			objective,
 		};
 	}
 
@@ -149,10 +145,10 @@ export function classify(runsDir: string, runId: string, now = Date.now()): RunR
 	);
 	const alive = identities.some((pid) => pidAlive(pid));
 	return {
-		run_id: runId,
+		task_id: runId,
 		status: alive ? "running" : "finished",
 		duration_seconds: seconds(runner.started_at, now),
-		requirement,
+		objective,
 	};
 }
 
@@ -177,7 +173,7 @@ function ls(runsDir: string): number {
 }
 
 /**
- * Terminate a live run's depth-0 runner.
+ * Terminate a live Task's root runner.
  *
  * Refusing an already-finished run is deliberate: "stop" reporting success on
  * something it did not stop would make the command useless as evidence.
@@ -290,7 +286,7 @@ function goals(runsDir: string, argv: string[]): number {
 	if (runId.startsWith("--")) throw new OuterError(`unknown option: ${runId}`);
 	const paths = new RunPaths(runsDir, runId);
 	if (!fs.existsSync(paths.runDir)) throw new OuterError(`no such run: ${runId}`);
-	console.log(JSON.stringify(goalViews(paths), null, 2));
+	console.log(JSON.stringify(taskState(paths), null, 2));
 	return 0;
 }
 
@@ -330,40 +326,28 @@ function parseAudit(argv: string[]): AuditArgs {
 
 function auditHandoffs(paths: RunPaths): Array<{
 	id: string;
-	role: string;
-	depth: number;
-	status: HandoffState["status"];
-	result: HandoffState["result"] | null;
-	blocked_reasons: string[];
-	stale: boolean | null;
-	age_seconds: number | null;
+	goal_id: string;
+	status: string;
+	receipt_id: string | null;
 }> {
 	const rows = handoffHistory(paths);
-	return rows.map((state) => ({
-		id: state.handoff_id,
-		role: state.role,
-		depth: state.depth,
-		status: state.status,
-		result: state.result ?? null,
-		blocked_reasons: [
-			...(((state.blocked as { reasons?: unknown } | undefined)?.reasons ?? []) as string[]),
-		],
-		stale: state.stale ?? null,
-		age_seconds: state.age_seconds ?? null,
+	return rows.map((view) => ({
+		id: view.handoff.id,
+		goal_id: view.handoff.goal_id,
+		status: view.status,
+		receipt_id: view.receipt?.id ?? null,
 	}));
 }
 
-function auditAgents(paths: RunPaths): Array<{
+function auditWorkers(paths: RunPaths): Array<{
 	pid: number;
-	role: string | null;
-	depth: number | null;
+	process: "root" | "worker" | null;
 	verdict: "ALIVE" | "DEAD" | "UNKNOWN";
 	heartbeat_age_seconds: number | null;
 }> {
 	return probeAll(paths.liveness).map((probe) => ({
 		pid: probe.pid,
-		role: probe.role ?? null,
-		depth: probe.depth ?? null,
+		process: probe.process ?? null,
 		verdict: probe.verdict,
 		heartbeat_age_seconds: probe.heartbeatAgeSeconds,
 	}));
@@ -392,11 +376,9 @@ function audit(runsDir: string, argv: string[]): number {
 	const handoffs = auditHandoffs(paths);
 	const hasBlocked = handoffs.some((handoff) => handoff.status === "blocked");
 	const hasActive = handoffs.some((handoff) => handoff.status === "open" || handoff.status === "running");
-	const hasStale = handoffs.some((handoff) => handoff.status !== "blocked" && handoff.stale === true);
 
-	let trigger: "blocked" | "stale_active" | "dead_runner" | "missing_runner" | "forced";
+	let trigger: "blocked" | "dead_runner" | "missing_runner" | "forced";
 	if (hasBlocked) trigger = "blocked";
-	else if (hasStale) trigger = "stale_active";
 	else if (runner === null && hasActive) trigger = "missing_runner";
 	else if (row.status !== "running" && hasActive) trigger = "dead_runner";
 	else if (args.force) trigger = "forced";
@@ -411,7 +393,7 @@ function audit(runsDir: string, argv: string[]): number {
 			run_status: row.status,
 			forced: args.force,
 			handoffs,
-			agents: auditAgents(paths),
+			workers: auditWorkers(paths),
 			last_event: lastEventIdentity(paths),
 		}),
 	);
@@ -435,9 +417,6 @@ export async function main(argv: string[]): Promise<number> {
 			case "stop":
 				return stop(runsDir, rest[0]);
 
-			// Declared so the vocabulary remains complete and discoverable.
-			case "memo":
-				throw new OuterError("memo is not implemented yet");
 			case "audit":
 				return audit(runsDir, rest);
 

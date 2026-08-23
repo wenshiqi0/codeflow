@@ -113,7 +113,7 @@ export function runtimeBashViolation(
 		normalized,
 	);
 	if (scansFilesystemRoot) {
-		return "Codeflow roles must not scan the host filesystem root; use a project-scoped search path";
+		return "Codeflow Workers must not scan the host filesystem root; use a project-scoped search path";
 	}
 	const runState = runStateRoot(environment);
 	const canonicalRunState = canonicalRunStateRoot(environment);

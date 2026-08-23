@@ -1,5 +1,5 @@
 /**
- * Pi extension that asks the internal zipper role to semantically compress
+ * Pi extension that asks the internal output-compression service to compress
  * oversized bash results. Any failure or timeout keeps the original result.
  */
 
@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
-import { resolveRole } from "../../lib/roles";
+import { resolveOutputCompression } from "../../lib/config";
 import { appendUsageRecord, usageRecordFromMessage } from "../../lib/usage";
 import {
 	type BashToolResultLike,
@@ -18,39 +18,38 @@ import {
 } from "./compressor";
 
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const ROLES_FILE = path.join(RUNTIME_DIR, "roles.json");
+const CONFIG_FILE = path.join(RUNTIME_DIR, "config.json");
 const PI_PATH = path.join(RUNTIME_DIR, "bin", "pi");
 const PROVIDER_PROFILES_EXTENSION = path.join(RUNTIME_DIR, "extensions", "provider-profiles", "index.ts");
 export const ZIPPER_TIMEOUT_MS = 20_000;
 
-interface ZipperRole {
+interface CompressionService {
 	provider: string;
 	model: string;
 	systemPrompt: string;
 }
 
-let zipperRole: ZipperRole | undefined;
+let compressionService: CompressionService | undefined;
 
-function readZipperRole(): ZipperRole {
-	if (zipperRole) return zipperRole;
-	const resolved = resolveRole(ROLES_FILE, "zipper");
-	if (!resolved) throw new Error("zipper role is missing from runtime/roles.json");
-	zipperRole = {
+function readCompressionService(): CompressionService {
+	if (compressionService) return compressionService;
+	const resolved = resolveOutputCompression(CONFIG_FILE);
+	compressionService = {
 		provider: resolved.provider,
 		model: resolved.model,
 		systemPrompt: resolved.systemPrompt,
 	};
-	return zipperRole;
+	return compressionService;
 }
 
 export function runZipper(prompt: string, externalSignal?: AbortSignal): Promise<string> {
 	return new Promise<string>((resolve, reject) => {
-		const role = readZipperRole();
+		const service = readCompressionService();
 		const args = [
 			"--mode", "json",
-			"--provider", role.provider,
-			"--model", role.model,
-			"--system-prompt", role.systemPrompt,
+			"--provider", service.provider,
+			"--model", service.model,
+			"--system-prompt", service.systemPrompt,
 			"--no-extensions",
 			"--extension", PROVIDER_PROFILES_EXTENSION,
 			"--no-context-files",
@@ -113,12 +112,11 @@ export function runZipper(prompt: string, externalSignal?: AbortSignal): Promise
 				if (parsed.message) {
 					const usageRecord = usageRecordFromMessage(parsed.message, 1);
 					if (usageRecord) {
-						usageRecord.role = "zipper";
-						usageRecord.depth = 2;
+						usageRecord.worker_kind = "service";
 						appendUsageRecord(
 							new RunPaths(
 								process.env.CODEFLOW_RUNS_DIR ?? DEFAULT_RUNS_DIR,
-								usageRecord.run_id,
+								usageRecord.task_id,
 							),
 							usageRecord,
 						);

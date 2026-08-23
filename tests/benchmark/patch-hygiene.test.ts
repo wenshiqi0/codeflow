@@ -49,7 +49,7 @@ describe("benchmark patch hygiene", () => {
 		write(dir, ".codeflow/evil.txt", "must not ship\n");
 		git(dir, ["add", "-f", ".codeflow/evil.txt"]);
 
-		expect(mod.extractPatch(dir)).toBe("");
+		expect(mod.extractPatchDetailed(dir).patch).toBe("");
 	});
 
 	test("binary hunks are stripped while text data remains content-based", async () => {

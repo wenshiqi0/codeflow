@@ -1,184 +1,166 @@
-/**
- * Immutable goal contracts and read-only grouping statistics.
- *
- * There is deliberately no goal state machine or join gate: handoff state,
- * receipts, and artifacts remain the only authoritative execution state.
- */
+/** Child Goal contracts and dependency graph validation. Task is the root Goal. */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { type HandoffState, handoffHistory } from "./handoff";
-import { RunPaths, readJson, slug, writeJsonAtomic } from "./paths";
+import { canonicalJson } from "./canonical";
 import { deliverEvent, eventSummary } from "./events";
+import { RunPaths, readJson, slug, writeJsonAtomic } from "./paths";
+import { nextSeq } from "./seq";
+import { loadTask } from "./tasks";
 
-export const GOAL_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
-export const THREAD_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
-export const UNGROUPED_GOAL_ID = "_ungrouped";
+export const GOAL_SCHEMA_VERSION = 1;
+export const GOAL_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 export class GoalError extends Error {}
 
-export interface GoalContract {
+export interface GoalRecord {
 	schema_version: 1;
+	seq: number;
 	id: string;
-	goal: string;
-	definition_of_done: string[];
-	created_at: string;
+	task_id: string;
+	objective: string;
+	dependencies: string[];
 }
 
-export interface DefineGoalOptions {
+export interface CreateGoalOptions {
 	id: string;
-	goal: string;
-	definitionOfDone?: string[];
+	objective: string;
+	dependencies?: string[];
 }
 
-function uniqueSorted(values: string[]): string[] {
-	return [...new Set(values)].sort();
+function normalizeGoalId(value: string): string {
+	const id = slug(value);
+	if (!GOAL_ID_PATTERN.test(id) || id.startsWith("_")) {
+		throw new GoalError(`goal id must match ${GOAL_ID_PATTERN} and may not start with _: ${value}`);
+	}
+	return id;
 }
 
-export function defineGoal(
-	paths: RunPaths,
-	options: DefineGoalOptions,
-): { goal_id: string; contract: string; idempotent: boolean } {
-	const goalId = slug(options.id);
-	if (!GOAL_ID_PATTERN.test(goalId) || goalId.startsWith("_")) {
-		throw new GoalError(`goal id must match ${GOAL_ID_PATTERN} and may not start with "_": ${options.id}`);
-	}
-	const goal = options.goal?.trim();
-	if (!goal) throw new GoalError("goal must be a non-empty string");
-
-	const contract: GoalContract = {
-		schema_version: 1,
-		id: goalId,
-		goal,
-		definition_of_done: uniqueSorted((options.definitionOfDone ?? []).map((entry) => entry.trim()).filter(Boolean)),
-		created_at: new Date().toISOString(),
-	};
-
-	const file = paths.goalContractPath(goalId);
-	fs.mkdirSync(path.dirname(file), { recursive: true });
-	if (fs.existsSync(file)) {
-		const existing = readJson<GoalContract>(file);
-		const canonical = {
-			...existing,
-			created_at: contract.created_at,
-		};
-		if (JSON.stringify(canonical) !== JSON.stringify(contract)) {
-			throw new GoalError(`goal contract already exists with different content: ${goalId}`);
-		}
-		return { goal_id: goalId, contract: path.relative(process.cwd(), file), idempotent: true };
-	}
-	writeJsonAtomic(file, contract);
-	deliverEvent({
-		stagingDir: paths.tmp,
-		targetDir: paths.events,
-		counterPath: paths.eventSeq,
-		subject: goalId,
-		kind: "artifact_written",
-		status: "WRITTEN",
-		payload: {
-			ref: path.relative(process.cwd(), file),
-			summary: eventSummary(`goal contract: ${goal}`),
-		},
-	});
-	return { goal_id: goalId, contract: path.relative(process.cwd(), file), idempotent: false };
+function normalizeDependencies(values: string[]): string[] {
+	return [...new Set(values.map(normalizeGoalId))].sort();
 }
 
-export function loadGoal(paths: RunPaths, goalId: string): GoalContract {
-	const file = paths.goalContractPath(slug(goalId));
-	if (!fs.existsSync(file)) throw new GoalError(`unknown goal: ${goalId}`);
-	const contract = readJson<GoalContract>(file);
-	if (contract.schema_version !== 1) throw new GoalError(`unsupported goal contract schema: ${goalId}`);
-	if ("lanes" in contract) {
-		throw new GoalError(
-			`goal contract ${goalId} uses the retired lane schema; create a lane-free v1 contract`,
-		);
+export function loadGoal(paths: RunPaths, goalId: string): GoalRecord {
+	const id = normalizeGoalId(goalId);
+	const file = paths.goalPath(id);
+	if (!fs.existsSync(file)) throw new GoalError(`unknown goal: ${id}`);
+	const goal = readJson<GoalRecord>(file);
+	if (
+		goal.schema_version !== GOAL_SCHEMA_VERSION ||
+		goal.id !== id ||
+		goal.task_id !== paths.runId ||
+		!Number.isSafeInteger(goal.seq) ||
+		typeof goal.objective !== "string" ||
+		!Array.isArray(goal.dependencies)
+	) {
+		throw new GoalError(`malformed goal: ${id}`);
 	}
-	if (!contract.id || !contract.goal || !Array.isArray(contract.definition_of_done) || !contract.created_at) {
-		throw new GoalError(`goal contract ${goalId} is malformed`);
-	}
-	return contract;
+	return goal;
 }
 
-export function goalSessionId(runId: string, goalId: string, thread: string): string {
-	const resolvedGoalId = goalId === UNGROUPED_GOAL_ID ? goalId : slug(goalId);
-	if (!runId || (resolvedGoalId !== UNGROUPED_GOAL_ID && !GOAL_ID_PATTERN.test(resolvedGoalId))) {
-		throw new GoalError(`invalid goal session run/goal: ${runId}/${goalId}`);
-	}
-	if (!THREAD_PATTERN.test(thread)) {
-		throw new GoalError(`invalid goal session thread: ${thread}`);
-	}
-	return `${runId}-${resolvedGoalId}-${thread}`;
-}
-
-export function goalContracts(paths: RunPaths): GoalContract[] {
+export function goalRecords(paths: RunPaths): GoalRecord[] {
 	if (!fs.existsSync(paths.goals)) return [];
 	return fs
 		.readdirSync(paths.goals, { withFileTypes: true })
 		.filter((entry) => entry.isDirectory())
-		.filter((entry) => !entry.name.startsWith("_"))
 		.map((entry) => loadGoal(paths, entry.name))
-		.sort((left, right) => left.id.localeCompare(right.id));
+		.sort((left, right) => left.seq - right.seq || left.id.localeCompare(right.id));
 }
 
-export interface GoalThreadView {
-	handoff_count: number;
-	open_count: number;
-	pass_count: number;
-	fail_count: number;
-	blocked_count: number;
-}
-
-export interface GoalView {
-	goal_id: string;
-	goal: string;
-	definition_of_done: string[];
-	handoff_count: number;
-	open_count: number;
-	pass_count: number;
-	fail_count: number;
-	blocked_count: number;
-	threads: Record<string, GoalThreadView>;
-}
-
-export function goalView(paths: RunPaths, contract: GoalContract): GoalView {
-	const handoffSequence = (id: string): number => {
-		const parsed = Number.parseInt(id.slice(1), 10);
-		return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
-	};
-	const states = handoffHistory(paths)
-		.filter((state) => state.goal_id === contract.id)
-		.sort((left, right) => handoffSequence(left.handoff_id) - handoffSequence(right.handoff_id));
-	const threads: Record<string, GoalThreadView> = {};
-	for (const state of states) {
-		const key = state.thread ?? "_unspecified";
-		const view = threads[key] ?? {
-			handoff_count: 0,
-			open_count: 0,
-			pass_count: 0,
-			fail_count: 0,
-			blocked_count: 0,
-		};
-		view.handoff_count++;
-		if (state.status === "open" || state.status === "running") view.open_count++;
-		else if (state.status === "done" && state.result === "PASS") view.pass_count++;
-		else if (state.status === "done") view.fail_count++;
-		else view.blocked_count++;
-		threads[key] = view;
+/** Task is a valid Goal scope; every other goal must have a persisted record. */
+export function assertGoalScope(paths: RunPaths, goalId: string): void {
+	if (goalId === paths.runId) {
+		loadTask(paths);
+		return;
 	}
-	const count = (predicate: (state: HandoffState) => boolean): number => states.filter(predicate).length;
-	return {
-		goal_id: contract.id,
-		goal: contract.goal,
-		definition_of_done: contract.definition_of_done,
-		handoff_count: states.length,
-		open_count: count((state) => state.status === "open" || state.status === "running"),
-		pass_count: count((state) => state.status === "done" && state.result === "PASS"),
-		fail_count: count((state) => state.status === "done" && state.result !== "PASS"),
-		blocked_count: count((state) => state.status === "blocked"),
-		threads,
-	};
+	loadGoal(paths, goalId);
 }
 
-export function goalViews(paths: RunPaths): GoalView[] {
-	return goalContracts(paths).map((contract) => goalView(paths, contract));
+function assertDependenciesExist(paths: RunPaths, goalId: string, dependencies: string[]): void {
+	for (const dependency of dependencies) {
+		if (dependency === goalId) throw new GoalError(`goal ${goalId} cannot depend on itself`);
+		loadGoal(paths, dependency);
+	}
+}
+
+function assertAcyclic(paths: RunPaths, replacement?: GoalRecord): void {
+	const goals = new Map(goalRecords(paths).map((goal) => [goal.id, goal]));
+	if (replacement) goals.set(replacement.id, replacement);
+	const visiting = new Set<string>();
+	const visited = new Set<string>();
+	const visit = (id: string): void => {
+		if (visited.has(id)) return;
+		if (visiting.has(id)) throw new GoalError(`goal dependency cycle includes ${id}`);
+		visiting.add(id);
+		for (const dependency of goals.get(id)?.dependencies ?? []) visit(dependency);
+		visiting.delete(id);
+		visited.add(id);
+	};
+	for (const id of goals.keys()) visit(id);
+}
+
+export function createGoal(
+	paths: RunPaths,
+	options: CreateGoalOptions,
+): { goal_id: string; ref: string; idempotent: boolean } {
+	loadTask(paths);
+	const id = normalizeGoalId(options.id);
+	if (id === paths.runId) throw new GoalError("task id is already the root Goal");
+	const objective = options.objective.trim();
+	if (!objective) throw new GoalError("goal objective must be a non-empty string");
+	const dependencies = normalizeDependencies(options.dependencies ?? []);
+	assertDependenciesExist(paths, id, dependencies);
+
+	const file = paths.goalPath(id);
+	if (fs.existsSync(file)) {
+		const existing = loadGoal(paths, id);
+		const expected = { ...existing, objective, dependencies };
+		if (canonicalJson(existing) !== canonicalJson(expected)) {
+			throw new GoalError(`goal already exists with different content: ${id}`);
+		}
+		return { goal_id: id, ref: path.relative(process.cwd(), file), idempotent: true };
+	}
+
+	const goal: GoalRecord = {
+		schema_version: GOAL_SCHEMA_VERSION,
+		seq: nextSeq(paths.goalSeq),
+		id,
+		task_id: paths.runId,
+		objective,
+		dependencies,
+	};
+	assertAcyclic(paths, goal);
+	writeJsonAtomic(file, goal);
+	deliverEvent({
+		stagingDir: paths.tmp,
+		targetDir: paths.events,
+		counterPath: paths.eventSeq,
+		subject: id,
+		kind: "goal_created",
+		status: "CREATED",
+		payload: { ref: path.relative(process.cwd(), file), goal_id: id, summary: eventSummary(objective) },
+	});
+	return { goal_id: id, ref: path.relative(process.cwd(), file), idempotent: false };
+}
+
+export function updateGoalDependencies(
+	paths: RunPaths,
+	goalId: string,
+	dependencies: string[],
+): GoalRecord {
+	const current = loadGoal(paths, goalId);
+	const next: GoalRecord = { ...current, dependencies: normalizeDependencies(dependencies) };
+	assertDependenciesExist(paths, current.id, next.dependencies);
+	assertAcyclic(paths, next);
+	writeJsonAtomic(paths.goalPath(current.id), next);
+	deliverEvent({
+		stagingDir: paths.tmp,
+		targetDir: paths.events,
+		counterPath: paths.eventSeq,
+		subject: current.id,
+		kind: "goal_updated",
+		status: "UPDATED",
+		payload: { goal_id: current.id, ref: path.relative(process.cwd(), paths.goalPath(current.id)) },
+	});
+	return next;
 }

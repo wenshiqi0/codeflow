@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Test-first multi-agent coding workflow, packaged as a single skill",
+  "description": "Goal-scoped handoff and receipt runtime for equal coding workers",
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc -p tsconfig.json",

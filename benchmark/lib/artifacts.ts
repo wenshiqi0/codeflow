@@ -11,13 +11,11 @@ import type { BenchmarkBudgets, BudgetName, ConsumptionMetricName } from "./budg
 import type { AttemptMetrics } from "./metrics";
 import type { BenchmarkVerdict } from "./driver";
 
-export const BENCHMARK_MANIFEST_SCHEMA_VERSION = 3;
-export const LEGACY_BENCHMARK_MANIFEST_SCHEMA_VERSION = 1;
-export const LEGACY_BUDGETED_BENCHMARK_MANIFEST_SCHEMA_VERSION = 2;
-export const BENCHMARK_CASE_SCHEMA_VERSION = 1;
+export const BENCHMARK_MANIFEST_SCHEMA_VERSION = 4;
+export const BENCHMARK_CASE_SCHEMA_VERSION = 2;
 
 export interface BenchmarkManifest {
-	schema_version: 3;
+	schema_version: 4;
 	benchmark_run_id: string;
 	created_at: string;
 	dataset: {
@@ -70,7 +68,7 @@ export interface CaseAttemptRecord {
 }
 
 export interface CaseFile {
-	schema_version: 1;
+	schema_version: 2;
 	instance_id: string;
 	attempts: CaseAttemptRecord[];
 	final_verdict: BenchmarkVerdict;

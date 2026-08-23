@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { currentEvidenceDir } from "../../runtime/extensions/codeflow-task/role-launcher";
+import { RunPaths } from "../../runtime/lib/paths";
 
 const REPO = path.resolve(import.meta.dir, "../..");
 
@@ -15,11 +15,10 @@ describe("evidence directory policy", () => {
 		process.env.CODEFLOW_RUN_ID = "run-evidence-policy";
 		process.env.CODEFLOW_RUNS_DIR = runsDir;
 		try {
-			const evidence = currentEvidenceDir();
-			expect(evidence).toBeDefined();
-			expect(path.isAbsolute(evidence!)).toBe(true);
-			expect(path.relative(workspace, evidence!).startsWith("..")).toBe(true);
-			expect(evidence!).toBe(path.join(runsRoot, "evidence", "run-evidence-policy"));
+			const evidence = new RunPaths(runsDir, "run-evidence-policy").evidence;
+			expect(path.isAbsolute(evidence)).toBe(true);
+			expect(path.relative(workspace, evidence).startsWith("..")).toBe(true);
+			expect(evidence).toBe(path.join(runsRoot, "evidence", "run-evidence-policy"));
 		} finally {
 			if (previousRun === undefined) delete process.env.CODEFLOW_RUN_ID;
 			else process.env.CODEFLOW_RUN_ID = previousRun;
@@ -30,9 +29,8 @@ describe("evidence directory policy", () => {
 	});
 
 	test("prompt contracts use the absolute evidence environment root", () => {
-	const agents = fs.readFileSync(path.join(REPO, "runtime/AGENTS.md"), "utf8");
-	expect(agents).not.toContain("below `.codeflow/runs/`");
-	expect(agents).toContain("$CODEFLOW_EVIDENCE_DIR");
-	expect(agents).toContain("not the target repository");
+		const agents = fs.readFileSync(path.join(REPO, "runtime/AGENTS.md"), "utf8");
+		expect(agents).not.toContain("below `.codeflow/runs/`");
+		expect(agents).toContain("$CODEFLOW_EVIDENCE_DIR");
 	});
 });

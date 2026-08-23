@@ -10,7 +10,7 @@
  *
  * What it does per attempt:
  *  1. starts `codeflow exec "<task prompt>"` with cwd = the fresh
- *     repo@base_commit workspace, a FRESH Codeflow run id/session (run-scoped
+ *     repo@base_commit workspace, a fresh Codeflow Task id (run-scoped
  *     env is stripped), and run artifacts redirected OUTSIDE the workspace
  *     (attempt dir), so the extracted patch stays exactly the model's work;
  *  2. the telemetry-ledger extension (runtime/extensions/telemetry-ledger)
@@ -20,7 +20,7 @@
  *  3. while the Codeflow process runs, this script TAILS the staging
  *     ledgers (poll cadence LIVE_POLL_MS) and streams them as DriverEvents
  *     as they land: each usage row is one round, each terminated tool call a
- *     `tool_calls` event attributed to the role that issued it — so the
+ *     `tool_calls` event attributed to the Worker context that issued it — so the
  *     runner's budget checks supervise the LIVE run; after the process ends
  *     a bounded final drain picks up the last rows, and calls still without
  *     a terminal result at stream end are `incomplete`;
@@ -53,9 +53,6 @@ const RUN_SCOPED_ENV_KEYS = [
 	"CODEFLOW_RUNS_DIR",
 	"CODEFLOW_HANDOFF_ID",
 	"CODEFLOW_GOAL_ID",
-	"CODEFLOW_THREAD",
-	"CODEFLOW_AGENT_ROLE",
-	"CODEFLOW_AGENT_DEPTH",
 ];
 
 function argValue(flag: string): string | undefined {
@@ -115,8 +112,8 @@ const prompt = [
 const childEnv: Record<string, string> = { ...process.env } as Record<string, string>;
 for (const key of RUN_SCOPED_ENV_KEYS) delete childEnv[key];
 // §4 tool-network wall: mechanically deny outbound network for the whole
-// spawned Codeflow tree — root role here, delegated roles through
-// role-launcher's { ...process.env } inheritance — while the run's
+// spawned Codeflow tree — root Worker and children through the organization
+// launcher's environment inheritance — while the run's
 // configured provider endpoints (env-supplied base URLs, exactly) stay
 // reachable. Environment is the mechanism: every stock HTTP client (curl,
 // fetch, pip, git-over-http …) honors it with no tool-argument parsing, and
@@ -138,7 +135,7 @@ const child = Bun.spawn(["bash", CODEFLOW_BIN, "exec", prompt], {
 });
 
 // Budget stops SIGTERM this process; forward to the live Codeflow run and let
-// its own supervision terminate the role tree. Escalate to SIGKILL if it
+// its own supervision terminate the Worker tree. Escalate to SIGKILL if it
 // lingers, so the whole run dies inside the runner's grace window.
 const TERMINATION_ESCALATE_MS = 3_000;
 let terminating = false;
@@ -204,7 +201,8 @@ function streamLedgers(): number {
 		emit({
 			type: "failed_model_attempt",
 			attempt: {
-				role: row.role,
+				task_id: row.task_id ?? null,
+				worker_kind: row.worker_kind,
 				provider: row.provider,
 				model: row.model,
 				error_class: row.error_class,
@@ -218,16 +216,14 @@ function streamLedgers(): number {
 			type: "round",
 				round: {
 					at: row.at,
-					run_id: row.run_id ?? null,
-					role: row.role,
+					task_id: row.task_id ?? null,
+					worker_kind: row.worker_kind,
 					provider: row.provider,
 					model: row.model,
-					depth: row.depth ?? null,
 					turn: row.turn ?? null,
 					request_started_at: row.request_started_at ?? null,
 					handoff_id: row.handoff_id ?? null,
 				goal_id: row.goal_id ?? null,
-				thread: row.thread ?? null,
 				usage: row.usage,
 			},
 		});
@@ -243,14 +239,13 @@ function streamLedgers(): number {
 		pendingRequested.delete(String(row.call_id));
 		emit({
 			type: "tool_calls",
-			role: row.role,
+			worker_kind: row.worker_kind,
 			// Direct attribution from the staging row — the context that emitted
-			// the call (design §7); never derived from the role.
+			// the call; never inferred from another identity field.
 			provider: row.provider,
 			model: row.model,
 			handoff_id: row.handoff_id ?? null,
 			goal_id: row.goal_id ?? null,
-			thread: row.thread ?? null,
 				calls: [
 					{
 						call_id: row.call_id,
@@ -304,12 +299,11 @@ streamLedgers();
 for (const row of pendingRequested.values()) {
 	emit({
 		type: "tool_calls",
-		role: row.role,
+		worker_kind: row.worker_kind,
 		provider: row.provider,
 		model: row.model,
 		handoff_id: row.handoff_id ?? null,
 		goal_id: row.goal_id ?? null,
-		thread: row.thread ?? null,
 			calls: [
 				{
 					call_id: row.call_id,

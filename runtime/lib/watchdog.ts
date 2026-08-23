@@ -8,10 +8,10 @@
  *
  * It does two things and nothing else:
  *
- * - refresh `liveness/<pid>--<role>--<depth>.json` while the monitored process
- *   lives, so `code-agent roster` has a fact source; and
- * - record the exit once it happens, publishing `runner_exited` only for depth
- *   0 — a depth-1 child's exit is already observed by its parent delegation,
+ * - refresh `liveness/<pid>--<process>.json` while the monitored process
+ *   lives; and
+ * - record the exit once it happens, publishing `runner_exited` only for the
+ *   root Worker — a child Worker's exit is already observed by its parent,
  *   so publishing it would be noise the observer could mistake for a stop
  *   signal.
  *
@@ -22,7 +22,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { runnerExited } from "./handoff";
-import { DEFAULT_RUNS_DIR, nowIso, RunPaths, slug, writeJsonAtomic } from "./paths";
+import { DEFAULT_RUNS_DIR, nowIso, RunPaths, writeJsonAtomic } from "./paths";
 
 const DEFAULT_INTERVAL_SECONDS = 60;
 const POLL_INTERVAL_MS = 2000;
@@ -45,7 +45,7 @@ export function procState(statText: string): string | null {
  *
  * A zombie is dead even though `kill(pid, 0)` still succeeds for it: the
  * kernel keeps a zombie's entry until someone reaps it, and an un-reaped
- * depth-0 runner (adopted by a non-init PID 1, the normal container case)
+ * root runner (adopted by a non-init PID 1, the normal container case)
  * would otherwise block this watchdog forever — stranding the `runner_exited`
  * stop signal and hanging the observe loop. So read procfs state first and
  * count state Z as dead.
@@ -70,24 +70,22 @@ export function isAlive(pid: number): boolean {
 
 export interface WatchdogOptions {
 	pid: number;
-	role: string;
-	depth: number;
+	process: "root" | "worker";
 	runId: string;
 	runsDir?: string;
 	intervalSeconds?: number;
 }
 
 function heartbeatFile(paths: RunPaths, options: WatchdogOptions): string {
-	return path.join(paths.liveness, `${options.pid}--${slug(options.role)}--${options.depth}.json`);
+	return path.join(paths.liveness, `${options.pid}--${options.process}.json`);
 }
 
 export function writeHeartbeat(paths: RunPaths, options: WatchdogOptions): void {
 	writeJsonAtomic(heartbeatFile(paths, options), {
-		schema_version: 2,
-		run_id: options.runId,
+		schema_version: 1,
+		task_id: options.runId,
 		pid: options.pid,
-		role: options.role,
-		depth: options.depth,
+		process: options.process,
 		status: "alive",
 		heartbeat_at: nowIso(),
 	});
@@ -114,7 +112,7 @@ export async function watch(options: WatchdogOptions): Promise<void> {
 	// The exit is the whole reason this process exists; record it even if the
 	// heartbeats failed.
 	try {
-		runnerExited(paths, options.pid, options.role, options.depth);
+		runnerExited(paths, options.pid, options.process === "root");
 	} catch {
 		// Nothing left to do: the monitored process is already gone.
 	}
@@ -122,8 +120,7 @@ export async function watch(options: WatchdogOptions): Promise<void> {
 
 export async function main(argv: string[]): Promise<number> {
 	let pid: number | undefined;
-	let role: string | undefined;
-	let depth: number | undefined;
+	let processKind: "root" | "worker" | undefined;
 	let runId: string | undefined = process.env.CODEFLOW_RUN_ID;
 	let runsDir = process.env.CODEFLOW_RUNS_DIR ?? DEFAULT_RUNS_DIR;
 	let interval = DEFAULT_INTERVAL_SECONDS;
@@ -135,12 +132,12 @@ export async function main(argv: string[]): Promise<number> {
 				pid = Number.parseInt(value ?? "", 10);
 				index++;
 				break;
-			case "--role":
-				role = value;
-				index++;
-				break;
-			case "--depth":
-				depth = Number.parseInt(value ?? "", 10);
+			case "--process":
+				if (value !== "root" && value !== "worker") {
+					console.error("codeflow watchdog: error: --process must be root or worker");
+					return 1;
+				}
+				processKind = value;
 				index++;
 				break;
 			case "--run-id":
@@ -165,12 +162,8 @@ export async function main(argv: string[]): Promise<number> {
 		console.error("codeflow watchdog: error: --pid is required");
 		return 1;
 	}
-	if (!role) {
-		console.error("codeflow watchdog: error: --role is required");
-		return 1;
-	}
-	if (depth === undefined || !Number.isSafeInteger(depth)) {
-		console.error("codeflow watchdog: error: --depth is required");
+	if (!processKind) {
+		console.error("codeflow watchdog: error: --process is required");
 		return 1;
 	}
 	if (!runId) {
@@ -178,7 +171,7 @@ export async function main(argv: string[]): Promise<number> {
 		return 1;
 	}
 
-	await watch({ pid, role, depth, runId, runsDir, intervalSeconds: interval });
+	await watch({ pid, process: processKind, runId, runsDir, intervalSeconds: interval });
 	return 0;
 }
 
