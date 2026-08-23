@@ -38,9 +38,7 @@ function parse(argv: string[]): { runId?: string; runsDir: string; json: boolean
 function describe(probe: Probe): string {
 	const signals = probe.passedSignals.length > 0 ? probe.passedSignals.join("+") : "none";
 	const age = probe.heartbeatAgeSeconds === null ? "?" : `${probe.heartbeatAgeSeconds}s`;
-	return `${probe.verdict} pid=${probe.pid} role=${probe.role ?? "?"} depth=${
-		probe.depth ?? "?"
-	} signals=${signals} heartbeat=${age}`;
+	return `${probe.verdict} pid=${probe.pid} process=${probe.process ?? "?"} signals=${signals} heartbeat=${age}`;
 }
 
 export function main(argv: string[]): number {

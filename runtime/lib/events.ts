@@ -23,8 +23,13 @@ export const EVENT_KINDS = [
 	"run_started",
 	"run_resumed",
 	"run_finished",
+	"run_interrupted",
+	"goal_created",
+	"goal_updated",
 	"handoff_opened",
-	"handoff_finished",
+	"handoff_started",
+	"receipt_submitted",
+	"execution_interrupted",
 	"artifact_written",
 	"runner_exited",
 ] as const;
@@ -34,10 +39,16 @@ export type EventKind = (typeof EVENT_KINDS)[number];
 export const EVENT_STATUSES = [
 	"STARTED",
 	"OPEN",
+	"CREATED",
+	"UPDATED",
+	"RUNNING",
 	"WRITTEN",
-	"PASS",
-	"FAIL",
+	"COMPLETED",
+	"PARTIAL",
 	"BLOCKED",
+	"FAILED",
+	"SUPERSEDED",
+	"INTERRUPTED",
 	"EXITED",
 ] as const;
 
@@ -68,11 +79,10 @@ const ALLOWED_PAYLOAD_KEYS = new Set([
 	"ref",
 	"refs",
 	"receipt_ref",
+	"receipt_id",
 	"handoff_id",
-	"role",
-	"depth",
+	"task_id",
 	"goal_id",
-	"lane",
 	"pid",
 	"run_id",
 ]);
@@ -92,11 +102,11 @@ function redactSecrets(value: string): string {
 	return value
 		.replace(
 			/\b(api[_-]?key|authorization|password|secret|token)\b\s*[:=]\s*bearer\s+[A-Za-z0-9._~+/:-]+/gi,
-			(match, label: string) => `${label}=[REDACTED]`,
+			(_match, label: string) => `${label}=[REDACTED]`,
 		)
 		.replace(
 			/\b(api[_-]?key|authorization|bearer|password|secret|token)\b\s*[:=]\s*[^\s,;]+/gi,
-			(match, label: string) => `${label}=[REDACTED]`,
+			(_match, label: string) => `${label}=[REDACTED]`,
 		)
 		.replace(/\bBearer\s+[A-Za-z0-9._~+/:-]+/gi, "Bearer [REDACTED]");
 }

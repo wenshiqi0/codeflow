@@ -12,7 +12,7 @@
  * 1. `/proc/<pid>` exists            — Linux kernel process table
  * 2. `kill(pid, 0)` succeeds         — POSIX signal probe
  * 3. `/proc/<pid>/cmdline` names pi  — defends against PID reuse
- * 4. watchdog heartbeat freshness    — liveness/<pid>--<role>--<depth>.json
+ * 4. watchdog heartbeat freshness    — liveness/<pid>--<process>.json
  *
  * Verdicts: ALIVE when 1+2+3 agree, DEAD when 1+2 both fail, otherwise
  * UNKNOWN. On macOS `/proc` does not exist, so honest answers there are often
@@ -35,8 +35,7 @@ export interface Probe extends Signals {
 	verdict: Verdict;
 	passedSignals: string[];
 	heartbeatAgeSeconds: number | null;
-	role?: string | null;
-	depth?: number | null;
+	process?: "root" | "worker";
 }
 
 const PROC_ROOT = "/proc";
@@ -101,8 +100,7 @@ export function heartbeatAge(record: LivenessRecord, now = Date.now()): number |
 
 export interface LivenessRecord {
 	pid: number;
-	role?: string | null;
-	depth?: number | null;
+	process?: "root" | "worker";
 	status?: string;
 	heartbeat_at?: string;
 	started_at?: string;
@@ -137,8 +135,7 @@ export function probeAll(livenessDir: string, now = Date.now()): Probe[] {
 		if (record.status === "exited") {
 			return {
 				pid: record.pid,
-				role: record.role ?? null,
-				depth: record.depth ?? null,
+				process: record.process,
 				procPidExists: false,
 				killSucceeded: false,
 				cmdlineMatchesPi: null,
@@ -150,8 +147,7 @@ export function probeAll(livenessDir: string, now = Date.now()): Probe[] {
 		const signals = probeProcess(record.pid);
 		return {
 			pid: record.pid,
-			role: record.role ?? null,
-			depth: record.depth ?? null,
+			process: record.process,
 			...signals,
 			verdict: verdictFor(signals),
 			passedSignals: passedSignals(signals),

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Outer-ring CLI: everything about a run as a whole.
+# Outer-ring CLI: everything about a Task as a whole.
 #
 # The runtime is global — it lives beside this script inside the installed
 # skill, not inside the project being worked on. Only run artifacts land in the
 # project, under .codeflow/runs/. That is why RUNTIME_DIR is resolved relative
 # to this file while the working directory becomes the target repository root.
 #
-# This binary speaks exec/resume/ls/sub/memo/audit/stop and nothing else. The
-# mechanical verbs a role needs (handoff, facts, check, roster, delegate) live
+# This binary speaks exec/resume/ls/sub/goals/usage/audit/stop and nothing else. The
+# universal protocol verbs a Worker needs (receipt, recall, evidence, check) live
 # in `code-agent`, which is not on a user PATH. Two vocabularies with no overlap
 # mean the ring boundary is enforced by which binary is reachable, not by a
 # paragraph asking an agent to behave. There is also no passthrough default: an
@@ -26,15 +26,14 @@ usage() {
   cat <<'EOF'
 usage: codeflow <command> [options]
 
-  exec "<requirement>"              start a run and follow it
-  resume <run-id>                   resume a fully stopped run with the same run id
-  ls                                list runs: id, status, duration, requirement
-  sub <run-id> [--since <seq>]      subscribe to a run's event stream
-  goals <run-id>                   show derived goal joins
-  usage <run-id>                   show per-turn and total model usage
-  memo <run-id> "<text>"            append to a run's requirement
-  audit <run-id> [--force]          gated audit of a blocked or stale run
-  stop <run-id>                     terminate a running run
+  exec "<objective>"                start a Task and follow it
+  resume <task-id>                  resume a fully stopped Task
+  ls                                list Tasks: id, status, duration, objective
+  sub <task-id> [--since <seq>]     subscribe to a Task's event stream
+  goals <task-id>                   show reduced Task and Goal state
+  usage <task-id>                   show per-turn and total model usage
+  audit <task-id> [--force]         gated audit of a blocked or stale Task
+  stop <task-id>                    terminate a running Task
   benchmark run|report              SWE-bench Verified benchmark runs and reports
 
   --help, --version
@@ -63,7 +62,7 @@ case "${1:-}" in
   debug)
     exec bun "$CLI_DIR/run.ts" "$@"
     ;;
-  ls|sub|goals|usage|stop|memo|audit)
+  ls|sub|goals|usage|stop|audit)
     exec bun "$CLI_DIR/outer.ts" "$@"
     ;;
   benchmark)

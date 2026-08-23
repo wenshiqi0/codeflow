@@ -12,10 +12,13 @@ import type { BenchmarkBudgets, BenchmarkClock } from "./budgets";
 import type { FailedModelAttempt } from "./metrics";
 import type { ModelVisibleInstance } from "./dataset";
 import type { AttemptUsage } from "../../runtime/lib/observability/model-usage";
+import type { ToolOperationKind } from "../../runtime/lib/observability/tool-execution";
 
 export interface DriverToolCall {
 	call_id: string;
 	tool: string;
+	/** Privacy-safe source-ledger classification; never command text. */
+	operation_kind?: ToolOperationKind;
 	status: "succeeded" | "failed" | "rejected" | "incomplete";
 	/** Source-clock request timestamp; required for credible B1 timing. */
 	requested_at?: string;
@@ -27,15 +30,13 @@ export interface DriverRound {
 	/** Source assistant-response timestamp when the runtime observed one. */
 	at?: string;
 	/** Runtime-attributed run id when the source ledger observed one. */
-	run_id?: string | null;
-	role: string;
+	task_id?: string | null;
+	worker_kind: "worker" | "service";
 	provider: string;
 	model: string;
-	depth?: number | null;
 	turn?: number | null;
 	handoff_id?: string | null;
 	goal_id?: string | null;
-	lane?: string | null;
 	usage: AttemptUsage;
 	/** Source provider request start boundary when observed. */
 	request_started_at?: string | null;
@@ -55,8 +56,8 @@ export type DriverEvent =
 
 /**
  * Real-mode instrumentation variant: tool calls that terminated between
- * rounds, attributed to the role AND provider/model that issued them — the
- * emitting context recorded on the staging row, never role→model inference.
+ * rounds, attributed to the Worker kind and provider/model that issued them — the
+ * emitting context recorded on the staging row, never identity inference.
  * Fixture drivers attach a response's calls to its round event (the round
  * carries the attribution); the real Codeflow driver streams each call as it
  * terminates so tool-call budgets supervise the live process without waiting
@@ -64,14 +65,13 @@ export type DriverEvent =
  */
 export interface DriverToolCallsEvent {
 	type: "tool_calls";
-	role: string;
+	worker_kind: "worker" | "service";
 	/** Provider of the assistant response that emitted these calls. */
 	provider: string;
 	/** Model of the assistant response that emitted these calls. */
 	model: string;
 	handoff_id?: string | null;
 	goal_id?: string | null;
-	lane?: string | null;
 	/** Calls that reached a terminal status (or "incomplete" at stream end). */
 	calls: DriverToolCall[];
 }

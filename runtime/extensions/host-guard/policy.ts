@@ -3,6 +3,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_RUNS_DIR } from "../../lib/paths";
 
 const RUNTIME_LINK_DIR = path.resolve(
 	path.dirname(fileURLToPath(import.meta.url)),
@@ -14,10 +15,10 @@ const HOST_ROOTS = [
 	...new Set([
 		RUNTIME_LINK_DIR,
 		RUNTIME_REAL_DIR,
-		path.dirname(RUNTIME_LINK_DIR),
-		path.dirname(RUNTIME_REAL_DIR),
 	]),
 ].sort((left, right) => right.length - left.length);
+
+type Environment = Record<string, string | undefined>;
 
 function realPath(target: string): string {
 	try {
@@ -29,22 +30,38 @@ function realPath(target: string): string {
 	}
 }
 
-function inside(root: string, target: string): boolean {
+function covers(root: string, target: string): boolean {
+	if (target === root) return true;
 	const relative = path.relative(root, target);
-	return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+	return !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
-function runtimeAccessViolation(value: string | undefined): string | null {
+function runStateRoot(environment: Environment): string | null {
+	const runId = environment.CODEFLOW_RUN_ID;
+	if (!runId) return null;
+	return path.resolve(environment.CODEFLOW_RUNS_DIR ?? DEFAULT_RUNS_DIR, runId);
+}
+
+function canonicalRunStateRoot(environment: Environment): string | null {
+	const runState = runStateRoot(environment);
+	return runState === null ? null : realPath(runState);
+}
+
+function runtimeAccessViolation(value: string | undefined, environment: Environment = process.env): string | null {
 	if (typeof value !== "string") return null;
 	const target = realPath(path.resolve(value));
-	if (HOST_ROOTS.some((root) => target === root || inside(root, target))) {
-		return "Codeflow runtime is read-only during a run";
-	}
+	const runtimeProtected = HOST_ROOTS.some((root) => covers(root, target));
+	const runState = canonicalRunStateRoot(environment);
+	const stateProtected = runState !== null && covers(runState, target);
+	if (runtimeProtected || stateProtected) return "Codeflow runtime is read-only during a run";
 	return null;
 }
 
-export function runtimeWriteViolation(value: string | undefined): string | null {
-	return runtimeAccessViolation(value);
+export function runtimeWriteViolation(
+	value: string | undefined,
+	environment: Environment = process.env,
+): string | null {
+	return runtimeAccessViolation(value, environment);
 }
 
 function readOnlyGitCommand(normalized: string): boolean {
@@ -83,7 +100,10 @@ function readOnlyRuntimeCommand(normalized: string): boolean {
 	return new Set(["cat", "echo", "grep", "ls", "pwd", "rg", "test"]).has(firstWord);
 }
 
-export function runtimeBashViolation(command: string | undefined): string | null {
+export function runtimeBashViolation(
+	command: string | undefined,
+	environment: Environment = process.env,
+): string | null {
 	if (typeof command !== "string") return null;
 	const normalized = command.trim();
 	// A root-wide find can discover the host runtime without spelling its path,
@@ -93,14 +113,20 @@ export function runtimeBashViolation(command: string | undefined): string | null
 		normalized,
 	);
 	if (scansFilesystemRoot) {
-		return "Codeflow roles must not scan the host filesystem root; use a project-scoped search path";
+		return "Codeflow Workers must not scan the host filesystem root; use a project-scoped search path";
 	}
+	const runState = runStateRoot(environment);
+	const canonicalRunState = canonicalRunStateRoot(environment);
 	const offenders = [
 		...HOST_ROOTS,
 		"$PI_CODING_AGENT_DIR",
 		"${PI_CODING_AGENT_DIR}",
 		"process.env.PI_CODING_AGENT_DIR",
-		"../codeflow",
+		"$CODEFLOW_RUNS_DIR",
+		"${CODEFLOW_RUNS_DIR}",
+		"process.env.CODEFLOW_RUNS_DIR",
+		...(runState === null ? [] : [runState]),
+		...(canonicalRunState === null ? [] : [canonicalRunState]),
 	];
 	if (!offenders.some((marker) => normalized.includes(marker))) return null;
 	if (readOnlyRuntimeCommand(normalized)) return null;

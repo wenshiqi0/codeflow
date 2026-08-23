@@ -7,16 +7,15 @@
  * never parse half a document.
  */
 
-import type { BenchmarkBudgets, BudgetName } from "./budgets";
+import type { BenchmarkBudgets, BudgetName, ConsumptionMetricName } from "./budgets";
 import type { AttemptMetrics } from "./metrics";
 import type { BenchmarkVerdict } from "./driver";
 
-export const BENCHMARK_MANIFEST_SCHEMA_VERSION = 2;
-export const LEGACY_BENCHMARK_MANIFEST_SCHEMA_VERSION = 1;
-export const BENCHMARK_CASE_SCHEMA_VERSION = 1;
+export const BENCHMARK_MANIFEST_SCHEMA_VERSION = 4;
+export const BENCHMARK_CASE_SCHEMA_VERSION = 2;
 
 export interface BenchmarkManifest {
-	schema_version: 2;
+	schema_version: 4;
 	benchmark_run_id: string;
 	created_at: string;
 	dataset: {
@@ -42,10 +41,13 @@ export interface BenchmarkManifest {
 	attempts_per_instance: number;
 	tool_network: "disabled";
 	model_provider_network: "disabled" | "required";
-	budgets: {
+	termination_budgets: {
 		defaults: BenchmarkBudgets;
 		overrides: Partial<BenchmarkBudgets> | null;
 		effective: BenchmarkBudgets;
+	};
+	consumption_metrics: {
+		axes: ConsumptionMetricName[];
 	};
 	driver_mode: "fixture" | "codeflow";
 }
@@ -59,10 +61,14 @@ export interface CaseAttemptRecord {
 	started_at: string;
 	ended_at: string;
 	metrics: AttemptMetrics;
+	/** Present in case files written by hygiene-aware runners. */
+	patch_hygiene?: {
+		stripped_binary_paths: string[];
+	};
 }
 
 export interface CaseFile {
-	schema_version: 1;
+	schema_version: 2;
 	instance_id: string;
 	attempts: CaseAttemptRecord[];
 	final_verdict: BenchmarkVerdict;

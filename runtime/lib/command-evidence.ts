@@ -1,24 +1,24 @@
 /**
- * Shell-free command execution and receipt aggregation for verify handoffs.
+ * Shell-free command execution and receipt aggregation for worker handoffs.
  *
  * A model-written pipeline can accidentally report the status of `tail` or
  * `tee` instead of the command under test. This module executes the supplied
  * argv directly, streams both output channels to complete log files, and
- * records the child's real exit code in a validator-compatible receipt entry.
+ * records the child's real exit code in a reusable evidence entry.
  *
  * Each command also runs under a configurable wall-time timeout (12-minute
  * default, `--timeout-ms` / CODEFLOW_EVIDENCE_TIMEOUT_MS overrides, 0 = off).
  * On timeout the whole process tree is terminated, the recorder — not the
  * agent-watchdog — records exit code 124 with failure_class RUNNER_BLOCKED
- * and error_class EXECUTION_TIMEOUT, and control returns to the calling role
+ * and error_class EXECUTION_TIMEOUT, and control returns to the calling Worker
  * with the record already on disk. Earlier commands' records are written
  * incrementally, so they survive a later sibling's timeout.
  */
 
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { finishHandoff } from "./handoff";
 import { DEFAULT_RUNS_DIR, RunPaths, writeJsonAtomic } from "./paths";
 
 const EVIDENCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -30,7 +30,7 @@ const EVIDENCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
  * (BASH_TIMEOUT_DEFAULT_MS) so the recorder — which returns control with a
  * structured record — always fires before the turn-wide abort, which would
  * kill the whole agent turn instead. A command that owns a run past both
- * bounds is a hang either way; the point of this default is that the role,
+ * bounds is a hang either way; the point of this default is that the Worker,
  * not the watchdog, owns the failure.
  */
 export const EVIDENCE_TIMEOUT_DEFAULT_MS = 720_000;
@@ -74,6 +74,12 @@ export interface CommandEvidenceEntry {
 	error_class?: "EXECUTION_TIMEOUT";
 	/** The timeout that terminated this command, when one fired. */
 	timeout_ms?: number;
+	/** Content-aware argv/workspace fingerprint used for deterministic replay. */
+	fingerprint?: string;
+	/** True when this entry referenced an earlier identical record instead of re-running. */
+	deduped?: boolean;
+	/** The original evidence id for a deduped entry. */
+	deduped_from?: string;
 }
 
 function parseTimeoutMs(raw: string, source: string): number {
@@ -109,6 +115,8 @@ export function resolveEvidenceTimeoutMs(
 export interface RunCommandEvidenceOptions {
 	/** Raw --timeout-ms flag value; see resolveEvidenceTimeoutMs for precedence. */
 	timeoutMs?: string;
+	/** Disable dedupe even when both env and git fingerprint are available. */
+	noDedupe?: boolean;
 }
 
 function currentPaths(): { paths: RunPaths; handoffId: string } {
@@ -124,36 +132,6 @@ function commandDir(paths: RunPaths, handoffId: string): string {
 	return path.join(paths.evidence, handoffId, "commands");
 }
 
-/**
- * A recorder-owned timeout is a mechanical handoff transition, not a model
- * judgment. Finish the registered child immediately after its evidence is
- * durable so the delegator receives EXECUTION_TIMEOUT even if the role fails
- * to issue a final handoff command. A missing/terminal state is harmless for
- * standalone use and must not hide the command record.
- */
-function finishExecutionTimeout(
-	paths: RunPaths,
-	handoffId: string,
-	id: string,
-	timeoutMs: number,
-): void {
-	if (!fs.existsSync(paths.statePath(handoffId))) return;
-	try {
-		finishHandoff(paths, {
-			handoffId,
-			status: "BLOCKED",
-			summary: `evidence command ${id} exceeded its per-command timeout`,
-			blockedReasons: [EVIDENCE_TIMEOUT_ERROR_CLASS],
-			detail:
-				`code-agent evidence run terminated the process tree after ${timeoutMs}ms ` +
-				`and recorded exit ${EVIDENCE_TIMEOUT_EXIT_CODE}`,
-		});
-	} catch {
-		// Terminal handoffs are immutable. Preserve the verdict already stored
-		// by the role or an earlier mechanical failure path.
-	}
-}
-
 function shellQuote(value: string): string {
 	if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
 	return `'${value.replaceAll("'", `'\\''`)}'`;
@@ -161,6 +139,69 @@ function shellQuote(value: string): string {
 
 function renderCommand(argv: string[]): string {
 	return argv.map(shellQuote).join(" ");
+}
+
+function spawnText(command: string, args: string[], cwd: string): { ok: boolean; output: string } {
+	const result = Bun.spawnSync([command, ...args], { cwd });
+	return {
+		ok: result.exitCode === 0,
+		output: result.stdout.toString(),
+	};
+}
+
+/**
+ * Fingerprint both command identity and the complete git working-tree state.
+ * `git status` alone is insufficient: a file can remain ` M path` while its
+ * bytes change. Include the tracked diff and untracked contents so a repaired
+ * tree can never replay an obsolete FAIL/PASS.
+ */
+export function commandEvidenceFingerprint(
+	argv: string[],
+	cwd: string,
+	excludePath?: string,
+): string | null {
+	const head = spawnText("git", ["rev-parse", "HEAD"], cwd);
+	const status = spawnText("git", ["status", "--porcelain=v1", "--untracked-files=all"], cwd);
+	const tracked = spawnText("git", ["diff", "--binary", "HEAD"], cwd);
+	const files = Bun.spawnSync(
+		["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+		{ cwd },
+	);
+	if (!head.ok || !status.ok || !tracked.ok || files.exitCode !== 0) return null;
+
+	const excluded = (value: string): boolean =>
+		excludePath !== undefined && (value === excludePath || value.startsWith(`${excludePath}/`));
+	const hash = createHash("sha256");
+	const feed = (value: string): void => {
+		hash.update(value);
+		hash.update("\0");
+	};
+	feed(argv.join("\0"));
+	feed(head.output);
+	feed(status.output.split("\n").filter((line) => !excluded(line.slice(3))).join("\n"));
+	feed(tracked.output);
+	for (const relative of files.stdout.toString().split("\0").filter((value) => !excluded(value))) {
+		if (relative === "") continue;
+		let content: Buffer;
+		try {
+			content = fs.readFileSync(path.join(cwd, relative));
+		} catch {
+			return null;
+		}
+		feed(relative);
+		hash.update(content);
+		hash.update("\0");
+	}
+	return hash.digest("hex");
+}
+
+function readEvidenceEntries(directory: string): CommandEvidenceEntry[] {
+	if (!fs.existsSync(directory)) return [];
+	return fs
+	.readdirSync(directory)
+		.filter((name) => name.endsWith(".json"))
+		.sort()
+		.map((name) => JSON.parse(fs.readFileSync(path.join(directory, name), "utf8")) as CommandEvidenceEntry);
 }
 
 function closeStream(stream: fs.WriteStream): Promise<void> {
@@ -184,9 +225,22 @@ export async function runCommandEvidence(
 	// Rejected before any filesystem work: a refused run leaves no partial
 	// evidence state behind.
 	const timeoutMs = resolveEvidenceTimeoutMs(options.timeoutMs);
+	const dedupeEnabled =
+		options.noDedupe !== true && process.env.CODEFLOW_EVIDENCE_DEDUPE !== "off";
 
 	const { paths, handoffId } = currentPaths();
 	const directory = commandDir(paths, handoffId);
+	const commandCwd = process.env.CODEFLOW_PROJECT_DIR ?? process.cwd();
+	const realCommandCwd = fs.realpathSync(commandCwd);
+	const realRunsRoot = fs.existsSync(paths.runsRoot) ? fs.realpathSync(paths.runsRoot) : paths.runsRoot;
+	const evidenceExclude = path.relative(realCommandCwd, realRunsRoot);
+	const fingerprint = dedupeEnabled
+		? commandEvidenceFingerprint(
+				argv,
+				commandCwd,
+				evidenceExclude.startsWith("..") || path.isAbsolute(evidenceExclude) ? undefined : evidenceExclude,
+			)
+		: null;
 	fs.mkdirSync(directory, { recursive: true });
 	const recordPath = path.join(directory, `${id}.json`);
 	const claimPath = path.join(directory, `${id}.claim`);
@@ -195,6 +249,9 @@ export async function runCommandEvidence(
 	if ([recordPath, claimPath, stdoutPath, stderrPath].some((target) => fs.existsSync(target))) {
 		throw new EvidenceError(`evidence id already exists for this handoff: ${id}`);
 	}
+	const original = fingerprint === null
+		? undefined
+		: readEvidenceEntries(directory).find((entry) => entry.fingerprint === fingerprint);
 	let claim: number;
 	try {
 		// Reserve the id without exposing the final .json path. Readers either
@@ -209,6 +266,21 @@ export async function runCommandEvidence(
 	}
 	fs.closeSync(claim);
 
+	if (original !== undefined) {
+		const deduped: CommandEvidenceEntry = {
+			...original,
+			id,
+			deduped: true,
+			deduped_from: original.id,
+			fingerprint: fingerprint ?? undefined,
+			recorded_at: new Date().toISOString(),
+		};
+		writeJsonAtomic(recordPath, deduped);
+		fs.unlinkSync(claimPath);
+		console.error(`code-agent evidence: deduped ${id} from ${original.id}`);
+		return deduped.exit_code;
+	}
+
 	const stdoutLog = fs.createWriteStream(stdoutPath, { flags: "wx" });
 	const stderrLog = fs.createWriteStream(stderrPath, { flags: "wx" });
 	const startedAt = Date.now();
@@ -216,7 +288,7 @@ export async function runCommandEvidence(
 	let timedOut = false;
 
 	const child = spawn(argv[0], argv.slice(1), {
-		cwd: process.cwd(),
+		cwd: commandCwd,
 		env: process.env,
 		shell: false,
 		stdio: ["inherit", "pipe", "pipe"],
@@ -348,10 +420,10 @@ export async function runCommandEvidence(
 					timeout_ms: timeoutMs,
 				}
 			: {}),
+		...(fingerprint !== null ? { fingerprint } : {}),
 	};
 	writeJsonAtomic(recordPath, entry);
 	fs.unlinkSync(claimPath);
-	if (timedOut) finishExecutionTimeout(paths, handoffId, id, timeoutMs);
 	console.error(`code-agent evidence: recorded ${id} at ${recordPath}`);
 	return exitCode;
 }
@@ -391,11 +463,15 @@ function loadEntries(paths: RunPaths, handoffId: string): CommandEvidenceEntry[]
 	return entries as CommandEvidenceEntry[];
 }
 
-export function writeCommandReceipt(output: string): { output: string; status: "PASS" | "FAIL"; count: number } {
+export function writeCommandEvidenceBatch(output: string): { output: string; status: "PASS" | "FAIL"; count: number } {
 	const { paths, handoffId } = currentPaths();
 	const entries = loadEntries(paths, handoffId);
 	const status = entries.every((entry) => entry.status === "PASS") ? "PASS" : "FAIL";
 	const target = path.resolve(output);
-	writeJsonAtomic(target, { status, receipts: entries });
-	return { output: target, status, count: entries.length };
+	writeJsonAtomic(target, { status, entries });
+	return {
+		output: target,
+		status,
+		count: entries.filter((entry) => entry.deduped !== true).length,
+	};
 }

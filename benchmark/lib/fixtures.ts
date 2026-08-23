@@ -47,7 +47,7 @@ export const FIXTURE_DRIVER_TAG = "__codeflowBenchmarkFixtureDriver";
 
 interface FixtureInstanceScript {
 	rounds: DriverRound[];
-	failedModelAttempts: Array<{ role: string; provider: string; model: string; error_class: string }>;
+	failedModelAttempts: Array<{ task_id: string | null; worker_kind: "worker" | "service"; provider: string; model: string; error_class: string }>;
 	workspaceFiles: Array<{ path: string; content: string }>;
 	infraError: string | null;
 }
@@ -145,18 +145,17 @@ function parseToolCalls(value: unknown): DriverToolCall[] {
 function parseRound(value: unknown): DriverRound {
 	const round = asRecord(value, "round");
 	const respondedAt = asNullableIso(round.at);
-	const runId = typeof round.run_id === "string" && round.run_id.length > 0 ? round.run_id : null;
+	const taskId = typeof round.task_id === "string" && round.task_id.length > 0 ? round.task_id : null;
+	const workerKind = round.worker_kind === "service" ? "service" : "worker";
 	return {
 		...(respondedAt === null ? {} : { at: respondedAt }),
-		run_id: runId,
-			role: asString(round.role, "round.role"),
+		task_id: taskId,
+		worker_kind: workerKind,
 		provider: asString(round.provider, "round.provider"),
 		model: asString(round.model, "round.model"),
-		depth: asNullableNonnegativeInteger(round.depth),
 		turn: asNullableNonnegativeInteger(round.turn),
 		handoff_id: typeof round.handoff_id === "string" ? round.handoff_id : null,
 		goal_id: typeof round.goal_id === "string" ? round.goal_id : null,
-		lane: typeof round.lane === "string" ? round.lane : null,
 		usage: parseUsage(round.usage),
 		request_started_at: asNullableIso(round.request_started_at),
 		tool_calls: parseToolCalls(round.tool_calls),
@@ -171,7 +170,8 @@ function parseScript(value: unknown): FixtureInstanceScript {
 	const failedModelAttempts = failedRaw.map((raw, index) => {
 		const entry = asRecord(raw, `failed_model_attempts[${index}]`);
 		return {
-			role: asString(entry.role, `failed_model_attempts[${index}].role`),
+			task_id: typeof entry.task_id === "string" ? entry.task_id : null,
+			worker_kind: (entry.worker_kind === "service" ? "service" : "worker") as "worker" | "service",
 			provider: asString(entry.provider, `failed_model_attempts[${index}].provider`),
 			model: asString(entry.model, `failed_model_attempts[${index}].model`),
 			error_class: asString(entry.error_class, `failed_model_attempts[${index}].error_class`),

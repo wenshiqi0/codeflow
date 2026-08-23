@@ -29,9 +29,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { startHandoff } from "../../lib/handoff";
-import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
-import { BASH_TIMEOUT_ABORT_MARKER, STREAM_IDLE_ABORT_MARKER } from "../codeflow-task/handoff-gate";
+import { BASH_TIMEOUT_ABORT_MARKER, STREAM_IDLE_ABORT_MARKER } from "../../lib/runtime-signals";
 
 // Re-exported so producers and consumers (and the contract tests) can read
 // the marker from either side of the boundary.
@@ -80,16 +78,14 @@ const STREAM_IDLE_TICK_MS = Number.parseInt(
  * the provider-idle ceiling and remains overrideable; 0 disables the guard.
  * Verification commands have their own tighter recorder-level timeout (see
  * runtime/lib/command-evidence.ts) that fires first and returns control to
- * the role; this ceiling is the turn-wide backstop behind it.
+ * the Worker; this ceiling is the turn-wide backstop behind it.
  */
 export const BASH_TIMEOUT_DEFAULT_MS = 900_000;
 export const BASH_TIMEOUT_MS = Number.parseInt(
 	process.env.CODEFLOW_BASH_TIMEOUT_MS ?? String(BASH_TIMEOUT_DEFAULT_MS),
 	10,
 );
-// The abort line's prefix is BASH_TIMEOUT_ABORT_MARKER, imported from
-// codeflow-task/handoff-gate: the watchdog produces it and the delegation
-// gate consumes it, so both sides share the one string.
+// The abort line's prefix is shared with runtime failure classification.
 
 let currentCtx: ExtensionContext | null = null;
 let lastProgressAt = Date.now();
@@ -124,19 +120,7 @@ function clearAllBashTimers(): void {
 
 let ignited = false;
 
-function markHandoffRunning(runId: string, handoffId: string): void {
-	try {
-		startHandoff(
-			new RunPaths(process.env.CODEFLOW_RUNS_DIR ?? DEFAULT_RUNS_DIR, runId),
-			handoffId,
-			process.pid,
-		);
-	} catch {
-		// Already terminal, or no such handoff: neither is this layer's business.
-	}
-}
-
-function igniteWatchdog(runId: string, role: string, depth: string): void {
+function igniteWatchdog(runId: string, processKind: "root" | "worker"): void {
 	if (!fs.existsSync(WATCHDOG_SCRIPT)) return;
 	const child = spawn(
 		"bun",
@@ -144,10 +128,8 @@ function igniteWatchdog(runId: string, role: string, depth: string): void {
 			WATCHDOG_SCRIPT,
 			"--pid",
 			String(process.pid),
-			"--role",
-			role,
-			"--depth",
-			depth,
+			"--process",
+			processKind,
 			"--run-id",
 			runId,
 			"--interval",
@@ -165,12 +147,8 @@ export default function (pi: ExtensionAPI) {
 
 		const runId = process.env.CODEFLOW_RUN_ID;
 		if (!runId) return;
-		const role = process.env.CODEFLOW_AGENT_ROLE ?? "unknown";
-		const depth = process.env.CODEFLOW_AGENT_DEPTH ?? "0";
-		const handoffId = process.env.CODEFLOW_HANDOFF_ID;
-
-		if (handoffId) markHandoffRunning(runId, handoffId);
-		igniteWatchdog(runId, role, depth);
+		const processKind = process.env.CODEFLOW_PROCESS_KIND === "root" ? "root" : "worker";
+		igniteWatchdog(runId, processKind);
 	});
 
 	// --- Stream-idle abort (responsibility 3) -------------------------------

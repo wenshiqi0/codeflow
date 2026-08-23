@@ -1,8 +1,8 @@
 /**
  * Attributed model usage: one assistant response is one model round.
  *
- * The ledger is append-only JSONL because goal lanes can run concurrently.
- * Aggregation happens on read, and the depth-0 runner writes the final report
+ * The ledger is append-only JSONL because Workers can run concurrently.
+ * Aggregation happens on read, and the root runner writes the final report
  * after every child has exited.
  */
 
@@ -32,12 +32,10 @@ export interface NormalizedUsage {
 export interface UsageRecord {
 	schema_version: number;
 	at: string;
-	run_id: string;
-	role: string;
-	depth: number;
+	task_id: string;
+	worker_kind: "worker" | "service";
 	handoff_id: string | null;
 	goal_id: string | null;
-	lane: string | null;
 	turn: number;
 	provider: string;
 	model: string;
@@ -67,7 +65,7 @@ export interface ModelUsage extends UsageTotals {
 
 export interface UsageReport {
 	schema_version: number;
-	run_id: string;
+	task_id: string;
 	generated_at: string;
 	records: UsageRecord[];
 	models: ModelUsage[];
@@ -129,12 +127,10 @@ export function usageRecordFromMessage(message: unknown, turn: number): UsageRec
 	return {
 		schema_version: USAGE_SCHEMA_VERSION,
 		at: timestamp > 0 ? new Date(timestamp).toISOString() : nowIso(),
-		run_id: runId,
-		role: env("CODEFLOW_AGENT_ROLE") ?? "unknown",
-		depth: number(env("CODEFLOW_AGENT_DEPTH")),
+		task_id: runId,
+		worker_kind: env("CODEFLOW_PROCESS_KIND") === "service" ? "service" : "worker",
 		handoff_id: env("CODEFLOW_HANDOFF_ID") ?? null,
 		goal_id: env("CODEFLOW_GOAL_ID") ?? null,
-		lane: env("CODEFLOW_LANE") ?? null,
 		turn,
 		provider,
 		model,
@@ -210,7 +206,7 @@ export function buildUsageReport(runId: string, records: UsageRecord[]): UsageRe
 
 	return {
 		schema_version: USAGE_SCHEMA_VERSION,
-		run_id: runId,
+		task_id: runId,
 		generated_at: nowIso(),
 		records,
 		models: [...byModel.entries()]
@@ -234,7 +230,7 @@ export function renderUsageSummary(report: UsageReport): string {
 		.join("\n");
 	const total = report.total;
 	return [
-		`codeflow usage run=${report.run_id}`,
+		`codeflow usage task=${report.task_id}`,
 		models,
 		`total calls=${total.calls} in=${total.input} out=${total.output} cache_r=${total.cache_read} cache_w=${total.cache_write} reasoning=${total.reasoning} tokens=${total.total_tokens} cost=${total.cost_total}`,
 	].join("\n");

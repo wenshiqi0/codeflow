@@ -26,6 +26,7 @@ export {
 	BenchmarkBudgetError,
 	type BenchmarkBudgets,
 	DEFAULT_BENCHMARK_BUDGETS,
+	CONSUMPTION_METRICS,
 	type BudgetName,
 	parseBudgetOverrides,
 	validateBudgetOverrides,
@@ -34,7 +35,7 @@ export {
 	type BenchmarkClock,
 } from "./budgets";
 
-export { SUPPORT_MODEL_ROLES, classifyModelRole } from "./rounds";
+export { classifyWorkerKind } from "./rounds";
 
 export {
 	TOOL_CALL_SCHEMA_VERSION,
@@ -92,7 +93,13 @@ export {
 	type BenchmarkEvaluator,
 } from "./driver";
 
-export { caseDirName, prepareBenchmarkWorkspace, extractPatch } from "./workspace";
+export {
+	caseDirName,
+	prepareBenchmarkWorkspace,
+	seedBenchmarkWorkspaceHygiene,
+	extractPatchDetailed,
+	type PatchExtraction,
+} from "./workspace";
 
 export { newBenchmarkRunId, newEvaluationRunId } from "./ids";
 
@@ -155,12 +162,12 @@ export {
 
 export {
 	HANDOFF_STATE_PROJECTION_SCHEMA_VERSION,
-	OBSERVABILITY_BLOCKED_REASONS,
+	OBSERVABILITY_RUNTIME_FAILURE_REASONS,
 	HandoffObservabilityError,
 	type HandoffStateProjection,
 	type HandoffStateScan,
 	type HandoffStateTelemetryFile,
-	type ObservabilityBlockedReason,
+	type ObservabilityRuntimeFailureReason,
 	projectHandoffState,
 	scanHandoffStates,
 	readHandoffStateProjections,

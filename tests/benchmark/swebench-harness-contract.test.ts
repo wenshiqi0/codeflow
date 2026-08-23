@@ -27,7 +27,7 @@
  *    <report_dir>/<model>.<run_id>.json — never to the per-instance report.
  *
  * Current wrong values these tests are red against (observed at authoring
- * time, to be fixed by the coder — never weaken these assertions to pass):
+ * time, to be fixed by the worker — never weaken these assertions to pass):
  *  - dataset default: "princeton-nlp/SWE-bench_Verified" instead of the
  *    design-pinned "SWE-bench/SWE-bench_Verified";
  *  - report path: logs/run_evaluation/<run_id>/<instance>/report.json —

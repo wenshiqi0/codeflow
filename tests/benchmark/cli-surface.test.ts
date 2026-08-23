@@ -84,7 +84,7 @@ describe("benchmark CLI argument contract (stable non-zero exit 2)", () => {
 			"--dataset",
 			"whatever",
 			"--budget",
-			"model-rounds=zero",
+			"wall-seconds=zero",
 			"--fixture",
 			"unused",
 		]);

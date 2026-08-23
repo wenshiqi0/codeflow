@@ -21,7 +21,7 @@
  *   <bin> --workspace <dir> --attempt <n> --model-config <id>
  * with exactly the model-visible instance projection (4 keys) on stdin, then
  * read NDJSON DriverEvents lazily from stdout, re-checking budgets after every
- * event. On a budget stop the runner stops reading and the generator's cleanup
+ * event. On a wall stop the runner stops reading and the generator's cleanup
  * sends SIGTERM, escalating to SIGKILL after a grace period. Non-zero exit
  * after a natural end is an execution infra_error — never retried in-attempt,
  * never disguised as unresolved.
@@ -59,6 +59,10 @@ import type {
 } from "./driver";
 import type { ModelVisibleInstance } from "./dataset";
 import type { AttemptUsage, AttemptUsageCost } from "../../runtime/lib/observability/model-usage";
+import {
+	OPERATION_KINDS,
+	type ToolOperationKind,
+} from "../../runtime/lib/observability/tool-execution";
 
 export const BENCHMARK_DRIVER_BIN_ENV = "CODEFLOW_BENCHMARK_DRIVER_BIN";
 export const BENCHMARK_HARNESS_BIN_ENV = "CODEFLOW_BENCHMARK_HARNESS_BIN";
@@ -146,7 +150,7 @@ function parseUsage(value: unknown): AttemptUsage | null {
 	const cacheWrite = cacheField(value, "cacheWrite", "cache_write");
 	const reportedTotal = finiteNumber(value.totalTokens ?? value.total_tokens);
 	if (input === null || output === null) return null;
-	// Provider-reported total is the budget axis; when a provider omits it the
+	// Provider-reported total is a consumption metric; when a provider omits it the
 	// rounded sum of the reported components is the only honest stand-in.
 	const total = reportedTotal ?? input + output + (cacheRead ?? 0) + (cacheWrite ?? 0);
 	return {
@@ -168,6 +172,12 @@ function parseToolCalls(value: unknown): DriverToolCall[] | null {
 		if (!isObject(raw)) return null;
 		const callId = nonEmptyString(raw.call_id);
 		const tool = nonEmptyString(raw.tool);
+		const rawOperationKind = optionalString(raw.operation_kind);
+		const operationKind =
+			rawOperationKind !== null && OPERATION_KINDS.includes(rawOperationKind as ToolOperationKind)
+				? (rawOperationKind as ToolOperationKind)
+				: null;
+		if (raw.operation_kind !== undefined && operationKind === null) return null;
 		const status = nonEmptyString(raw.status);
 		const requestedAt = optionalString(raw.requested_at);
 		const resultAt = optionalString(raw.result_at);
@@ -185,6 +195,7 @@ function parseToolCalls(value: unknown): DriverToolCall[] | null {
 		calls.push({
 			call_id: callId,
 			tool,
+			...(operationKind === null ? {} : { operation_kind: operationKind }),
 			status: status as DriverToolCall["status"],
 			...(requestedAt === null ? {} : { requested_at: requestedAt }),
 			...(raw.result_at === undefined ? {} : { result_at: resultAt }),
@@ -198,23 +209,25 @@ function optionalNonnegativeInteger(value: unknown): number | null {
 	return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : -1;
 }
 
+function workerKind(value: unknown): "worker" | "service" | null {
+	return value === "worker" || value === "service" ? value : null;
+}
+
 function parseRound(value: unknown): DriverRound | null {
 	if (!isObject(value)) return null;
-	const role = nonEmptyString(value.role);
+	const kind = workerKind(value.worker_kind);
 	const provider = nonEmptyString(value.provider);
 	const model = nonEmptyString(value.model);
 	const usage = parseUsage(value.usage);
-	const depth = optionalNonnegativeInteger(value.depth);
 	const turn = optionalNonnegativeInteger(value.turn);
 	const requestStartedAt = optionalString(value.request_started_at);
 	const respondedAt = optionalString(value.at);
-	const runId = optionalString(value.run_id);
+	const taskId = optionalString(value.task_id);
 	if (
-		role === null ||
+		kind === null ||
 		provider === null ||
 		model === null ||
 		usage === null ||
-		depth === -1 ||
 		turn === -1 ||
 		(requestStartedAt !== null && Number.isNaN(Date.parse(requestStartedAt)))
 		|| (respondedAt !== null && Number.isNaN(Date.parse(respondedAt)))
@@ -224,17 +237,15 @@ function parseRound(value: unknown): DriverRound | null {
 	const toolCalls = parseToolCalls(value.tool_calls);
 	if (toolCalls === null) return null;
 	return {
-		role,
+		worker_kind: kind,
 		provider,
 		model,
-		depth,
 		turn,
 		...(respondedAt === null ? {} : { at: respondedAt }),
-		run_id: runId,
+		task_id: taskId,
 		request_started_at: requestStartedAt,
 		handoff_id: optionalString(value.handoff_id),
 		goal_id: optionalString(value.goal_id),
-		lane: optionalString(value.lane),
 		usage,
 		tool_calls: toolCalls,
 	};
@@ -262,35 +273,40 @@ export function parseDriverEvent(value: unknown): DriverEvent | null {
 			return round === null ? null : { type: "round", round };
 		}
 		case "tool_calls": {
-			const role = nonEmptyString(value.role);
+			const kind = workerKind(value.worker_kind);
 			const provider = nonEmptyString(value.provider);
 			const model = nonEmptyString(value.model);
 			const calls = parseToolCalls(value.calls);
-			if (role === null || provider === null || model === null || calls === null || calls.length === 0) {
+			if (kind === null || provider === null || model === null || calls === null || calls.length === 0) {
 				return null;
 			}
 			return {
 				type: "tool_calls",
-				role,
+				worker_kind: kind,
 				provider,
 				model,
 				handoff_id: optionalString(value.handoff_id),
 				goal_id: optionalString(value.goal_id),
-				lane: optionalString(value.lane),
 				calls,
 			};
 		}
 		case "failed_model_attempt": {
 			const attempt = isObject(value.attempt) ? value.attempt : null;
 			if (attempt === null) return null;
-			const role = nonEmptyString(attempt.role);
+			const kind = workerKind(attempt.worker_kind);
 			const provider = nonEmptyString(attempt.provider);
 			const model = nonEmptyString(attempt.model);
 			const errorClass = nonEmptyString(attempt.error_class);
-			if (role === null || provider === null || model === null || errorClass === null) return null;
+			if (kind === null || provider === null || model === null || errorClass === null) return null;
 			return {
 				type: "failed_model_attempt",
-				attempt: { role, provider, model, error_class: errorClass },
+				attempt: {
+					task_id: optionalString(attempt.task_id),
+					worker_kind: kind,
+					provider,
+					model,
+					error_class: errorClass,
+				},
 			};
 		}
 		case "workspace_write": {
@@ -405,7 +421,7 @@ export interface ProcessCodeflowDriverOptions {
 /**
  * One spawned Codeflow process per attempt. stdin carries ONLY the allowlist
  * projection; stdout is consumed lazily so budgets re-check after every event;
- * breaking out of the event loop (budget stop) terminates the process.
+ * breaking out of the event loop (wall stop) terminates the process.
  */
 export function createProcessCodeflowDriver(
 	options: ProcessCodeflowDriverOptions = {},

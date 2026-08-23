@@ -2,7 +2,7 @@
  * The benchmark runner (design §4, contract §1.8).
  *
  * Per instance attempt:
- *   fresh isolated workspace -> driver events -> ledgers -> budget stop or
+ *   fresh isolated workspace -> driver events -> ledgers -> wall-safety stop or
  *   natural end -> extract git-diff patch -> official prediction -> unique
  *   evaluation run id -> verdict -> per-case artifacts -> report.
  *
@@ -35,6 +35,7 @@ import {
 import {
 	DEFAULT_BENCHMARK_BUDGETS,
 	BenchmarkBudgetError,
+	CONSUMPTION_METRICS,
 	budgetTerminatedBy,
 	validateBudgetOverrides,
 	type BenchmarkBudgets,
@@ -49,6 +50,7 @@ import {
 	type AttemptUsageRecord,
 } from "../../runtime/lib/observability/model-usage";
 import { appendToolCallRecord, TOOL_CALL_SCHEMA_VERSION, type ToolCallRecord } from "../../runtime/lib/observability/tool-execution";
+import type { ToolOperationKind } from "../../runtime/lib/observability/tool-execution";
 import {
 	buildAttemptMetrics,
 	FAILED_ATTEMPT_SCHEMA_VERSION,
@@ -64,7 +66,12 @@ import type {
 	DriverToolCall,
 	PredictionEntry,
 } from "./driver";
-import { caseDirName, extractPatch, prepareBenchmarkWorkspace } from "./workspace";
+import {
+	caseDirName,
+	extractPatchDetailed,
+	prepareBenchmarkWorkspace,
+	seedBenchmarkWorkspaceHygiene,
+} from "./workspace";
 import { appendPredictionEntry, appendPredictionLine } from "./predictions";
 import { newAttemptRunId, newBenchmarkRunId, newEvaluationRunId } from "./ids";
 import { FIXTURE_DRIVER_TAG } from "./fixtures";
@@ -169,11 +176,10 @@ interface AttemptOutcome {
 
 function toolCallRow(
 	base: {
-		run_id: string;
-		role: string;
+		task_id: string;
+		worker_kind: "worker" | "service";
 		handoff_id: string | null;
 		goal_id: string | null;
-		lane: string | null;
 		provider: string;
 		model: string;
 	},
@@ -181,20 +187,20 @@ function toolCallRow(
 	call_id: string,
 	tool: string,
 	status: ToolCallRecord["status"],
+	operationKind?: ToolOperationKind,
 ): ToolCallRecord {
 	return {
 		schema_version: TOOL_CALL_SCHEMA_VERSION as 1,
 		kind: status === null ? "requested" : "result",
 		call_id,
 		tool,
+		...(operationKind === undefined ? {} : { operation_kind: operationKind }),
 		status,
 		at,
-		run_id: base.run_id,
-		role: base.role,
-		depth: 0,
+		task_id: base.task_id,
+		worker_kind: base.worker_kind,
 		handoff_id: base.handoff_id,
 		goal_id: base.goal_id,
-		lane: base.lane,
 		provider: base.provider,
 		model: base.model,
 	};
@@ -206,7 +212,7 @@ const failedRow = (failed: FailedModelAttempt): Record<string, unknown> =>
 /**
  * Ledger rows for a batch of calls: a requested row always; a terminal
  * result row when the call finished; "incomplete" gets only the requested
- * row. Rows carry id/name/status/timestamps/attribution — role AND the
+ * row. Rows carry id/name/status/timestamps plus Task/Goal/Handoff,
  * provider/model of the emitting context (the round for round-attached
  * calls, the event for standalone ones) — never payloads.
  */
@@ -214,11 +220,10 @@ function appendToolCalls(
 	toolFile: string,
 	toolRecords: ToolCallRecord[],
 	attribution: {
-		run_id: string;
-		role: string;
+		task_id: string;
+		worker_kind: "worker" | "service";
 		handoff_id: string | null;
 		goal_id: string | null;
-		lane: string | null;
 		provider: string;
 		model: string;
 	},
@@ -227,7 +232,14 @@ function appendToolCalls(
 ): void {
 	for (const call of calls) {
 		const requestedAt = call.requested_at ?? defaultAt;
-		const requested = toolCallRow(attribution, requestedAt, call.call_id, call.tool, null);
+		const requested = toolCallRow(
+			attribution,
+			requestedAt,
+			call.call_id,
+			call.tool,
+			null,
+			call.operation_kind,
+		);
 		appendToolCallRecord(toolFile, requested);
 		toolRecords.push(requested);
 		if (call.status !== "incomplete") {
@@ -237,6 +249,7 @@ function appendToolCalls(
 				call.call_id,
 				call.tool,
 				call.status as "succeeded" | "failed" | "rejected",
+				call.operation_kind,
 			);
 			appendToolCallRecord(toolFile, result);
 			toolRecords.push(result);
@@ -258,7 +271,7 @@ async function runInstanceAttempt(
 	const workspaceDir = path.join(attemptDir, "workspace");
 	const attemptPredictionFile = path.join(attemptDir, "prediction.jsonl");
 	const codeflowRunsDir = path.join(attemptDir, "codeflow-runs");
-	const handoffTelemetryFile = path.join(attemptDir, "telemetry", "handoff-states.json");
+	const handoffTelemetryFile = path.join(attemptDir, "telemetry", "handoffs.json");
 
 	const clock = context.clock;
 	const attemptRunId = newAttemptRunId();
@@ -268,7 +281,13 @@ async function runInstanceAttempt(
 	const usageRecords: AttemptUsageRecord[] = [];
 	const toolRecords: ToolCallRecord[] = [];
 	const failedAttempts: FailedModelAttempt[] = [];
-	const state: BudgetState = { model_rounds: 0, tool_calls: 0, total_tokens: 0, wall_seconds: 0 };
+	const state: BudgetState = {
+		model_rounds: 0,
+		tool_calls: 0,
+		fresh_tokens: 0,
+		total_tokens: 0,
+		wall_seconds: 0,
+	};
 	let terminatedBy: BudgetName | null = null;
 	let infraFailure = false;
 	let timeToFirstPatchSeconds: number | null = null;
@@ -281,6 +300,7 @@ async function runInstanceAttempt(
 	try {
 		if (context.provisionWorkspace !== null) {
 			context.provisionWorkspace(projectModelVisibleInstance(instance), workspaceDir);
+			seedBenchmarkWorkspaceHygiene(workspaceDir);
 		} else {
 			prepareBenchmarkWorkspace(workspaceDir);
 		}
@@ -336,30 +356,27 @@ async function runInstanceAttempt(
 				const round = event.round;
 				const at = round.at ?? new Date(clock.now()).toISOString();
 				const usageRow: AttemptUsageRecord = {
-					schema_version: ATTEMPT_USAGE_SCHEMA_VERSION as 2,
+					schema_version: ATTEMPT_USAGE_SCHEMA_VERSION as 1,
 					at,
 					request_started_at: round.request_started_at ?? null,
 					attempt: attemptNo,
-					run_id: round.run_id ?? attemptRunId,
-					role: round.role,
+					task_id: round.task_id ?? attemptRunId,
+					worker_kind: round.worker_kind,
 					provider: round.provider,
 					model: round.model,
-					depth: round.depth ?? null,
 					turn: round.turn ?? null,
 					handoff_id: round.handoff_id ?? null,
 					goal_id: round.goal_id ?? null,
-					lane: round.lane ?? null,
 					usage: round.usage,
 				};
 				appendAttemptUsageRecord(usageFile, usageRow);
 				usageRecords.push(usageRow);
 
 				const attribution = {
-					run_id: attemptRunId,
-					role: round.role,
+					task_id: attemptRunId,
+					worker_kind: round.worker_kind,
 					handoff_id: round.handoff_id ?? null,
 					goal_id: round.goal_id ?? null,
-					lane: round.lane ?? null,
 					// The round IS the emitting context for its attached calls.
 					provider: round.provider,
 					model: round.model,
@@ -370,20 +387,24 @@ async function runInstanceAttempt(
 
 				state.model_rounds += 1;
 				state.tool_calls += calls.length;
-				state.total_tokens += round.usage.total_tokens;
+			if (round.usage.cache_read === null || round.usage.cache_write === null) {
+				state.fresh_tokens = null;
+			} else if (state.fresh_tokens !== null) {
+				state.fresh_tokens += round.usage.input + round.usage.output;
+			}
+			state.total_tokens += round.usage.total_tokens;
 				return checkBudget();
 			}
 			case "tool_calls": {
 				// Real-mode instrumentation: calls that terminated between
-				// rounds, attributed to the role AND provider/model that
+				// rounds, attributed to the Worker kind and provider/model that
 				// emitted them (recorded on the event, never inferred).
 				const at = new Date(clock.now()).toISOString();
 				appendToolCalls(toolFile, toolRecords, {
-					run_id: attemptRunId,
-					role: event.role,
+					task_id: attemptRunId,
+					worker_kind: event.worker_kind,
 					handoff_id: event.handoff_id ?? null,
 					goal_id: event.goal_id ?? null,
-					lane: event.lane ?? null,
 					provider: event.provider,
 					model: event.model,
 				}, at, event.calls);
@@ -395,7 +416,8 @@ async function runInstanceAttempt(
 				const failed: FailedModelAttempt = {
 					schema_version: FAILED_ATTEMPT_SCHEMA_VERSION as 1,
 					at: new Date(clock.now()).toISOString(),
-					role: event.attempt.role,
+					task_id: event.attempt.task_id,
+					worker_kind: event.attempt.worker_kind,
 					provider: event.attempt.provider,
 					model: event.attempt.model,
 					error_class: event.attempt.error_class,
@@ -448,7 +470,10 @@ async function runInstanceAttempt(
 
 	// A stop never discards work: extract whatever the workspace holds. A
 	// workspace that could not be provisioned has nothing to extract.
-	const patch = workspaceReady ? extractPatch(workspaceDir) : "";
+	const extraction = workspaceReady
+		? extractPatchDetailed(workspaceDir)
+		: { patch: "", strippedBinaryPaths: [] as string[] };
+	const patch = extraction.patch;
 	const prediction: PredictionEntry = {
 		instance_id: instance.instance_id,
 		model_name_or_path: context.modelNameOrPath,
@@ -501,6 +526,9 @@ async function runInstanceAttempt(
 		started_at: startedAt,
 		ended_at: endedAt,
 		metrics,
+		patch_hygiene: {
+			stripped_binary_paths: extraction.strippedBinaryPaths,
+		},
 	};
 	return { prediction, record: attemptRecord };
 }
@@ -542,7 +570,7 @@ export async function runBenchmark(options: BenchmarkRunOptions): Promise<Benchm
 			: null;
 
 	const manifest: BenchmarkManifest = {
-		schema_version: BENCHMARK_MANIFEST_SCHEMA_VERSION as 2,
+		schema_version: BENCHMARK_MANIFEST_SCHEMA_VERSION as 4,
 		benchmark_run_id: benchmarkRunId,
 		created_at: new Date(clock.now()).toISOString(),
 		dataset: {
@@ -564,7 +592,12 @@ export async function runBenchmark(options: BenchmarkRunOptions): Promise<Benchm
 		// Agent tool network and model-provider network are declared separately (design §4).
 		tool_network: "disabled",
 		model_provider_network: driverMode === "fixture" ? "disabled" : "required",
-		budgets: { defaults: { ...DEFAULT_BENCHMARK_BUDGETS }, overrides, effective: budgets },
+		termination_budgets: {
+			defaults: { ...DEFAULT_BENCHMARK_BUDGETS },
+			overrides,
+			effective: budgets,
+		},
+		consumption_metrics: { axes: [...CONSUMPTION_METRICS] },
 		driver_mode: driverMode,
 	};
 
@@ -618,7 +651,7 @@ export async function runBenchmark(options: BenchmarkRunOptions): Promise<Benchm
 					? "infra_error"
 					: "not_evaluated";
 		const caseFile: CaseFile = {
-			schema_version: BENCHMARK_CASE_SCHEMA_VERSION as 1,
+			schema_version: BENCHMARK_CASE_SCHEMA_VERSION as 2,
 			instance_id: selected[index].instance_id,
 			attempts: instanceOutcomes.map((outcome) => outcome.record),
 			final_verdict: finalVerdict as CaseFile["final_verdict"],

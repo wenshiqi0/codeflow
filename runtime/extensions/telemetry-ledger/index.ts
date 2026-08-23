@@ -6,9 +6,9 @@
  * Inert unless CODEFLOW_BENCHMARK_DRIVER_LEDGER_DIR is set — normal runs load
  * this extension and it does nothing. The benchmark driver script
  * (benchmark/scripts/codeflow-driver.ts) sets the variable for every
- * role process of the attempt's Codeflow run (depth-0 planner and delegated
+ * worker process of the attempt's Codeflow run (root and delegated
  * children alike, via inherited env), so rounds are attributed by
- * role/provider/model/goal-lane exactly as the run's own usage ledger does
+ * Task/Goal/Handoff, Worker kind, provider, and model
  * (design §6/§14: reuse the existing usage/attribution machinery — one
  * assistant usage record is one model round, no transcript parsing).
  *
@@ -17,7 +17,7 @@
  * (the same provider/model the usage/failed-attempt ledgers record for that
  * response). The emitting context is remembered per call id at request time,
  * so a late tool_execution_end row keeps the original model even after the
- * role switched models mid-attempt; a call with no prior assistant context
+ * Worker switched models mid-attempt; a call with no prior assistant context
  * still records non-empty attribution ("unknown"), never an empty row.
  *
  * Ledger rows are written through the benchmark module's own validators
@@ -67,6 +67,34 @@ function asRecord(value: unknown): Record<string, unknown> {
 	return (typeof value === "object" && value !== null ? value : {}) as Record<string, unknown>;
 }
 
+function commandText(input: unknown): string {
+	const command = asRecord(input).command;
+	return typeof command === "string" ? command : "";
+}
+
+function operationKind(tool: string, input: unknown): ToolCallRecord["operation_kind"] {
+	if (tool === "edit" || tool === "write") return "edit";
+	if (tool === "goal_create") return "goal_create";
+	if (tool === "goal_dependencies") return "goal_dependencies";
+	if (tool === "handoff_create") return "handoff_create";
+	if (tool === "recall") return "recall";
+	if (tool === "worker_spawn" || tool === "worker_group") return "organization";
+	if (tool === "read") return "explore";
+	if (tool !== "bash") return "other";
+
+	const command = commandText(input);
+	if (/^code-agent\s+recall\s+goal(?:\s|$)/.test(command)) return "recall";
+	if (/^code-agent\s+evidence\s+log(?:\s|$)/.test(command)) return "evidence_log";
+	if (/^code-agent\s+evidence\s+run(?:\s|$)/.test(command)) return "evidence_run";
+	if (/(^|\s)(?:pytest|py\.test|bun|npm|pnpm|yarn|go|cargo|make)(?:\s|$)/.test(command)) {
+		return "execute";
+	}
+	if (/(^|\s)(?:git|grep|rg|find|fd|ls|cat|head|tail|sed|awk)(?:\s|$)/.test(command)) {
+		return "explore";
+	}
+	return "other";
+}
+
 /** Direct provider/model attribution of one assistant response. */
 interface EmittingContext {
 	provider: string;
@@ -97,25 +125,24 @@ export default function (pi: ExtensionAPI): void {
 		emitting: EmittingContext,
 	): Pick<
 		ToolCallRecord,
-		"at" | "run_id" | "role" | "depth" | "handoff_id" | "goal_id" | "lane" | "provider" | "model"
+		"at" | "task_id" | "worker_kind" | "handoff_id" | "goal_id" | "provider" | "model"
 	> {
 		return {
 			at,
-			run_id: env("CODEFLOW_RUN_ID") ?? null,
-			role: env("CODEFLOW_AGENT_ROLE") ?? "unknown",
-			depth: Number(env("CODEFLOW_AGENT_DEPTH") ?? "0") || 0,
+			task_id: env("CODEFLOW_RUN_ID") ?? null,
+			worker_kind: env("CODEFLOW_PROCESS_KIND") === "service" ? "service" : "worker",
 			handoff_id: optionalEnv("CODEFLOW_HANDOFF_ID"),
 			goal_id: optionalEnv("CODEFLOW_GOAL_ID"),
-			lane: optionalEnv("CODEFLOW_LANE"),
 			provider: emitting.provider,
 			model: emitting.model,
 		};
 	}
 
-	/** The assistant response that most recently emitted in this role process. */
+	/** The assistant response that most recently emitted in this Worker process. */
 	let lastEmitting: EmittingContext = UNKNOWN_CONTEXT;
 	/** call_id -> the context that EMITTED that call (result rows keep it). */
 	const callEmitting = new Map<string, EmittingContext>();
+	const callOperations = new Map<string, ToolCallRecord["operation_kind"]>();
 	/** 1-based turn attribution when Pi emitted a turn_start event. */
 	let currentTurn: number | null = null;
 
@@ -131,7 +158,8 @@ export default function (pi: ExtensionAPI): void {
 		const hasUsage = typeof event.message === "object" && event.message !== null && "usage" in message;
 		const timestamp = plainNumber(message.timestamp);
 		const at = timestamp > 0 ? new Date(timestamp).toISOString() : new Date().toISOString();
-		const role = env("CODEFLOW_AGENT_ROLE") ?? "unknown";
+		const taskId = optionalEnv("CODEFLOW_RUN_ID");
+		const workerKind = env("CODEFLOW_PROCESS_KIND") === "service" ? "service" : "worker";
 		const provider = String(message.provider ?? "") || "unknown";
 		const model = String(message.responseModel ?? message.model ?? "") || "unknown";
 		// This assistant response IS the emitting context for the tool calls it
@@ -144,7 +172,8 @@ export default function (pi: ExtensionAPI): void {
 			appendRow(failedFile, {
 				schema_version: 1,
 				at,
-				role,
+				task_id: taskId,
+				worker_kind: workerKind,
 				provider,
 				model,
 				error_class: errorClassToken(message.stopReason ?? message.errorMessage ?? "provider_error"),
@@ -157,7 +186,7 @@ export default function (pi: ExtensionAPI): void {
 		const input = plainNumber(rawUsage.input);
 		const output = plainNumber(rawUsage.output);
 		const reportedTotal = rawUsage.totalTokens ?? rawUsage.total_tokens;
-		// Provider-reported total is the fair-budget axis; when a provider
+		// Provider-reported total is a consumption metric; when a provider
 		// omits it, the sum of reported components is the honest stand-in.
 		const total =
 			typeof reportedTotal === "number" && Number.isFinite(reportedTotal)
@@ -166,19 +195,17 @@ export default function (pi: ExtensionAPI): void {
 		const rawCost = asRecord(rawUsage.cost);
 
 		const record: AttemptUsageRecord = {
-			schema_version: 2,
+			schema_version: 1,
 			at,
 			request_started_at: null,
 			attempt,
-			run_id: optionalEnv("CODEFLOW_RUN_ID"),
-			role,
+			task_id: taskId,
+			worker_kind: workerKind,
 			provider,
 			model,
-			depth: Number(env("CODEFLOW_AGENT_DEPTH") ?? "0") || 0,
 			turn: currentTurn,
 			handoff_id: optionalEnv("CODEFLOW_HANDOFF_ID"),
 			goal_id: optionalEnv("CODEFLOW_GOAL_ID"),
-			lane: optionalEnv("CODEFLOW_LANE"),
 			usage: {
 				input,
 				output,
@@ -204,6 +231,8 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("tool_call", (event) => {
 		const emitting = lastEmitting;
 		callEmitting.set(event.toolCallId, emitting);
+		const operation = operationKind(event.toolName, event.input);
+		callOperations.set(event.toolCallId, operation);
 		const row: ToolCallRecord = {
 			schema_version: 1,
 			kind: "requested",
@@ -211,6 +240,7 @@ export default function (pi: ExtensionAPI): void {
 			tool: event.toolName,
 			status: null,
 			...attributedRow(new Date().toISOString(), emitting),
+			operation_kind: operation,
 		};
 		appendToolCallRecord(toolFile, row);
 	});
@@ -220,6 +250,8 @@ export default function (pi: ExtensionAPI): void {
 		// call, even if later responses (or their absence) moved the pointer.
 		const emitting = callEmitting.get(event.toolCallId) ?? lastEmitting;
 		callEmitting.delete(event.toolCallId);
+		const operation = callOperations.get(event.toolCallId) ?? "other";
+		callOperations.delete(event.toolCallId);
 		const row: ToolCallRecord = {
 			schema_version: 1,
 			kind: "result",
@@ -227,6 +259,7 @@ export default function (pi: ExtensionAPI): void {
 			tool: event.toolName,
 			status: event.isError ? "failed" : "succeeded",
 			...attributedRow(new Date().toISOString(), emitting),
+			operation_kind: operation,
 		};
 		appendToolCallRecord(toolFile, row);
 	});

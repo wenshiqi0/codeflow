@@ -6,18 +6,17 @@
  * <runs-dir>/                      default .codeflow/runs/code
  * ├── _spool/                      run-level events, for cross-run discovery
  * └── <run-id>/
- *     ├── handoffs/<handoff-id>/   handoff.md, state.json, receipt.json, title.txt
- *     ├── goals/<goal-id>/        immutable goal contracts; no goal state machine
- *     ├── pi-sessions/              goal/lane session files
+ *     ├── task.json                 stable external intent; also the graph root Goal
+ *     ├── handoffs/<handoff-id>/   immutable handoff.json and optional receipt.json
+ *     ├── goals/<goal-id>/          child Goal contracts
  *     ├── active/<handoff-id>      sentinel per in-flight handoff
  *     ├── events/                  the outer loop's only listening surface
  *     ├── tmp/                     staging; rename into events/ delivers
  *     ├── liveness/                watchdog heartbeats
  *     ├── .resume-claims/          one atomic claim per resumed attempt
- *     ├── facts.jsonl              this run's shared fact ledger
  *     ├── usage.jsonl              one row per attributed model call
  *     ├── usage.json               aggregate report written at run exit
- *     └── runner.json              depth-0 pid and startup info
+ *     └── runner.json              root Worker pid and startup info
  * ```
  */
 
@@ -49,8 +48,8 @@ export class RunPaths {
 	get goals(): string {
 		return path.join(this.runDir, "goals");
 	}
-	get piSessions(): string {
-		return path.join(this.runDir, "pi-sessions");
+	get task(): string {
+		return path.join(this.runDir, "task.json");
 	}
 	get active(): string {
 		return path.join(this.runDir, "active");
@@ -76,8 +75,11 @@ export class RunPaths {
 	get eventSeq(): string {
 		return path.join(this.runDir, ".events.seq");
 	}
-	get handoffSeq(): string {
-		return path.join(this.runDir, ".handoffs.seq");
+	get semanticSeq(): string {
+		return path.join(this.runDir, ".semantic.seq");
+	}
+	get goalSeq(): string {
+		return path.join(this.runDir, ".goals.seq");
 	}
 
 	handoffDir(handoffId: string): string {
@@ -86,17 +88,14 @@ export class RunPaths {
 	goalDir(goalId: string): string {
 		return path.join(this.goals, goalId);
 	}
-	goalContractPath(goalId: string): string {
-		return path.join(this.goalDir(goalId), "contract.json");
+	goalPath(goalId: string): string {
+		return path.join(this.goalDir(goalId), "goal.json");
 	}
-	statePath(handoffId: string): string {
-		return path.join(this.handoffDir(handoffId), "state.json");
+	handoffPath(handoffId: string): string {
+		return path.join(this.handoffDir(handoffId), "handoff.json");
 	}
 	receiptPath(handoffId: string): string {
 		return path.join(this.handoffDir(handoffId), "receipt.json");
-	}
-	titlePath(handoffId: string): string {
-		return path.join(this.handoffDir(handoffId), "title.txt");
 	}
 }
 
@@ -104,7 +103,7 @@ export class RunPaths {
  * Write through a per-process staging file, then rename.
  *
  * A reader must never observe a partial document: the outer loop polls these
- * files while they are being written, and half a `state.json` parses as
+ * files while they are being written, and half a semantic record parses as
  * nothing at all.
  */
 export function writeJsonAtomic(target: string, value: unknown): void {
