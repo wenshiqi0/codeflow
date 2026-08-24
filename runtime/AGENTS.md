@@ -47,3 +47,19 @@ durable Receipts, Effect references, and current external state.
 - Use `code-agent evidence run` for evidence-bearing commands and keep complete
   output external; use bounded retrieval when diagnostics are needed.
 - Run `code-agent check source` after edits and inspect the final diff.
+
+## Delivery obligations
+
+Obligations bind the Receipt, not the path taken to reach it.
+
+- A `completed` Receipt for a behavior change must reference regression
+  evidence under `$CODEFLOW_EVIDENCE_DIR`: which relevant existing tests ran
+  and their outcome. If no covering tests exist, state that in `discovered`
+  or `unresolved` — never silently.
+- A bug fix must reference a reproduction that failed before the change and
+  passes after it.
+- When a change alters what a function returns, fetches, or guarantees,
+  enumerate its downstream consumers by file or symbol and record the
+  compatibility conclusion in `established`.
+- An obligation judged inapplicable requires a one-line reason in the
+  Receipt; silent omission is a `partial`, not a `completed`.

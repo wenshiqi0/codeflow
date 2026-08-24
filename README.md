@@ -55,7 +55,9 @@ check source
 
 Root 进程额外加载模型可见的 `goal_create`、`goal_dependencies`、
 `handoff_create`、`worker_spawn`、`worker_group`；所有 Worker 都有 `receipt` 和
-`recall`。Child Worker 每次都用 `--no-session` 创建新鲜 Pi context。
+`recall`。Runtime 关闭 Pi 的扩展自动发现，只加载各进程显式声明的扩展，
+因此 Child Worker 不会继承 Root 的 organization tools。Child Worker 每次启动
+新的 Pi 进程且不传入既有 session id；完整 session 会保留为审计记录。
 
 ## 恢复语义
 

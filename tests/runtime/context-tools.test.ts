@@ -4,7 +4,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import organization from "../../runtime/extensions/codeflow-organization";
 import protocol from "../../runtime/extensions/codeflow-protocol";
+import { buildChildWorkerArgs } from "../../runtime/extensions/codeflow-organization/worker-launcher";
 import { buildWorkerContext } from "../../runtime/extensions/codeflow-context/context";
+import { buildWorkerArgv, type ResolvedExecutor } from "../../runtime/lib/config";
 import { createGoal } from "../../runtime/lib/goals";
 import { openHandoff, submitReceipt } from "../../runtime/lib/handoff";
 import { RunPaths } from "../../runtime/lib/paths";
@@ -51,11 +53,36 @@ describe("capability is the loaded tool surface", () => {
 		expect(rootOnly.sort()).toEqual(["goal_create", "goal_dependencies", "handoff_create", "worker_group", "worker_spawn"]);
 	});
 
-	test("every Worker launch is a fresh Pi context", () => {
+	test("every Worker launch is a fresh Pi context with extension discovery disabled", () => {
 		const launcher = fs.readFileSync(path.resolve(import.meta.dir, "../../runtime/extensions/codeflow-organization/worker-launcher.ts"), "utf8");
-		const root = fs.readFileSync(path.resolve(import.meta.dir, "../../runtime/lib/config.ts"), "utf8");
-		expect(launcher).toContain('"--no-session"');
-		expect(root).toContain('"--no-session"');
+		const resolved: ResolvedExecutor = {
+			provider: "test-provider",
+			model: "test-model",
+			systemPrompt: "test system prompt",
+			promptPath: "/tmp/worker.md",
+		};
+		const rootArgs = buildWorkerArgv(resolved, "root prompt", ["/runtime/extensions/root-only.ts"]);
+		const childArgs = buildChildWorkerArgs(resolved);
+		expect(rootArgs).toContain("--no-extensions");
+		expect(childArgs).toContain("--no-extensions");
+		expect(rootArgs).toContain("/runtime/extensions/root-only.ts");
+		const childExtensions = childArgs.flatMap((arg, index) =>
+			arg === "--extension" ? [path.basename(path.dirname(childArgs[index + 1]))] : [],
+		);
+		expect(childExtensions).toEqual([
+			"provider-profiles",
+			"codeflow-protocol",
+			"host-guard",
+			"codeflow-context",
+			"bash-compressor",
+			"usage-ledger",
+			"telemetry-ledger",
+			"agent-watchdog",
+		]);
+		expect(launcher).toContain("buildChildWorkerArgs(resolved)");
+		expect(launcher).not.toContain('"--no-session"');
+		expect(rootArgs).not.toContain("--no-session");
+		expect(childArgs).not.toContain("--no-session");
 		expect(launcher).not.toContain("--session-id");
 	});
 });

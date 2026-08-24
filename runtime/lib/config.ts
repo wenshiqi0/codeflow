@@ -106,8 +106,9 @@ export function buildWorkerArgv(
 		"--provider", resolved.provider,
 		"--model", resolved.model,
 		"--system-prompt", resolved.systemPrompt,
+		"--no-extensions",
 	];
 	for (const extension of extensions) argv.push("--extension", extension);
-	argv.push("--no-context-files", "--no-session");
+	argv.push("--no-context-files");
 	return argv;
 }

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveWorker } from "../../lib/config";
+import { buildWorkerArgv, resolveWorker, type ResolvedExecutor } from "../../lib/config";
 import {
 	attachHandoffProcess,
 	loadReceipt,
@@ -17,12 +17,13 @@ const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const CONFIG_FILE = path.join(RUNTIME_DIR, "config.json");
 const CHILD_EXTENSIONS = [
 	"provider-profiles",
-	"agent-watchdog",
-	"codeflow-context",
 	"codeflow-protocol",
+	"host-guard",
+	"codeflow-context",
 	"bash-compressor",
 	"usage-ledger",
-	"host-guard",
+	"telemetry-ledger",
+	"agent-watchdog",
 ].map((name) => path.join(RUNTIME_DIR, "extensions", name, "index.ts"));
 
 export interface WorkerExecution {
@@ -32,6 +33,14 @@ export interface WorkerExecution {
 	receipt_id: string | null;
 	status: string;
 	runtime_failure_reasons: RuntimeFailureReason[];
+}
+
+export function buildChildWorkerArgs(resolved: ResolvedExecutor): string[] {
+	return buildWorkerArgv(
+		resolved,
+		"Execute the current Handoff from the injected Codeflow context and submit one Receipt.",
+		CHILD_EXTENSIONS,
+	).slice(1);
 }
 
 function currentPaths(): RunPaths {
@@ -69,16 +78,7 @@ export async function spawnWorker(
 	const handoff = loadHandoff(paths, handoffId);
 	startHandoff(paths, handoffId);
 	const resolved = resolveWorker(CONFIG_FILE);
-	const args = [
-		"--mode", "json",
-		"--provider", resolved.provider,
-		"--model", resolved.model,
-		"--system-prompt", resolved.systemPrompt,
-		...CHILD_EXTENSIONS.flatMap((extension) => fs.existsSync(extension) ? ["--extension", extension] : []),
-		"--no-context-files",
-		"--no-session",
-		"-p", "Execute the current Handoff from the injected Codeflow context and submit one Receipt.",
-	];
+	const args = buildChildWorkerArgs(resolved);
 	const childEnv: Record<string, string | undefined> = {
 		...process.env,
 		PI_CODING_AGENT_DIR: RUNTIME_DIR,

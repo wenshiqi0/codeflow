@@ -37,6 +37,12 @@ mkdir -p "$(dirname "$dest")"
 # default branch, and a filtered clone cannot always materialize arbitrary
 # historical blobs. If the commit is absent (history rewrite or partial
 # mirror), fetch it explicitly and retry once.
+#
+# A Worker must not see the repository's later history: it can otherwise find
+# an upstream fix by searching commits after the benchmark base. Once the
+# exact base tree is materialized, replace its object database with a synthetic
+# one-commit repository. This preserves ordinary `git diff` patch extraction
+# while removing all remote refs and future commit objects.
 if ! git clone --quiet "$url" "$dest" 2>/dev/null; then
   echo "repo-clone: git clone failed for $url" >&2
   exit 1
@@ -54,3 +60,9 @@ if [ "$head" != "$base_commit" ]; then
   echo "repo-clone: HEAD $head != base_commit $base_commit" >&2
   exit 1
 fi
+
+rm -rf "$dest/.git"
+git -C "$dest" init --quiet --initial-branch=benchmark-base
+git -C "$dest" add --all
+git -C "$dest" -c user.name=codeflow-benchmark -c user.email=benchmark@codeflow.invalid \
+  commit --quiet --allow-empty -m "benchmark base workspace"
