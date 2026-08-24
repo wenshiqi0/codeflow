@@ -1,18 +1,21 @@
 /** Privacy-safe projection of canonical Handoff / Receipt runtime state. */
 
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { EVENT_REASONS } from "../events";
-import { handoffHistory, RECEIPT_STATUSES, type ReceiptStatus } from "../handoff";
+import { handoffHistory, RECEIPT_STATUSES, type ReceiptRecord, type ReceiptStatus } from "../handoff";
 import { RunPaths } from "../paths";
 import { scan } from "../wait";
 
-export const HANDOFF_STATE_PROJECTION_SCHEMA_VERSION = 1;
+export const HANDOFF_STATE_PROJECTION_SCHEMA_VERSION = 2;
 export const OBSERVABILITY_RUNTIME_FAILURE_REASONS = EVENT_REASONS;
 export type ObservabilityRuntimeFailureReason = (typeof EVENT_REASONS)[number];
 export type HandoffProjectionStatus = "open" | "running" | "interrupted" | ReceiptStatus;
+export type ObligationProjection = "met" | "exempt" | "missing" | "malformed";
+export type DecompositionProjection = "split" | "solo" | "missing" | "malformed";
 
 export interface HandoffStateProjection {
-	schema_version: 1;
+	schema_version: 2;
 	task_id: string;
 	handoff_id: string;
 	goal_id: string;
@@ -22,6 +25,12 @@ export interface HandoffStateProjection {
 	receipt_id: string | null;
 	runtime_failure_reasons: ObservabilityRuntimeFailureReason[];
 	unknown_runtime_failure_reasons: number;
+	decomposition: DecompositionProjection | null;
+	decomposition_mismatch: boolean | null;
+	has_direct_child: boolean | null;
+	obligation_regression: ObligationProjection | null;
+	obligation_reproduction: ObligationProjection | null;
+	obligation_consumers: ObligationProjection | null;
 }
 
 export interface HandoffStateScan {
@@ -30,7 +39,7 @@ export interface HandoffStateScan {
 }
 
 export interface HandoffStateTelemetryFile {
-	schema_version: 1;
+	schema_version: 2;
 	states: HandoffStateProjection[];
 }
 
@@ -59,13 +68,64 @@ function interruptedReasons(paths: RunPaths, handoffId: string): {
 	return { reasons: reasons as ObservabilityRuntimeFailureReason[], unknown: 0 };
 }
 
+function decisionRows(receipt: ReceiptRecord, key: string): string[] {
+	const prefix = `${key}:`.toLowerCase();
+	return receipt.decisions.filter((decision) => decision.trim().toLowerCase().startsWith(prefix));
+}
+
+function evidenceFileIsValid(paths: RunPaths, receipt: ReceiptRecord, reference: string): boolean {
+	if (!path.isAbsolute(reference) || reference.split(path.sep).includes("..")) return false;
+	if (!receipt.effects.some((effect) => "file" in effect && effect.file === reference)) return false;
+	try {
+		const root = fs.realpathSync(paths.evidence);
+		const file = fs.realpathSync(reference);
+		const relative = path.relative(root, file);
+		return fs.statSync(file).isFile() && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+	} catch {
+		return false;
+	}
+}
+
+function projectObligation(
+	paths: RunPaths,
+	receipt: ReceiptRecord,
+	name: "regression" | "reproduction" | "consumers",
+): ObligationProjection {
+	const key = `obligation.${name}`;
+	const rows = decisionRows(receipt, key);
+	if (rows.length === 0) return "missing";
+	if (rows.length !== 1 || /[\r\n]/.test(rows[0])) return "malformed";
+	const match = rows[0].trim().match(new RegExp(`^${key.replace(".", "\\.")}:\\s*(met|exempt)\\s+—\\s+(.+)$`, "i"));
+	if (!match || match[2].trim() === "") return "malformed";
+	if (match[1].toLowerCase() === "exempt") return "exempt";
+	const value = match[2].trim();
+	if (name === "consumers") {
+		return /^[^,\s:]+:[^,\s]+(?:\s*,\s*[^,\s:]+:[^,\s]+)*$/.test(value) ? "met" : "malformed";
+	}
+	return evidenceFileIsValid(paths, receipt, value) ? "met" : "malformed";
+}
+
+function projectDecomposition(receipt: ReceiptRecord): DecompositionProjection {
+	const rows = decisionRows(receipt, "decomposition");
+	if (rows.length === 0) return "missing";
+	if (rows.length !== 1 || /[\r\n]/.test(rows[0])) return "malformed";
+	const match = rows[0].trim().match(/^decomposition:\s*(split|solo)\s+—\s+(.+)$/i);
+	return match && match[2].trim() ? match[1].toLowerCase() as "split" | "solo" : "malformed";
+}
+
 /** Project one canonical runtime Handoff without exposing semantic prose or Effects. */
 export function projectHandoffState(paths: RunPaths, handoffId: string): HandoffStateProjection {
-	const view = handoffHistory(paths).find((entry) => entry.handoff.id === handoffId);
+	const history = handoffHistory(paths);
+	const view = history.find((entry) => entry.handoff.id === handoffId);
 	if (!view) throw new HandoffObservabilityError(`unknown handoff: ${handoffId}`);
 	const interrupted = view.receipt === null ? interruptedReasons(paths, handoffId) : null;
 	const status: HandoffProjectionStatus = view.receipt?.status
 		?? (view.status === "running" ? "running" : interrupted ? "interrupted" : "open");
+	const isRoot = view.handoff.goal_id === paths.runId && view.handoff.parent_handoff_id === null;
+	const decomposition = isRoot && view.receipt ? projectDecomposition(view.receipt) : null;
+	const hasDirectChild = history.some((entry) => entry.handoff.parent_handoff_id === view.handoff.id);
+	const obligationEligible = view.receipt !== null
+		&& (isRoot || view.receipt.status === "completed" || view.receipt.status === "partial");
 	return {
 		schema_version: HANDOFF_STATE_PROJECTION_SCHEMA_VERSION,
 		task_id: paths.runId,
@@ -77,6 +137,15 @@ export function projectHandoffState(paths: RunPaths, handoffId: string): Handoff
 		receipt_id: view.receipt?.id ?? null,
 		runtime_failure_reasons: interrupted?.reasons ?? [],
 		unknown_runtime_failure_reasons: interrupted?.unknown ?? 0,
+		decomposition,
+		decomposition_mismatch:
+			decomposition === "split" ? !hasDirectChild
+				: decomposition === "solo" ? hasDirectChild
+					: null,
+		has_direct_child: isRoot && view.receipt ? hasDirectChild : null,
+		obligation_regression: obligationEligible ? projectObligation(paths, view.receipt!, "regression") : null,
+		obligation_reproduction: obligationEligible ? projectObligation(paths, view.receipt!, "reproduction") : null,
+		obligation_consumers: obligationEligible ? projectObligation(paths, view.receipt!, "consumers") : null,
 	};
 }
 
@@ -114,6 +183,12 @@ const PROJECTION_KEYS = new Set([
 	"receipt_id",
 	"runtime_failure_reasons",
 	"unknown_runtime_failure_reasons",
+	"decomposition",
+	"decomposition_mismatch",
+	"has_direct_child",
+	"obligation_regression",
+	"obligation_reproduction",
+	"obligation_consumers",
 ]);
 
 function validateProjection(value: unknown, index: number): HandoffStateProjection {
@@ -155,6 +230,21 @@ function validateProjection(value: unknown, index: number): HandoffStateProjecti
 	if (!Number.isSafeInteger(value.unknown_runtime_failure_reasons) || Number(value.unknown_runtime_failure_reasons) < 0) {
 		throw new HandoffObservabilityError(`handoff projection ${index + 1}: unknown_runtime_failure_reasons must be non-negative`);
 	}
+	const obligationStates = ["met", "exempt", "missing", "malformed", null];
+	for (const key of ["obligation_regression", "obligation_reproduction", "obligation_consumers"] as const) {
+		if (!obligationStates.includes(value[key] as never)) {
+			throw new HandoffObservabilityError(`handoff projection ${index + 1}: invalid ${key}`);
+		}
+	}
+	if (!["split", "solo", "missing", "malformed", null].includes(value.decomposition as never)) {
+		throw new HandoffObservabilityError(`handoff projection ${index + 1}: invalid decomposition`);
+	}
+	if (value.decomposition_mismatch !== null && typeof value.decomposition_mismatch !== "boolean") {
+		throw new HandoffObservabilityError(`handoff projection ${index + 1}: invalid decomposition_mismatch`);
+	}
+	if (value.has_direct_child !== null && typeof value.has_direct_child !== "boolean") {
+		throw new HandoffObservabilityError(`handoff projection ${index + 1}: invalid has_direct_child`);
+	}
 	return value as unknown as HandoffStateProjection;
 }
 
@@ -170,7 +260,7 @@ export function readHandoffStateProjections(file: string): HandoffStateProjectio
 	try { parsed = JSON.parse(content); }
 	catch (error) { throw new HandoffObservabilityError(`malformed handoff telemetry ${file}: ${(error as Error).message}`); }
 	if (!isObject(parsed) || parsed.schema_version !== HANDOFF_STATE_PROJECTION_SCHEMA_VERSION || !Array.isArray(parsed.states)) {
-		throw new HandoffObservabilityError(`handoff telemetry ${file} must be schema_version 1 with a states array`);
+		throw new HandoffObservabilityError(`handoff telemetry ${file} must use the current schema with a states array`);
 	}
 	return parsed.states.map(validateProjection);
 }

@@ -29,6 +29,7 @@ export const RUNTIME_FAILURE_REASONS = [
 	"OUTPUT_TRUNCATED",
 	"PROVIDER_FAILURE",
 	"USER_CANCELLED",
+	"WORKER_LAUNCH_FAILURE",
 ] as const;
 export type RuntimeFailureReason = (typeof RUNTIME_FAILURE_REASONS)[number];
 
@@ -95,6 +96,18 @@ export interface OpenOptions {
 	expectedOutcome: string[];
 	evidenceRequirement?: string[];
 	parentHandoffId?: string | null;
+}
+
+export interface PreparedOpenOptions {
+	goalId: string;
+	digest: string;
+	intent: string;
+	known: string[];
+	references: ExternalReference[];
+	constraints: string[];
+	expectedOutcome: string[];
+	evidenceRequirement: string[];
+	parentHandoffId: string | null;
 }
 
 export interface SubmitReceiptOptions {
@@ -253,23 +266,43 @@ function readActive(paths: RunPaths, handoffId: string): { pid?: number; started
 	}
 }
 
-export function openHandoff(paths: RunPaths, options: OpenOptions): HandoffRecord {
+/** Validate and normalize a Handoff without allocating a sequence or writing state. */
+export function prepareHandoff(
+	paths: RunPaths,
+	options: OpenOptions,
+	additionalGoalIds: readonly string[] = [],
+): PreparedOpenOptions {
 	loadTask(paths);
-	assertGoalScope(paths, options.goalId);
+	if (!additionalGoalIds.includes(options.goalId)) assertGoalScope(paths, options.goalId);
 	if (options.parentHandoffId) loadHandoff(paths, options.parentHandoffId);
-	const content: Omit<HandoffRecord, "id"> = {
-		schema_version: HANDOFF_SCHEMA_VERSION,
-		seq: nextSeq(paths.semanticSeq),
-		task_id: paths.runId,
-		goal_id: options.goalId,
+	return {
+		goalId: nonEmpty(options.goalId, "goal_id"),
 		digest: nonEmpty(options.digest, "digest"),
 		intent: nonEmpty(options.intent, "intent"),
 		known: strings(options.known ?? [], "known"),
 		references: references(options.references ?? []),
 		constraints: strings(options.constraints ?? [], "constraints"),
-		expected_outcome: strings(options.expectedOutcome, "expected_outcome", true),
-		evidence_requirement: strings(options.evidenceRequirement ?? [], "evidence_requirement"),
-		parent_handoff_id: options.parentHandoffId ?? null,
+		expectedOutcome: strings(options.expectedOutcome, "expected_outcome", true),
+		evidenceRequirement: strings(options.evidenceRequirement ?? [], "evidence_requirement"),
+		parentHandoffId: options.parentHandoffId ?? null,
+	};
+}
+
+export function openHandoff(paths: RunPaths, options: OpenOptions): HandoffRecord {
+	const prepared = prepareHandoff(paths, options);
+	const content: Omit<HandoffRecord, "id"> = {
+		schema_version: HANDOFF_SCHEMA_VERSION,
+		seq: nextSeq(paths.semanticSeq),
+		task_id: paths.runId,
+		goal_id: prepared.goalId,
+		digest: prepared.digest,
+		intent: prepared.intent,
+		known: prepared.known,
+		references: prepared.references,
+		constraints: prepared.constraints,
+		expected_outcome: prepared.expectedOutcome,
+		evidence_requirement: prepared.evidenceRequirement,
+		parent_handoff_id: prepared.parentHandoffId,
 	};
 	const record: HandoffRecord = { id: contentId("h", handoffContent(content)), ...content };
 	const directory = paths.handoffDir(record.id);

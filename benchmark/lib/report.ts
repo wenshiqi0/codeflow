@@ -20,10 +20,12 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { canonicalJson } from "../../runtime/lib/canonical";
 import { nowIso } from "../../runtime/lib/paths";
 import type { BenchmarkManifest, CaseAttemptRecord, CaseFile } from "./artifacts";
 import {
 	BENCHMARK_MANIFEST_SCHEMA_VERSION,
+	OBSERVATION_SCHEMA_VERSION,
 	} from "./artifacts";
 import { BENCHMARK_CASE_SCHEMA_VERSION } from "./artifacts";
 import { type BudgetName } from "./budgets";
@@ -42,7 +44,7 @@ import {
 } from "../../runtime/lib/observability/summary";
 import type { ContextGrowthSummary, WasteSummary } from "../../runtime/lib/observability/usage-analysis";
 
-export const BENCHMARK_REPORT_SCHEMA_VERSION = 3;
+export const BENCHMARK_REPORT_SCHEMA_VERSION = 4;
 
 export class BenchmarkReportError extends Error {
 	constructor(message: string) {
@@ -58,7 +60,7 @@ export interface BreakdownTotals {
 }
 
 export interface BenchmarkReport {
-	schema_version: 3;
+	schema_version: 4;
 	benchmark_run_id: string;
 	generated_at: string;
 	attempts_per_instance: number;
@@ -106,6 +108,24 @@ export interface BenchmarkReport {
 		metrics_available: boolean;
 		per_attempt_hit_rate: { median: number | null; p90: number | null };
 	};
+	prefix_cache: {
+		prefix_transition_count: number;
+		prefix_invalidation_count: number;
+		prefix_invalidation_rate: number | null;
+		metrics_available: boolean;
+	};
+	split_economics: {
+		spontaneous_split_eligible: number;
+		spontaneous_split_count: number;
+		spontaneous_split_rate: number | null;
+		decomposition_mismatch_rate: number | null;
+		verified_declarations: {
+			decomposition: HandoffObservabilitySummary["decomposition"];
+			obligations: HandoffObservabilitySummary["obligations"];
+		};
+		rounds_buckets: Record<string, { resolved: number; unresolved: number; resolved_rate: number | null }>;
+	};
+	observation: BenchmarkManifest["observation"];
 	tool_calls_per_model_round: number | null;
 	collaboration: {
 		recall_operations: number;
@@ -147,6 +167,8 @@ export interface BenchmarkReport {
 		};
 		tool_network: string;
 		harness_commit: string;
+		observation_schema_version: number;
+		intervention_flags: BenchmarkManifest["observation"]["intervention_flags"];
 	};
 }
 
@@ -314,8 +336,11 @@ function readCases(outDir: string): CaseFile[] {
 			if (!TERMINATION_KEYS.includes(terminated)) {
 				throw new BenchmarkReportError(`invalid terminated_by in ${file}: ${String(attempt.terminated_by)}`);
 			}
-			if (!attempt.metrics?.handoffs || !attempt.metrics.wall_breakdown || !attempt.metrics.waste || !attempt.metrics.context_growth) {
+			if (!attempt.metrics?.handoffs || !attempt.metrics.wall_breakdown || !attempt.metrics.waste || !attempt.metrics.context_growth || !attempt.metrics.prefix_cache) {
 				throw new BenchmarkReportError(`incomplete current-schema metrics in ${file}`);
+			}
+			if (attempt.observation?.schema_version !== OBSERVATION_SCHEMA_VERSION) {
+				throw new BenchmarkReportError(`incompatible observation schema in ${file}`);
 			}
 		}
 		cases.push(parsed);
@@ -436,6 +461,15 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 	// loudly instead of masquerading as a complete run.
 	const predictions = readPredictions(path.join(outDir, "predictions.jsonl"));
 	const cases = readCases(outDir);
+	for (const caseFile of cases) {
+		for (const attempt of caseFile.attempts) {
+			if (canonicalJson(attempt.observation) !== canonicalJson(manifest.observation)) {
+				throw new BenchmarkReportError(
+					`observation schema or intervention flags differ in ${caseFile.instance_id} attempt ${attempt.attempt}`,
+				);
+			}
+		}
+	}
 	const selected: string[] = Array.isArray(manifest.instances?.selected) ? manifest.instances.selected : [];
 	const uniqueSelected = new Set(selected);
 	if (uniqueSelected.size !== selected.length) {
@@ -549,6 +583,39 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 
 	const effective = manifest.termination_budgets.effective;
 	const handoffObservability = accumulateHandoffObservability(outDir, cases);
+	const prefixTransitionCount = attempts.reduce(
+		(sum, attempt) => sum + attempt.metrics.prefix_cache.prefix_transition_count,
+		0,
+	);
+	const prefixInvalidationCount = attempts.reduce(
+		(sum, attempt) => sum + attempt.metrics.prefix_cache.prefix_invalidation_count,
+		0,
+	);
+	const prefixMetricsAvailable = attempts.length > 0
+		&& attempts.every((attempt) => attempt.metrics.prefix_cache.metrics_available);
+	const spontaneousEligible = manifest.observation.request_named_split
+		? 0
+		: handoffObservability.decomposition.eligible;
+	const spontaneousSplit = manifest.observation.request_named_split
+		? 0
+		: handoffObservability.decomposition.actual_split;
+	const roundsBuckets: Record<string, { resolved: number; unresolved: number; resolved_rate: number | null }> = {};
+	for (const [label, minimum, maximum] of [
+		["0-19", 0, 19],
+		["20-39", 20, 39],
+		["40+", 40, Number.POSITIVE_INFINITY],
+	] as const) {
+		const eligible = attempts.filter((attempt) =>
+			attempt.metrics.model_rounds_total >= minimum
+			&& attempt.metrics.model_rounds_total <= maximum
+			&& (attempt.verdict === "resolved" || attempt.verdict === "unresolved"));
+		const bucketResolved = eligible.filter((attempt) => attempt.verdict === "resolved").length;
+		roundsBuckets[label] = {
+			resolved: bucketResolved,
+			unresolved: eligible.length - bucketResolved,
+			resolved_rate: eligible.length > 0 ? bucketResolved / eligible.length : null,
+		};
+	}
 	const attemptsPerInstance = manifest.attempts_per_instance;
 	const validCases = cases
 		.map((caseFile) => caseFile.attempts.filter((attempt) => attempt.verdict === "resolved" || attempt.verdict === "unresolved"))
@@ -591,7 +658,7 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 		.map((attempt) => attempt.metrics.time_to_first_patch_seconds)
 		.filter((value): value is number => value !== null);
 	return {
-		schema_version: BENCHMARK_REPORT_SCHEMA_VERSION,
+		schema_version: BENCHMARK_REPORT_SCHEMA_VERSION as 4,
 		benchmark_run_id: manifest.benchmark_run_id,
 		generated_at: nowIso(),
 		attempts_per_instance: attemptsPerInstance,
@@ -641,6 +708,29 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 				p90: percentile90OrNull(perAttemptCacheHitRates),
 			},
 		},
+		prefix_cache: {
+			prefix_transition_count: prefixTransitionCount,
+			prefix_invalidation_count: prefixInvalidationCount,
+			prefix_invalidation_rate: prefixMetricsAvailable && prefixTransitionCount > 0
+				? prefixInvalidationCount / prefixTransitionCount
+				: null,
+			metrics_available: prefixMetricsAvailable,
+		},
+		split_economics: {
+			spontaneous_split_eligible: spontaneousEligible,
+			spontaneous_split_count: spontaneousSplit,
+			spontaneous_split_rate: spontaneousEligible > 0 ? spontaneousSplit / spontaneousEligible : null,
+			decomposition_mismatch_rate: handoffObservability.decomposition.split + handoffObservability.decomposition.solo > 0
+				? handoffObservability.decomposition.mismatch /
+					(handoffObservability.decomposition.split + handoffObservability.decomposition.solo)
+				: null,
+			verified_declarations: {
+				decomposition: handoffObservability.decomposition,
+				obligations: handoffObservability.obligations,
+			},
+			rounds_buckets: roundsBuckets,
+		},
+		observation: manifest.observation,
 		tool_calls_per_model_round: roundsTotal > 0 ? callsTotal / roundsTotal : null,
 		collaboration: {
 			recall_operations: recallOperations,
@@ -686,15 +776,17 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 			context_growth: aggregateContextGrowth(attempts),
 		},
 		comparison_keys: {
-				dataset_id: manifest.dataset.dataset_id,
-				dataset_split: manifest.dataset.split,
-				dataset_revision: manifest.dataset.revision,
+			dataset_id: manifest.dataset.dataset_id,
+			dataset_split: manifest.dataset.split,
+			dataset_revision: manifest.dataset.revision,
 			instance_set_digest: createHash("sha256").update([...selected].sort().join("\n")).digest("hex"),
 			termination_budgets: {
 				wall_seconds: effective.wall_seconds,
 			},
-				tool_network: manifest.tool_network,
-				harness_commit: manifest.harness.commit,
+			tool_network: manifest.tool_network,
+			harness_commit: manifest.harness.commit,
+			observation_schema_version: manifest.observation.schema_version,
+			intervention_flags: manifest.observation.intervention_flags,
 		},
 	};
 }

@@ -52,14 +52,35 @@ durable Receipts, Effect references, and current external state.
 
 Obligations bind the Receipt, not the path taken to reach it.
 
-- A `completed` Receipt for a behavior change must reference regression
-  evidence under `$CODEFLOW_EVIDENCE_DIR`: which relevant existing tests ran
-  and their outcome. If no covering tests exist, state that in `discovered`
-  or `unresolved` — never silently.
-- A bug fix must reference a reproduction that failed before the change and
-  passes after it.
-- When a change alters what a function returns, fetches, or guarantees,
-  enumerate its downstream consumers by file or symbol and record the
-  compatibility conclusion in `established`.
-- An obligation judged inapplicable requires a one-line reason in the
-  Receipt; silent omission is a `partial`, not a `completed`.
+- Regression evidence for a behavior change is an absolute file path under
+  `$CODEFLOW_EVIDENCE_DIR` recording the relevant existing tests and outcome.
+- Reproduction evidence for a bug fix is an absolute file path under
+  `$CODEFLOW_EVIDENCE_DIR` recording failure without the fix and success with
+  the fix.
+- A change to what a function returns, fetches, or guarantees identifies its
+  downstream consumers by `file:symbol` and records the compatibility
+  conclusion in `established`.
+- An inapplicable obligation carries a one-line reason.
+
+Every root Receipt, and every `completed` or `partial` child Receipt, records
+exactly one decision line for each obligation. Evidence paths also appear as
+`{file}` entries in the same Receipt's `effects` array.
+
+Offline verification resolves each evidence path and the evidence root to
+canonical realpaths. The target is an existing regular file inside the root;
+path traversal and symlink escape are malformed declarations.
+
+```text
+obligation.regression:   met — <evidence ref> | exempt — <reason>
+obligation.reproduction: met — <evidence ref> | exempt — <reason>
+obligation.consumers:    met — <file:symbol, ...> | exempt — <reason>
+```
+
+These declarations are classified by offline reporting. Receipt submission
+does not reject or change a status because a declaration is absent or invalid.
+
+Every root Receipt also records exactly one decomposition decision:
+
+```text
+decomposition: split | solo — <reason>
+```

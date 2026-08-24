@@ -77,6 +77,7 @@ function operationKind(tool: string, input: unknown): ToolCallRecord["operation_
 	if (tool === "goal_create") return "goal_create";
 	if (tool === "goal_dependencies") return "goal_dependencies";
 	if (tool === "handoff_create") return "handoff_create";
+	if (tool === "handoff_spawn") return "organization";
 	if (tool === "recall") return "recall";
 	if (tool === "worker_spawn" || tool === "worker_group") return "organization";
 	if (tool === "read") return "explore";

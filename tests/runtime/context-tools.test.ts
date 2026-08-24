@@ -50,7 +50,7 @@ describe("capability is the loaded tool surface", () => {
 		protocol({ registerTool(tool: { name: string }) { universal.push(tool.name); } } as never);
 		organization({ registerTool(tool: { name: string }) { rootOnly.push(tool.name); } } as never);
 		expect(universal.sort()).toEqual(["recall", "receipt"]);
-		expect(rootOnly.sort()).toEqual(["goal_create", "goal_dependencies", "handoff_create", "worker_group", "worker_spawn"]);
+		expect(rootOnly.sort()).toEqual(["goal_create", "goal_dependencies", "handoff_create", "handoff_spawn", "worker_group", "worker_spawn"]);
 	});
 
 	test("every Worker launch is a fresh Pi context with extension discovery disabled", () => {

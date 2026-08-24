@@ -61,6 +61,7 @@ export const EVENT_REASONS = [
 	"OUTPUT_TRUNCATED",
 	"PROVIDER_FAILURE",
 	"USER_CANCELLED",
+	"WORKER_LAUNCH_FAILURE",
 ] as const;
 
 export type EventReason = (typeof EVENT_REASONS)[number];

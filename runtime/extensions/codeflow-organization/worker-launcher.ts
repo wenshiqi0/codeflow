@@ -33,6 +33,12 @@ export interface WorkerExecution {
 	receipt_id: string | null;
 	status: string;
 	runtime_failure_reasons: RuntimeFailureReason[];
+	retryable: boolean;
+}
+
+export interface WorkerLauncherDependencies {
+	resolve?: () => ResolvedExecutor;
+	spawnProcess?: typeof spawn;
 }
 
 export function buildChildWorkerArgs(resolved: ResolvedExecutor): string[] {
@@ -69,16 +75,37 @@ function reasonsFor(result: { exitCode: number; stopReason?: string; aborted: bo
 	return [...new Set(reasons)];
 }
 
+function launchFailure(paths: RunPaths, handoffId: string): WorkerExecution {
+	recordRuntimeFailure(paths, handoffId, ["WORKER_LAUNCH_FAILURE"], "Worker process could not be launched");
+	return {
+		handoff_id: handoffId,
+		exit_code: -1,
+		stop_reason: null,
+		receipt_id: null,
+		status: "interrupted",
+		runtime_failure_reasons: ["WORKER_LAUNCH_FAILURE"],
+		retryable: true,
+	};
+}
+
 export async function spawnWorker(
 	handoffId: string,
 	signal: AbortSignal | undefined,
 	cwd: string,
+	dependencies: WorkerLauncherDependencies = {},
 ): Promise<WorkerExecution> {
 	const paths = currentPaths();
 	const handoff = loadHandoff(paths, handoffId);
+	let args: string[];
+	let command: { command: string; args: string[] };
+	try {
+		const resolved = (dependencies.resolve ?? (() => resolveWorker(CONFIG_FILE)))();
+		args = buildChildWorkerArgs(resolved);
+		command = invocation(args);
+	} catch {
+		return launchFailure(paths, handoffId);
+	}
 	startHandoff(paths, handoffId);
-	const resolved = resolveWorker(CONFIG_FILE);
-	const args = buildChildWorkerArgs(resolved);
 	const childEnv: Record<string, string | undefined> = {
 		...process.env,
 		PI_CODING_AGENT_DIR: RUNTIME_DIR,
@@ -91,10 +118,20 @@ export async function spawnWorker(
 	let stopReason: string | undefined;
 	let stderr = "";
 	let aborted = false;
-	const command = invocation(args);
-	const exitCode = await new Promise<number>((resolve) => {
-		const child = spawn(command.command, command.args, { cwd, env: childEnv, stdio: ["ignore", "pipe", "pipe"] });
-		if (child.pid !== undefined) attachHandoffProcess(paths, handoffId, child.pid);
+	let launched = false;
+	let exitCode: number;
+	try {
+		exitCode = await new Promise<number>((resolve) => {
+		const child = (dependencies.spawnProcess ?? spawn)(command.command, command.args, { cwd, env: childEnv, stdio: ["ignore", "pipe", "pipe"] });
+		if (child.pid !== undefined) {
+			launched = true;
+			try {
+				attachHandoffProcess(paths, handoffId, child.pid);
+			} catch (error) {
+				child.kill("SIGTERM");
+				throw error;
+			}
+		}
 		let closed = false;
 		let killTimer: ReturnType<typeof setTimeout> | undefined;
 		const stop = () => {
@@ -131,7 +168,11 @@ export async function spawnWorker(
 		});
 		if (signal?.aborted) stop();
 		else signal?.addEventListener("abort", stop, { once: true });
-	});
+		});
+	} catch {
+		return launchFailure(paths, handoffId);
+	}
+	if (!launched) return launchFailure(paths, handoffId);
 
 	const receipt = loadReceipt(paths, handoffId);
 	if (receipt) {
@@ -142,6 +183,7 @@ export async function spawnWorker(
 			receipt_id: receipt.id,
 			status: receipt.status,
 			runtime_failure_reasons: [],
+			retryable: false,
 		};
 	}
 	const reasons = reasonsFor({ exitCode, stopReason, aborted, stderr });
@@ -154,5 +196,6 @@ export async function spawnWorker(
 		receipt_id: null,
 		status: "interrupted",
 		runtime_failure_reasons: reasons,
+		retryable: true,
 	};
 }

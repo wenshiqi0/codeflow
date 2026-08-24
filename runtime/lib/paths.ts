@@ -72,6 +72,9 @@ export class RunPaths {
 	get usageSummary(): string {
 		return path.join(this.runDir, "usage.json");
 	}
+	get runFactsLedger(): string {
+		return path.join(this.runDir, "run-observations.jsonl");
+	}
 	get eventSeq(): string {
 		return path.join(this.runDir, ".events.seq");
 	}
