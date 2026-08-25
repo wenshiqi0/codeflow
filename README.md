@@ -49,8 +49,14 @@ admission:
 
 - Goal 是可独立推进、依赖、调度和召回的结果作用域，不是步骤或角色。
 - Handoff 在一个 Goal 内开启有边界的 Work Commitment。
-- Receipt 以 `completed`、`partial`、`blocked`、`failed` 或 `superseded`
-  关闭一个 Handoff。
+- 一个 Handoff 可携带 append-only 的不可变 Receipt 链；Receipt 是增量语义
+  delta，不是 snapshot 或 checkpoint。`progress` Receipt 不关闭 Handoff 地
+  推进持久语义；只有 terminal Receipt（`completed`、`partial`、`blocked`、
+  `failed`、`superseded`）关闭 Handoff 并结束 root run。旧的 schema-v1
+  `receipt.json` 记录按单个 terminal Receipt 读取。
+- 后续 Receipt 可按稳定引用 resolve 或 supersede 同一 Goal 内的早前事实，
+  包括前序 Handoff 产生的语义；折叠后的 decisions、unresolved、blockers
+  不会累积过期值。
 - Effect 只通过 Git ref、文件路径、外部 ID、服务引用或最小语义描述引用现实状态。
 - Context、tool observation、推理和 session 都不是持久语义。
 - Runtime failure 只产生中断事件，不伪造 Receipt。
@@ -59,8 +65,12 @@ admission:
 回归证据、问题复现和下游消费者三类交付义务；不适用时给出理由。义务声明与 Root
 的拆分声明由离线观察面分类，不改变 Receipt 状态，也不构成预设执行流程。
 
-Root Handoff/Receipt 的语义层天然向 Child Goal 继承；当前 Goal 的本地历史天然
-可见；兄弟 Goal 必须用 `recall(goal_id, level)` 显式召回。所有 Handoff/Receipt
+默认 Worker context 是 pull-first：只注入 Task、精简后的 root/当前 Goal
+state、当前 Handoff、当前 Handoff 的折叠 Receipt 状态和 Receipt head 元数据，
+绝不注入完整 root/当前 Goal Handoff/Receipt 历史。显式 recall 支持 Goal、
+Handoff 或某个精确 Receipt。Goal 的 `semantic` 只返回最新相关 Handoff 的
+折叠 Receipt 状态与 head，不重放增量链；完整链只在 `full` 时返回；
+同 Goal 查询可使用 ambient 作用域，跨 Goal 查询必须显式。所有 Handoff/Receipt
 使用 canonical JSON 和 SHA-256 content identity，并按共享单调逻辑序保持
 append-only 前缀。
 
@@ -81,7 +91,7 @@ codeflow stop <task-id>
 
 ```text
 receipt submit
-recall goal
+recall goal|handoff|receipt
 evidence run|batch|log
 check source
 ```
@@ -103,9 +113,10 @@ Task/Goal/Handoff/Receipt 的持久语义。
 
 每次 attempt 必须先产生以下之一：
 
-- `run_finished`：Root Handoff 已提交 Receipt；
+- `run_finished`：Root Handoff 已提交 terminal Receipt；
 - `run_interrupted`：Root Worker 因进程、provider、tool、取消或上下文故障退出，
-  且没有 Receipt；
+  且没有 terminal Receipt；已有持久进度的中断记录为 missing terminal
+  Receipt，而不是 DELEGATION_ARTIFACT_MISSING；
 
 之后产生 `runner_exited`，该 Task 才允许显式 `resume`。中断恢复会重新执行原
 Handoff，并从 Task、Root/Goal H/R、Goal State 和当前外部状态重新 grounding；
@@ -125,7 +136,8 @@ benchmark/                              SWE-bench driver 与报告
 ```
 
 每个 Task 的运行数据位于 `.codeflow/runs/code/<task-id>/`：`task.json`、
-`goals/`、`handoffs/`、`events/`、`usage.jsonl`、`run-observations.jsonl` 和
+`goals/`、`handoffs/<id>/handoff.json` 加 `handoffs/<id>/receipts/` 的
+Receipt 链、`events/`、`usage.jsonl`、`run-observations.jsonl` 和
 `runner.json`。不存在用于恢复或传递语义的 facts ledger、conversation snapshot、
 collaboration index 或 mutable handoff state；观测 ledger 不能替代 Receipt。
 

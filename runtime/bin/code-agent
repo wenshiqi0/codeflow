@@ -22,6 +22,8 @@ usage: code-agent <command> [options]
 
   receipt submit --file <json|->
   recall goal --goal-id <id> [--level state|semantic|full]
+  recall handoff --handoff-id <id> [--level state|semantic|full]
+  recall receipt --receipt-id <id> [--handoff-id <id>]
   evidence run|batch|log
   check source [paths...]
 EOF

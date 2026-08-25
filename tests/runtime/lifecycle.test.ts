@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { openRootHandoffForRun } from "../../runtime/cli/run";
-import { loadReceipt, runResume, runnerChildStarted, runnerExited, runStart, startHandoff, submitReceipt } from "../../runtime/lib/handoff";
+import { loadReceipt, loadReceiptChain, runResume, runnerChildStarted, runnerExited, runStart, startHandoff, submitReceipt } from "../../runtime/lib/handoff";
 import { RunPaths } from "../../runtime/lib/paths";
 import { assertResumeStopped } from "../../runtime/lib/resume";
 import { scan } from "../../runtime/lib/wait";
@@ -49,5 +49,28 @@ describe("attempt lifecycle", () => {
 		expect(kinds).toContain("run_finished");
 		expect(kinds).not.toContain("run_interrupted");
 		expect(assertResumeStopped(paths).startSeq).toBeGreaterThan(0);
+	});
+
+	test("durable progress survives interruption and the same Handoff can resume to one terminal closure", () => {
+		const paths = runtime();
+		runStart(paths, 100, "finish work");
+		const root = openRootHandoffForRun(paths, "finish work");
+		startHandoff(paths, root.id, 200);
+		submitReceipt(paths, { handoffId: root.id, status: "progress", established: ["durable finding"] });
+		runnerExited(paths, 200, true);
+		const interrupted = scan(paths.events, 0, ["run_interrupted"]).events;
+		expect(interrupted).toHaveLength(1);
+		expect(interrupted[0].reasons).toEqual(["TERMINAL_RECEIPT_MISSING"]);
+		expect(loadReceiptChain(paths, root.id).established).toEqual(["durable finding"]);
+
+		runResume(paths, 300);
+		startHandoff(paths, root.id, 301);
+		submitReceipt(paths, { handoffId: root.id, status: "completed", established: ["finished"] });
+		runnerExited(paths, 301, true);
+		const lifecycle = scan(paths.events, 0, ["run_finished", "run_interrupted", "runner_exited"]).events;
+		expect(lifecycle.filter((event) => event.kind === "run_finished")).toHaveLength(1);
+		expect(lifecycle.filter((event) => event.kind === "run_interrupted")).toHaveLength(1);
+		expect(loadReceiptChain(paths, root.id).receipts).toHaveLength(2);
+		expect(() => submitReceipt(paths, { handoffId: root.id, status: "progress" })).toThrow(/already closed/);
 	});
 });

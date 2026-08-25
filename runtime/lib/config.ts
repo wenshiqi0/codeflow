@@ -107,6 +107,8 @@ export function buildWorkerArgv(
 		"--model", resolved.model,
 		"--system-prompt", resolved.systemPrompt,
 		"--no-extensions",
+		"--no-skills",
+		"--no-prompt-templates",
 	];
 	for (const extension of extensions) argv.push("--extension", extension);
 	argv.push("--no-context-files");

@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
 import * as fs from "node:fs";
-import { CliError, RECEIPT_STATUSES, submitReceipt, type ReceiptStatus } from "../lib/handoff";
+import { CliError, RECEIPT_CHAIN_STATUSES, submitReceipt, type ReceiptChainStatus } from "../lib/handoff";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../lib/paths";
-import { RECALL_LEVELS, recallGoal, type RecallLevel } from "../lib/recall";
+import { RECALL_LEVELS, recallGoal, recallHandoff, recallReceipt, type RecallLevel } from "../lib/recall";
 
 interface Args {
 	positional: string[];
@@ -61,18 +61,21 @@ async function execute(args: Args): Promise<number> {
 	if (group === "receipt" && command === "submit") {
 		const value = await jsonFile(args);
 		const status = value.status;
-		if (typeof status !== "string" || !(RECEIPT_STATUSES as readonly string[]).includes(status)) {
-			throw new CliError(`receipt status must be one of ${RECEIPT_STATUSES.join(", ")}`);
+		if (typeof status !== "string" || !(RECEIPT_CHAIN_STATUSES as readonly string[]).includes(status)) {
+			throw new CliError(`receipt status must be one of ${RECEIPT_CHAIN_STATUSES.join(", ")}`);
 		}
 		console.log(JSON.stringify(submitReceipt(paths(args), {
 			handoffId: one(args, "handoff-id") ?? process.env.CODEFLOW_HANDOFF_ID ?? "",
-			status: status as ReceiptStatus,
+			status: status as ReceiptChainStatus,
 			effects: value.effects as never,
 			established: value.established as never,
 			decisions: value.decisions as never,
 			discovered: value.discovered as never,
 			unresolved: value.unresolved as never,
 			blockers: value.blockers as never,
+			resolved: value.resolved as never,
+			resolvedUnresolved: value.resolvedUnresolved as never,
+			resolvedBlockers: value.resolvedBlockers as never,
 		}), null, 2));
 		return 0;
 	}
@@ -88,7 +91,26 @@ async function execute(args: Args): Promise<number> {
 		));
 		return 0;
 	}
-	throw new CliError("usage: receipt submit --file <json|-> | recall goal --goal-id <id>");
+	if (group === "recall" && command === "handoff") {
+		const level = one(args, "level") ?? "state";
+		if (!(RECALL_LEVELS as readonly string[]).includes(level)) {
+			throw new CliError(`unknown recall level: ${level}`);
+		}
+		console.log(JSON.stringify(
+			recallHandoff(paths(args), required(args, "handoff-id"), level as RecallLevel),
+			null,
+			2,
+		));
+		return 0;
+	}
+	if (group === "recall" && command === "receipt") {
+		const receiptId = required(args, "receipt-id");
+		const receipt = recallReceipt(paths(args), receiptId, one(args, "handoff-id"));
+		if (!receipt) throw new CliError(`unknown receipt: ${receiptId}`);
+		console.log(JSON.stringify(receipt, null, 2));
+		return 0;
+	}
+	throw new CliError("usage: receipt submit --file <json|-> | recall goal --goal-id <id> [--level state|semantic|full] | recall handoff --handoff-id <id> [--level state|semantic|full] | recall receipt --receipt-id <id> [--handoff-id <id>]");
 }
 
 export async function main(argv: string[]): Promise<number> {

@@ -1,4 +1,4 @@
-/** Durable work protocol: immutable Handoff contracts closed by immutable Receipts. */
+/** Durable work protocol: immutable Handoff contracts with append-only Receipt chains. */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -11,7 +11,10 @@ import { nextSeq } from "../seq";
 import { createTask, loadTask } from "../tasks";
 
 export const HANDOFF_SCHEMA_VERSION = 1;
-export const RECEIPT_SCHEMA_VERSION = 1;
+/** Chained Receipts: incremental semantic deltas, at most one of them terminal. */
+export const RECEIPT_SCHEMA_VERSION = 2;
+/** Legacy single-Receipt store (`handoffs/<id>/receipt.json`) reads as one terminal Receipt. */
+export const LEGACY_RECEIPT_SCHEMA_VERSION = 1;
 
 export const RECEIPT_STATUSES = [
 	"completed",
@@ -22,9 +25,28 @@ export const RECEIPT_STATUSES = [
 ] as const;
 export type ReceiptStatus = (typeof RECEIPT_STATUSES)[number];
 
+/** Non-terminal status: advances durable semantics without closing the Handoff. */
+export const PROGRESS_STATUS = "progress" as const;
+export type ProgressStatus = typeof PROGRESS_STATUS;
+export type ReceiptChainStatus = ReceiptStatus | ProgressStatus;
+export const RECEIPT_CHAIN_STATUSES = [...RECEIPT_STATUSES, PROGRESS_STATUS] as const;
+
+/** Only a terminal status closes a Handoff. */
+export function isTerminalStatus(status: string): status is ReceiptStatus {
+	return (RECEIPT_STATUSES as readonly string[]).includes(status);
+}
+
+export type TerminalReceipt = ReceiptRecord & { status: ReceiptStatus };
+
+/** Narrow one Receipt to its terminal form. */
+export function isTerminalReceipt(receipt: ReceiptRecord): receipt is TerminalReceipt {
+	return isTerminalStatus(receipt.status);
+}
+
 export const RUNTIME_FAILURE_REASONS = [
 	"CONTEXT_BUDGET_EXCEEDED",
 	"DELEGATION_ARTIFACT_MISSING",
+	"TERMINAL_RECEIPT_MISSING",
 	"EXECUTION_TIMEOUT",
 	"OUTPUT_TRUNCATED",
 	"PROVIDER_FAILURE",
@@ -64,26 +86,56 @@ export interface HandoffRecord {
 }
 
 export interface ReceiptRecord {
-	schema_version: 1;
+	/** 1 = legacy single-receipt.json store (terminal only); 2 = chain delta. */
+	schema_version: 1 | 2;
 	id: string;
 	seq: number;
 	task_id: string;
 	goal_id: string;
 	handoff_id: string;
-	status: ReceiptStatus;
+	/** `progress` is non-terminal; the five statuses close the Handoff. */
+	status: ReceiptChainStatus;
 	effects: EffectReference[];
 	established: string[];
 	decisions: string[];
 	discovered: string[];
 	unresolved: string[];
 	blockers: string[];
+	/** Schema v2: facts this Receipt resolves or supersedes by stable reference. */
+	resolved?: string[];
+	resolved_unresolved?: string[];
+	resolved_blockers?: string[];
+}
+
+/** Folded semantics of one Handoff's Receipt chain plus its head metadata. */
+export interface FoldedReceipts {
+	/** Append-only chain in (seq, id) order; schema v2 for new writes. */
+	receipts: ReceiptRecord[];
+	/** The newest Receipt, progress or terminal. */
+	head: ReceiptRecord | null;
+	/** The Receipt that closed the Handoff, if any. */
+	terminal: TerminalReceipt | null;
+	/** Folding resolved or superseded every decision, unresolved, and blocker fact. */
+	resolved: string[];
+	resolvedUnresolved: string[];
+	resolvedBlockers: string[];
+	/** Folded durable facts after resolution. */
+	established: string[];
+	decisions: string[];
+	discovered: string[];
+	unresolved: string[];
+	blockers: string[];
+	/** Legacy single-receipt.json store produced this chain. */
+	legacy: boolean;
 }
 
 export interface HandoffView {
 	handoff: HandoffRecord;
-	receipt: ReceiptRecord | null;
+	/** @deprecated Prefer the Receipt chain: one Handoff may have many Receipts. */
+	receipt: TerminalReceipt | null;
 	status: "open" | "running" | ReceiptStatus;
 	pid: number | null;
+	folded: FoldedReceipts;
 }
 
 export interface OpenOptions {
@@ -112,13 +164,18 @@ export interface PreparedOpenOptions {
 
 export interface SubmitReceiptOptions {
 	handoffId: string;
-	status: ReceiptStatus;
+	/** A `progress` Receipt advances semantics without closing the Handoff. */
+	status: ReceiptChainStatus;
 	effects?: EffectReference[];
 	established?: string[];
 	decisions?: string[];
 	discovered?: string[];
 	unresolved?: string[];
 	blockers?: string[];
+	/** Resolve or supersede earlier facts by stable reference. */
+	resolved?: string[];
+	resolvedUnresolved?: string[];
+	resolvedBlockers?: string[];
 }
 
 function nonEmpty(value: unknown, field: string): string {
@@ -194,12 +251,14 @@ function verifyHandoff(record: HandoffRecord, expectedTaskId: string): HandoffRe
 }
 
 function verifyReceipt(record: ReceiptRecord, handoff: HandoffRecord): ReceiptRecord {
+	const version = record.schema_version;
+	const statuses = version === LEGACY_RECEIPT_SCHEMA_VERSION ? RECEIPT_STATUSES : RECEIPT_CHAIN_STATUSES;
 	if (
-		record.schema_version !== RECEIPT_SCHEMA_VERSION ||
+		(version !== RECEIPT_SCHEMA_VERSION && version !== LEGACY_RECEIPT_SCHEMA_VERSION) ||
 		record.task_id !== handoff.task_id ||
 		record.goal_id !== handoff.goal_id ||
 		record.handoff_id !== handoff.id ||
-		!(RECEIPT_STATUSES as readonly string[]).includes(record.status)
+		!(statuses as readonly string[]).includes(record.status)
 	) {
 		throw new CliError(`malformed receipt for handoff: ${handoff.id}`);
 	}
@@ -208,6 +267,100 @@ function verifyReceipt(record: ReceiptRecord, handoff: HandoffRecord): ReceiptRe
 		throw new CliError(`receipt content hash mismatch: ${id}`);
 	}
 	return record;
+}
+
+/** Facts that survive folding a Receipt chain in deterministic (seq, id) order. */
+export interface FoldedFacts {
+	established: string[];
+	decisions: string[];
+	discovered: string[];
+	unresolved: string[];
+	blockers: string[];
+}
+
+function pushUnique(list: string[], value: string): void {
+	if (!list.includes(value)) list.push(value);
+}
+
+function dropRef(list: string[], value: string): void {
+	const index = list.indexOf(value);
+	if (index >= 0) list.splice(index, 1);
+}
+
+/**
+ * Fold Receipts as incremental semantic deltas in (seq, id) order.
+ *
+ * A Receipt resolves or supersedes earlier facts by stable reference: each
+ * entry of `resolved`, `resolved_unresolved`, and `resolved_blockers` removes
+ * the identical earlier `decisions`, `unresolved`, or `blockers` fact, so the
+ * folded state never accumulates a stale value.
+ */
+export function foldReceipts(receipts: readonly ReceiptRecord[]): FoldedFacts {
+	const facts: FoldedFacts = { established: [], decisions: [], discovered: [], unresolved: [], blockers: [] };
+	for (const receipt of receipts) {
+		for (const ref of receipt.resolved ?? []) dropRef(facts.decisions, ref);
+		for (const ref of receipt.resolved_unresolved ?? []) dropRef(facts.unresolved, ref);
+		for (const ref of receipt.resolved_blockers ?? []) dropRef(facts.blockers, ref);
+		for (const value of receipt.established) pushUnique(facts.established, value);
+		for (const value of receipt.decisions) pushUnique(facts.decisions, value);
+		for (const value of receipt.discovered) pushUnique(facts.discovered, value);
+		for (const value of receipt.unresolved) pushUnique(facts.unresolved, value);
+		for (const value of receipt.blockers) pushUnique(facts.blockers, value);
+	}
+	return facts;
+}
+
+const CHAIN_FILE = /^(\d{5})--(r_[0-9a-f]{64})\.json$/;
+
+function readChain(paths: RunPaths, handoff: HandoffRecord): ReceiptRecord[] {
+	const directory = paths.receiptDir(handoff.id);
+	if (!fs.existsSync(directory)) return [];
+	const entries = fs
+		.readdirSync(directory)
+		.map((name) => {
+			const match = CHAIN_FILE.exec(name);
+			return match ? { seq: Number.parseInt(match[1], 10), id: match[2] } : null;
+		})
+		.filter((entry): entry is { seq: number; id: string } => entry !== null)
+		.sort((left, right) => left.seq - right.seq || left.id.localeCompare(right.id));
+	return entries.map((entry) =>
+		verifyReceipt(readJson<ReceiptRecord>(paths.receiptChainPath(handoff.id, entry.seq, entry.id)), handoff),
+	);
+}
+
+/** Read and fold the whole Receipt chain of one Handoff. */
+export function loadReceiptChain(paths: RunPaths, handoffId: string): FoldedReceipts {
+	const handoff = loadHandoff(paths, handoffId);
+	let receipts = readChain(paths, handoff);
+	let legacy = false;
+	if (receipts.length === 0 && fs.existsSync(paths.receiptPath(handoff.id))) {
+		// Schema-v1 store: exactly one terminal Receipt closes the Handoff.
+		receipts = [verifyReceipt(readJson<ReceiptRecord>(paths.receiptPath(handoff.id)), handoff)];
+		legacy = true;
+	}
+	const resolved: string[] = [];
+	const resolvedUnresolved: string[] = [];
+	const resolvedBlockers: string[] = [];
+	for (const receipt of receipts) {
+		for (const ref of receipt.resolved ?? []) pushUnique(resolved, ref);
+		for (const ref of receipt.resolved_unresolved ?? []) pushUnique(resolvedUnresolved, ref);
+		for (const ref of receipt.resolved_blockers ?? []) pushUnique(resolvedBlockers, ref);
+	}
+	return {
+		receipts,
+		head: receipts.at(-1) ?? null,
+		terminal: receipts.findLast(isTerminalReceipt) ?? null,
+		resolved,
+		resolvedUnresolved,
+		resolvedBlockers,
+		...foldReceipts(receipts),
+		legacy,
+	};
+}
+
+/** True when the Handoff recorded at least one Receipt but no terminal one. */
+export function hasDurableProgress(folded: FoldedReceipts): boolean {
+	return folded.receipts.length > 0 && folded.terminal === null;
 }
 
 function emitRunEvent(
@@ -330,9 +483,14 @@ export function loadReceipt(paths: RunPaths, handoffId: string): ReceiptRecord |
 	return verifyReceipt(readJson<ReceiptRecord>(file), handoff);
 }
 
+/** The Receipt that closed the Handoff, if any (chain or legacy store). */
+export function loadTerminalReceipt(paths: RunPaths, handoffId: string): TerminalReceipt | null {
+	return loadReceiptChain(paths, handoffId).terminal;
+}
+
 export function startHandoff(paths: RunPaths, handoffId: string, pid?: number): HandoffView {
 	const handoff = loadHandoff(paths, handoffId);
-	if (loadReceipt(paths, handoffId)) throw new CliError(`handoff is already closed: ${handoffId}`);
+	if (loadReceiptChain(paths, handoffId).terminal) throw new CliError(`handoff is already closed: ${handoffId}`);
 	const active = readActive(paths, handoffId);
 	if (active?.started) throw new CliError(`handoff is already running: ${handoffId}`);
 	writeJsonAtomic(activePath(paths, handoffId), { started: true, ...(pid === undefined ? {} : { pid }) });
@@ -345,7 +503,7 @@ export function startHandoff(paths: RunPaths, handoffId: string, pid?: number): 
 
 export function attachHandoffProcess(paths: RunPaths, handoffId: string, pid: number): void {
 	const handoff = loadHandoff(paths, handoffId);
-	if (loadReceipt(paths, handoff.id)) return;
+	if (loadReceiptChain(paths, handoff.id).terminal) return;
 	const active = readActive(paths, handoff.id);
 	if (!active?.started) throw new CliError(`handoff is not running: ${handoff.id}`);
 	writeJsonAtomic(activePath(paths, handoff.id), { started: true, pid });
@@ -353,14 +511,34 @@ export function attachHandoffProcess(paths: RunPaths, handoffId: string, pid: nu
 
 export function submitReceipt(paths: RunPaths, options: SubmitReceiptOptions): ReceiptRecord {
 	const handoff = loadHandoff(paths, options.handoffId);
-	if (loadReceipt(paths, handoff.id)) throw new CliError(`handoff already has a receipt: ${handoff.id}`);
-	if (!(RECEIPT_STATUSES as readonly string[]).includes(options.status)) {
-		throw new CliError(`status must be one of ${RECEIPT_STATUSES.join(", ")}`);
+	const prior = loadReceiptChain(paths, handoff.id);
+	if (prior.terminal) throw new CliError(`handoff is already closed: ${handoff.id}`);
+	if (!(RECEIPT_CHAIN_STATUSES as readonly string[]).includes(options.status)) {
+		throw new CliError(`status must be one of ${RECEIPT_CHAIN_STATUSES.join(", ")}`);
 	}
 	const blockers = strings(options.blockers ?? [], "blockers");
 	if (options.status === "blocked" && blockers.length === 0) {
 		throw new CliError("a blocked receipt requires at least one blocker");
 	}
+	// Resolution references are Goal-scoped: a later Handoff may resolve durable
+	// semantics emitted by an earlier Handoff in the same Goal. This matches the
+	// Goal reducer, which folds every Receipt in shared semantic-sequence order.
+	const goalFacts = foldReceipts(
+		handoffHistory(paths)
+			.filter((view) => view.handoff.goal_id === handoff.goal_id)
+			.flatMap((view) => view.folded.receipts)
+			.sort((left, right) => left.seq - right.seq || left.id.localeCompare(right.id)),
+	);
+	const resolve = (values: unknown, field: string, current: string[]): string[] => {
+		const refs = strings(values ?? [], field);
+		for (const ref of refs) {
+			if (!current.includes(ref)) throw new CliError(`${field} references an unknown fact: ${ref}`);
+		}
+		return refs;
+	};
+	const resolved = resolve(options.resolved, "resolved", goalFacts.decisions);
+	const resolvedUnresolved = resolve(options.resolvedUnresolved, "resolvedUnresolved", goalFacts.unresolved);
+	const resolvedBlockers = resolve(options.resolvedBlockers, "resolvedBlockers", goalFacts.blockers);
 	const content: Omit<ReceiptRecord, "id"> = {
 		schema_version: RECEIPT_SCHEMA_VERSION,
 		seq: nextSeq(paths.semanticSeq),
@@ -374,23 +552,29 @@ export function submitReceipt(paths: RunPaths, options: SubmitReceiptOptions): R
 		discovered: strings(options.discovered ?? [], "discovered"),
 		unresolved: strings(options.unresolved ?? [], "unresolved"),
 		blockers,
+		resolved,
+		resolved_unresolved: resolvedUnresolved,
+		resolved_blockers: resolvedBlockers,
 	};
 	const receipt: ReceiptRecord = { id: contentId("r", receiptContent(content)), ...content };
-	writeJsonAtomic(paths.receiptPath(handoff.id), receipt);
-	fs.rmSync(activePath(paths, handoff.id), { force: true });
+	const receiptFile = paths.receiptChainPath(handoff.id, receipt.seq, receipt.id);
+	if (fs.existsSync(receiptFile)) throw new CliError(`receipt already exists: ${receipt.id}`);
+	writeJsonAtomic(receiptFile, receipt);
+	const isTerminal = isTerminalStatus(receipt.status);
+	if (isTerminal) fs.rmSync(activePath(paths, handoff.id), { force: true });
 	const status = receipt.status.toUpperCase();
 	const summary = receipt.established[0] ?? receipt.unresolved[0] ?? receipt.blockers[0] ?? receipt.status;
-	emitHandoffEvent(paths, handoff.id, "receipt_submitted", status, {
+	emitHandoffEvent(paths, handoff.id, "receipt_submitted", isTerminal ? status : "PROGRESS", {
 		goal_id: handoff.goal_id,
 		receipt_id: receipt.id,
-		receipt_ref: path.relative(paths.runDir, paths.receiptPath(handoff.id)),
+		receipt_ref: path.relative(paths.runDir, receiptFile),
 		summary: eventSummary(summary),
 	});
-	if (handoff.goal_id === paths.runId && handoff.parent_handoff_id === null) {
+	if (isTerminal && handoff.goal_id === paths.runId && handoff.parent_handoff_id === null) {
 		emitRunEvent(paths, "run_finished", status, {
 			handoff_id: handoff.id,
 			receipt_id: receipt.id,
-			receipt_ref: path.relative(paths.runDir, paths.receiptPath(handoff.id)),
+			receipt_ref: path.relative(paths.runDir, receiptFile),
 			summary: eventSummary(summary),
 		});
 	}
@@ -398,13 +582,14 @@ export function submitReceipt(paths: RunPaths, options: SubmitReceiptOptions): R
 }
 
 export function handoffView(paths: RunPaths, handoff: HandoffRecord): HandoffView {
-	const receipt = loadReceipt(paths, handoff.id);
-	const active = receipt ? null : readActive(paths, handoff.id);
+	const folded = loadReceiptChain(paths, handoff.id);
+	const active = folded.terminal ? null : readActive(paths, handoff.id);
 	return {
 		handoff,
-		receipt,
-		status: receipt?.status ?? (active?.started ? "running" : "open"),
+		receipt: folded.terminal,
+		status: folded.terminal?.status ?? (active?.started ? "running" : "open"),
 		pid: typeof active?.pid === "number" ? active.pid : null,
+		folded,
 	};
 }
 
@@ -442,7 +627,7 @@ export function recordRuntimeFailure(
 	summary: string,
 ): void {
 	const handoff = loadHandoff(paths, handoffId);
-	if (loadReceipt(paths, handoffId)) return;
+	if (loadReceiptChain(paths, handoffId).terminal) return;
 	for (const reason of reasons) {
 		if (!(RUNTIME_FAILURE_REASONS as readonly string[]).includes(reason)) {
 			throw new CliError(`unknown runtime failure reason: ${reason}`);
@@ -558,10 +743,17 @@ export function runnerExited(
 
 	const interrupted = runningHandoffForProcess(paths, pid, true);
 	if (interrupted) {
+		const folded = loadReceiptChain(paths, interrupted.id);
+		const fallback: RuntimeFailureReason = hasDurableProgress(folded)
+			? "TERMINAL_RECEIPT_MISSING"
+			: "DELEGATION_ARTIFACT_MISSING";
 		const reasons: RuntimeFailureReason[] = interruption?.reasons.length
 			? interruption.reasons
-			: ["DELEGATION_ARTIFACT_MISSING"];
-		const summary = interruption?.summary ?? "root Worker exited without a Receipt";
+			: [fallback];
+		const summary = interruption?.summary
+			?? (folded.receipts.length > 0
+				? "root Worker ended after durable progress without a terminal Receipt"
+				: "root Worker exited without a Receipt");
 		recordRuntimeFailure(paths, interrupted.id, reasons, summary);
 		emitRunEvent(paths, "run_interrupted", "INTERRUPTED", {
 			handoff_id: interrupted.id,

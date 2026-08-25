@@ -265,9 +265,10 @@ open Handoffs, and spawn Workers; their use is optional."）。在该
 > commitment; the delegating Worker still awaits the outcome and
 > closes its own Handoff with a Receipt.
 
-后半句与 worker.md 既有句 "Close the current Handoff exactly once
-with a Receipt" 同义呼应，不引入新义务。措辞纪律：并列陈述，无
-偏好词。
+后半句表达 parent 仍负责关闭自己的 Handoff，不引入新义务。当前协议允许
+一个 Handoff 追加多个 `progress` Receipt，并由至多一个 terminal Receipt
+关闭；这里的“关闭”不再表示 Handoff 与 Receipt 一对一。措辞纪律：并列陈述，
+无偏好词。
 
 ## 6. 明确不做
 

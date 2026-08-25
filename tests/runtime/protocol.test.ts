@@ -73,7 +73,7 @@ describe("immutable Handoff and Receipt protocol", () => {
 		expect([first.seq, receipt.seq, second.seq]).toEqual([1, 2, 3]);
 		expect(receipt.id).toMatch(/^r_[0-9a-f]{64}$/);
 		expect(first.id).toMatch(/^h_[0-9a-f]{64}$/);
-		expect(() => submitReceipt(paths, { handoffId: first.id, status: "failed" })).toThrow(/already has a receipt/);
+		expect(() => submitReceipt(paths, { handoffId: first.id, status: "failed" })).toThrow(/already closed/);
 	});
 
 	test("tampering is rejected and every semantic Receipt status is supported", () => {
@@ -111,7 +111,12 @@ describe("state reduction and Recall", () => {
 		expect(recallGoal(paths, "child", "semantic")).toMatchObject({
 			level: "semantic",
 			goal_id: "child",
-			history: [{ kind: "handoff" }, { kind: "receipt", status: "blocked" }],
+			state: { status: "blocked" },
+			latest: {
+				handoff: { id: child.id },
+				head: { status: "blocked", terminal: true },
+				folded: { blockers: ["needs input"] },
+			},
 		});
 	});
 });

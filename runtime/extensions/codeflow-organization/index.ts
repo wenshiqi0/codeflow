@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { createGoal, prepareGoal, updateGoalDependencies } from "../../lib/goals";
 import {
 	loadHandoff,
-	loadReceipt,
+	loadTerminalReceipt,
 	openHandoff,
 	prepareHandoff,
 	recordRuntimeFailure,
@@ -203,7 +203,7 @@ export default function (pi: ExtensionAPI) {
 		async execute(_id, params, signal, _update, ctx) {
 			const paths = currentRun();
 			const handoff = loadHandoff(paths, params.handoff_id);
-			if (loadReceipt(paths, handoff.id)) throw new Error(`handoff is already closed: ${handoff.id}`);
+			if (loadTerminalReceipt(paths, handoff.id)) throw new Error(`handoff is already closed: ${handoff.id}`);
 			if (!dependenciesCompleted(paths, handoff.goal_id)) {
 				throw new Error(`goal dependencies are not completed: ${handoff.goal_id}`);
 			}
@@ -230,7 +230,7 @@ export default function (pi: ExtensionAPI) {
 					const index = cursor++;
 					const paths = currentRun();
 					const handoff = loadHandoff(paths, ids[index]);
-					if (loadReceipt(paths, handoff.id)) throw new Error(`handoff is already closed: ${handoff.id}`);
+					if (loadTerminalReceipt(paths, handoff.id)) throw new Error(`handoff is already closed: ${handoff.id}`);
 					if (!dependenciesCompleted(paths, handoff.goal_id)) {
 						throw new Error(`goal dependencies are not completed: ${handoff.goal_id}`);
 					}

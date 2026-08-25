@@ -118,14 +118,14 @@ export function projectHandoffState(paths: RunPaths, handoffId: string): Handoff
 	const history = handoffHistory(paths);
 	const view = history.find((entry) => entry.handoff.id === handoffId);
 	if (!view) throw new HandoffObservabilityError(`unknown handoff: ${handoffId}`);
-	const interrupted = view.receipt === null ? interruptedReasons(paths, handoffId) : null;
-	const status: HandoffProjectionStatus = view.receipt?.status
+	const interrupted = view.folded.terminal === null ? interruptedReasons(paths, handoffId) : null;
+	const status: HandoffProjectionStatus = view.folded.terminal?.status
 		?? (view.status === "running" ? "running" : interrupted ? "interrupted" : "open");
 	const isRoot = view.handoff.goal_id === paths.runId && view.handoff.parent_handoff_id === null;
-	const decomposition = isRoot && view.receipt ? projectDecomposition(view.receipt) : null;
+	const decomposition = isRoot && view.folded.terminal ? projectDecomposition(view.folded.terminal) : null;
 	const hasDirectChild = history.some((entry) => entry.handoff.parent_handoff_id === view.handoff.id);
-	const obligationEligible = view.receipt !== null
-		&& (isRoot || view.receipt.status === "completed" || view.receipt.status === "partial");
+	const obligationEligible = view.folded.terminal !== null
+		&& (isRoot || view.folded.terminal.status === "completed" || view.folded.terminal.status === "partial");
 	return {
 		schema_version: HANDOFF_STATE_PROJECTION_SCHEMA_VERSION,
 		task_id: paths.runId,
@@ -142,10 +142,10 @@ export function projectHandoffState(paths: RunPaths, handoffId: string): Handoff
 			decomposition === "split" ? !hasDirectChild
 				: decomposition === "solo" ? hasDirectChild
 					: null,
-		has_direct_child: isRoot && view.receipt ? hasDirectChild : null,
-		obligation_regression: obligationEligible ? projectObligation(paths, view.receipt!, "regression") : null,
-		obligation_reproduction: obligationEligible ? projectObligation(paths, view.receipt!, "reproduction") : null,
-		obligation_consumers: obligationEligible ? projectObligation(paths, view.receipt!, "consumers") : null,
+		has_direct_child: isRoot && view.folded.terminal ? hasDirectChild : null,
+		obligation_regression: obligationEligible ? projectObligation(paths, view.folded.terminal!, "regression") : null,
+		obligation_reproduction: obligationEligible ? projectObligation(paths, view.folded.terminal!, "reproduction") : null,
+		obligation_consumers: obligationEligible ? projectObligation(paths, view.folded.terminal!, "consumers") : null,
 	};
 }
 

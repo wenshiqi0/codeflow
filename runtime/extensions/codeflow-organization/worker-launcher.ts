@@ -5,8 +5,10 @@ import { fileURLToPath } from "node:url";
 import { buildWorkerArgv, resolveWorker, type ResolvedExecutor } from "../../lib/config";
 import {
 	attachHandoffProcess,
-	loadReceipt,
+	hasDurableProgress,
+	loadTerminalReceipt,
 	loadHandoff,
+	loadReceiptChain,
 	startHandoff,
 	recordRuntimeFailure,
 	type RuntimeFailureReason,
@@ -44,7 +46,7 @@ export interface WorkerLauncherDependencies {
 export function buildChildWorkerArgs(resolved: ResolvedExecutor): string[] {
 	return buildWorkerArgv(
 		resolved,
-		"Execute the current Handoff from the injected Codeflow context and submit one Receipt.",
+		"Execute the current Handoff from the injected Codeflow context and submit a terminal Receipt; intermediate durable findings may be recorded as progress Receipts.",
 		CHILD_EXTENSIONS,
 	).slice(1);
 }
@@ -174,7 +176,7 @@ export async function spawnWorker(
 	}
 	if (!launched) return launchFailure(paths, handoffId);
 
-	const receipt = loadReceipt(paths, handoffId);
+	const receipt = loadTerminalReceipt(paths, handoffId);
 	if (receipt) {
 		return {
 			handoff_id: handoffId,
@@ -187,8 +189,13 @@ export async function spawnWorker(
 		};
 	}
 	const reasons = reasonsFor({ exitCode, stopReason, aborted, stderr });
-	if (reasons.length === 0) reasons.push("DELEGATION_ARTIFACT_MISSING");
-	recordRuntimeFailure(paths, handoffId, reasons, "Worker execution ended without a Receipt");
+	// Durable progress distinguishes "lost continuation" from "nothing happened".
+	if (reasons.length === 0) {
+		reasons.push(hasDurableProgress(loadReceiptChain(paths, handoffId))
+			? "TERMINAL_RECEIPT_MISSING"
+			: "DELEGATION_ARTIFACT_MISSING");
+	}
+	recordRuntimeFailure(paths, handoffId, reasons, "Worker execution ended without a terminal Receipt");
 	return {
 		handoff_id: handoffId,
 		exit_code: exitCode,

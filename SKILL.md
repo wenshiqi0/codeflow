@@ -67,16 +67,26 @@ are classified by offline observation; they do not change Receipt status.
 
 `exec` creates a Task and root Handoff. `resume` is explicit and accepts only a
 fully stopped attempt: `run_finished` or `run_interrupted`, followed by
-`runner_exited`. An interrupted attempt has no Receipt and resumes the original
-Handoff from durable semantics and current external state. It never restores a
-session or invents a semantic result.
+`runner_exited`. An interrupted attempt has no terminal Receipt and resumes the
+original Handoff from durable semantics and current external state. It never
+restores a session or invents a semantic result.
 
 Use one blocking `sub` call and feed its returned sequence into the next call.
 A timeout with no events means only that no new event arrived. Report Task,
 Goal, Handoff, Receipt, runtime failure, and usage metadata; do not infer
 correctness from activity.
 
-Receipt statuses are `completed`, `partial`, `blocked`, `failed`, and
-`superseded`. Runtime failures are events, not Receipts. Never mutate runtime
+One Handoff may carry an append-only chain of Receipts. A `progress` Receipt
+advances durable semantics without closing it; only a terminal Receipt
+(`completed`, `partial`, `blocked`, `failed`, `superseded`) closes the Handoff
+and finishes the run. A process ending after durable progress is reported as a
+missing terminal Receipt, not as missing work. Runtime failures are events, not
+Receipts. Never mutate runtime
 state, retry a provider, rerun a benchmark, resume, or stop a Task without the
 corresponding user authorization.
+
+Recall is pull-first. Goal `state` returns reduced state; Goal `semantic`
+returns the latest relevant Handoff with its folded Receipt state and head;
+only `full` returns complete Handoff and incremental Receipt history. A
+Handoff may be recalled at the same levels, and an exact Receipt is addressed
+by its content id.
