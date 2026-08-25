@@ -1,7 +1,6 @@
 # Design G v3.1 — Split Economics & Delivery Obligations
 
-状态：v3 终审通过（架构方向），本版补齐终审提出的四个边界，进入
-实现前的最终文本；不含实现
+状态：v3.1 已按本文件 G0a–G6 落地；本文保留为实现合同
 基线：`final_goal_handoff_receipt_agent_runtime.md`（Final architecture
 baseline）。遵守其全部十条 Invariants；本设计引入的全部代码与文案
 须通过残留词汇锁（不含 depth / thread / acceptance_context / roles
@@ -266,9 +265,10 @@ open Handoffs, and spawn Workers; their use is optional."）。在该
 > commitment; the delegating Worker still awaits the outcome and
 > closes its own Handoff with a Receipt.
 
-后半句与 worker.md 既有句 "Close the current Handoff exactly once
-with a Receipt" 同义呼应，不引入新义务。措辞纪律：并列陈述，无
-偏好词。
+后半句表达 parent 仍负责关闭自己的 Handoff，不引入新义务。当前协议允许
+一个 Handoff 追加多个 `progress` Receipt，并由至多一个 terminal Receipt
+关闭；这里的“关闭”不再表示 Handoff 与 Receipt 一对一。措辞纪律：并列陈述，
+无偏好词。
 
 ## 6. 明确不做
 
@@ -281,14 +281,14 @@ with a Receipt" 同义呼应，不引入新义务。措辞纪律：并列陈述�
 
 | slice | 内容 | 依赖 | 状态 |
 |---|---|---|---|
-| G0a | AGENTS.md Delivery obligations：§4.1 降级语义澄清 + §4.2 规范化记录与交叉检查条款；**提交**（现仅工作树） | 无 | 文案待改并提交 |
-| G0b | AGENTS.md decomposition 留痕条款（§4.3） | 无 | 待实现 |
-| G1 | `handoff_spawn` 组合工具，含 §2.2 完整合同、`WORKER_LAUNCH_FAILURE` 枚举 + §2.3 active marker 泄漏修复（惠及 worker_spawn） | 无 | 待实现 |
-| G2 | run_facts：context hook + getContextUsage、尾部布局、pi_estimate/unknown、cache 对照埋点 | 无 | 待实现 |
-| G3 | worker.md 中途拆分 + parent 收尾责任补句（§5） | 无 | 待实现 |
-| G4 | 观察面：四态投影 + 适用域 null + 交叉检查 + mismatch（解析器同源） | G0a,G0b | 待实现 |
-| G5 | 报告面：自发拆分率、verified declaration 四态分布、rounds 分桶 resolved 率、cache 对照 | G2,G4 | 待实现 |
-| G6 | **prompt 词汇测试**：现有 architecture test 只扫 `.ts/.json/.sh`，须为 `runtime/AGENTS.md` 与 `references/worker.md` 增加专门测试（残留词汇 + 偏好词 + 流程词） | 无 | 待实现 |
+| G0a | AGENTS.md Delivery obligations：§4.1 降级语义澄清 + §4.2 规范化记录与交叉检查条款 | 无 | 已实现 |
+| G0b | AGENTS.md decomposition 留痕条款（§4.3） | 无 | 已实现 |
+| G1 | `handoff_spawn` 组合工具，含 §2.2 完整合同、`WORKER_LAUNCH_FAILURE` 枚举 + §2.3 active marker 泄漏修复（惠及 worker_spawn） | 无 | 已实现 |
+| G2 | run_facts：context hook + getContextUsage、尾部布局、pi_estimate/unknown、cache 对照埋点 | 无 | 已实现 |
+| G3 | worker.md 中途拆分 + parent 收尾责任补句（§5） | 无 | 已实现 |
+| G4 | 观察面：四态投影 + 适用域 null + 交叉检查 + mismatch（解析器同源） | G0a,G0b | 已实现 |
+| G5 | 报告面：自发拆分率、verified declaration 四态分布、rounds 分桶 resolved 率、cache 对照 | G2,G4 | 已实现 |
+| G6 | **prompt 词汇测试**：为 `runtime/AGENTS.md` 与 `references/worker.md` 增加专门测试（残留词汇 + 偏好词 + 流程词） | 无 | 已实现 |
 
 ## 8. 测试点（锁定）
 

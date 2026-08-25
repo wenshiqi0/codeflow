@@ -51,14 +51,23 @@ A Handoff opens one bounded Work Commitment inside one Goal. It contains:
 - evidence expectations where relevant;
 - optional parent Handoff identity.
 
-A Receipt closes exactly one Handoff and uses one of:
+One Handoff may carry an append-only chain of immutable Receipts. Each Receipt
+is an incremental semantic delta — never a snapshot or checkpoint — and uses
+one of:
 
 ```text
-completed | partial | blocked | failed | superseded
+progress                                            (non-terminal)
+completed | partial | blocked | failed | superseded  (terminal)
 ```
 
-It contains only natural Effect references and the minimum durable semantic
-result: `established`, `decisions`, `discovered`, `unresolved`, and `blockers`.
+A `progress` Receipt advances durable semantics without closing the Handoff;
+only a terminal Receipt closes it and finishes the root run. A Receipt contains
+only natural Effect references and the minimum durable semantic result:
+`established`, `decisions`, `discovered`, `unresolved`, and `blockers`, plus
+Goal-scoped resolution references that supersede or resolve earlier facts by
+their stable identity, including facts from an earlier Handoff in the same
+Goal, so folded state never accumulates stale values. Existing schema-v1
+`handoffs/<id>/receipt.json` records read as exactly one terminal Receipt.
 A Receipt is not a validation gate, transcript, diary, diff, log, artifact
 container, or checkpoint.
 
@@ -70,25 +79,34 @@ Handoff, usually in a fresh Worker context.
 Handoffs and Receipts use byte-stable canonical JSON and SHA-256 content
 identity. They share one monotonic semantic sequence. History is ordered by
 logical sequence, with content hash only as a tie-breaker. Existing semantic
-records are immutable and append-only.
+records are immutable and append-only. Folding reduces a Receipt chain
+deterministically in sequence order, applying resolution references so
+resolved or superseded facts disappear from the folded state.
 
 ## Context and Recall
 
-The cache-aware working set is assembled in this order:
+The default working set is pull-first and bounded. It contains only:
 
 ```text
 Worker prior
-Root Handoff / Receipt semantic history
-Current Goal Handoff / Receipt semantic history
-Reduced Goal State
+Task
+Reduced root Goal state
+Reduced current Goal state (child Goals)
 Current Handoff
+Current Handoff folded Receipt state
+Receipt head metadata
 Explicit recall and ephemeral tool observations
 ```
 
-Root history is inherited by child Goals. Current-Goal history is local.
-Sibling Goal information requires explicit `recall(goal_id, level)` with
-`state`, `semantic`, or `full`. Mutable reduced state follows the stable
-append-only prefix.
+Full root or current-Goal Handoff/Receipt history is never injected. Recall is
+explicit for a Goal, a Handoff, or an exact Receipt, with compact `state` or
+`semantic` levels by default and `full` only on request. Goal `semantic`
+returns the latest relevant Handoff, its Receipt head, and its folded semantic
+state; because Receipts are deltas, returning only the newest raw Receipt would
+lose earlier unresolved semantics. The complete incremental chain is therefore
+reserved for `full`. Same-goal lookup may use the ambient scope; cross-goal
+lookup must be explicit. Mutable reduced state follows the stable append-only
+prefix.
 
 Every spawned Worker starts a fresh Pi context. No session continuity,
 checkpoint, compact state, context seed, facts ledger, or collaboration index
@@ -101,9 +119,11 @@ Worker can make a grounded conclusion. Process crash, provider failure, tool
 failure, cancellation, context exhaustion, and missing model output are Runtime
 failures and must not create a Receipt.
 
-An attempt ends with `run_finished` when the root Handoff has a Receipt, or
-`run_interrupted` when it does not; `runner_exited` follows either terminal
-event. A resume requires this complete lifecycle. An interrupted Handoff is
+An attempt ends with `run_finished` when the root Handoff has a terminal
+Receipt, or `run_interrupted` when it does not; `runner_exited` follows either
+terminal event. A process that ends after durable progress — a recorded
+Receipt chain without a terminal Receipt — is a missing-terminal-Receipt
+interruption, not a missing delegation artifact. A resume requires this complete lifecycle. An interrupted Handoff is
 re-executed from its original contract, inherited/local durable semantics,
 current external state, and observed Effects. No old reasoning is restored.
 
@@ -141,8 +161,9 @@ prefix invalidation, and cost per accepted state transition.
 3. Worker capability equals its actual Runtime tool surface.
 4. Workflow emerges from execution history; it is not prescribed.
 5. Handoff/Receipt is the only formal work protocol.
-6. Handoff plus Receipt is the smallest durable recoverable work unit.
-7. Runtime failure never fabricates a Receipt.
+6. A Handoff plus its folded Receipt chain is the smallest durable recoverable work unit; only a terminal Receipt closes it.
+7. Runtime failure never fabricates a Receipt, and durable progress distinguishes interruption causes.
 8. Context is disposable; intermediate cognition is never persisted.
-9. Root history is inherited; sibling Goal recall is explicit.
+9. Reduced root Goal state is inherited; full history and sibling Goal detail
+   require explicit recall.
 10. Handoff/Receipt bytes are canonical, content-addressed, and append-only.

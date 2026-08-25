@@ -20,8 +20,10 @@ not benchmark telemetry. `worker_kind` is `worker` or internal `service`; it is
 not a role or privilege marker.
 
 Handoff telemetry is projected after an attempt from canonical
-`handoff.json`, optional `receipt.json`, and Runtime interruption events. Its
-statuses are:
+`handoff.json`, its append-only Receipt chain (`receipts/`, with a legacy
+single `receipt.json` reading as one terminal Receipt), and Runtime
+interruption events. Its projection uses the folded chain and the terminal
+Receipt. Its statuses are:
 
 ```text
 open | running | interrupted |

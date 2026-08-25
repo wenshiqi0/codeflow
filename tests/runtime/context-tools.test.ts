@@ -21,25 +21,34 @@ function runtime(): RunPaths {
 	return new RunPaths(path.join(root, "runs"), "task-context");
 }
 
-describe("cache-aware Goal context", () => {
-	test("Root semantic history precedes local history and mutable state", () => {
+describe("pull-first Goal context", () => {
+	test("injects reduced state and folded current-Handoff state, never full history", () => {
 		const paths = runtime();
 		createTask(paths, "Build outcome");
 		const root = openHandoff(paths, { goalId: paths.runId, digest: "root scope", intent: "scope", expectedOutcome: ["known"] });
 		submitReceipt(paths, { handoffId: root.id, status: "completed", established: ["root established"] });
 		createGoal(paths, { id: "child", objective: "Child outcome" });
 		const prior = openHandoff(paths, { goalId: "child", digest: "prior child", intent: "prior", expectedOutcome: ["prior done"] });
-		submitReceipt(paths, { handoffId: prior.id, status: "completed", established: ["child established"] });
+		submitReceipt(paths, { handoffId: prior.id, status: "progress", established: ["child established"], unresolved: ["open question"] });
 		const current = openHandoff(paths, { goalId: "child", digest: "current child", intent: "continue", expectedOutcome: ["finished"] });
 		const built = buildWorkerContext(paths, current);
-		const rootAt = built.xml.indexOf("root established");
-		const localAt = built.xml.indexOf("child established");
-		const stateAt = built.xml.indexOf("<goal_state>");
-		const currentAt = built.xml.indexOf("<current_handoff>");
-		expect(rootAt).toBeGreaterThan(-1);
-		expect(rootAt).toBeLessThan(localAt);
-		expect(localAt).toBeLessThan(stateAt);
-		expect(stateAt).toBeLessThan(currentAt);
+		const kinds = built.sources.map((entry) => entry.kind);
+		expect(kinds).toEqual(["task", "root_goal_state", "current_goal_state", "current_handoff", "current_handoff_folded"]);
+		// Full history is never injected: prior Handoff digests and intents do
+		// not appear, while folded facts arrive via the reduced Goal states.
+		expect(built.xml).not.toContain("prior child");
+		expect(built.xml).not.toContain("root scope");
+		expect(built.xml).toContain("child established");
+		expect(built.xml).toContain("<current_handoff_folded>");
+	});
+
+	test("a fresh Handoff carries an empty folded state and null head", () => {
+		const paths = runtime();
+		createTask(paths, "Build outcome");
+		const current = openHandoff(paths, { goalId: paths.runId, digest: "root", intent: "scope", expectedOutcome: ["known"] });
+		const built = buildWorkerContext(paths, current);
+		expect(built.xml).toContain("\"receipt_id\":null");
+		expect(built.xml).toContain("\"terminal\":false");
 	});
 });
 
@@ -50,7 +59,7 @@ describe("capability is the loaded tool surface", () => {
 		protocol({ registerTool(tool: { name: string }) { universal.push(tool.name); } } as never);
 		organization({ registerTool(tool: { name: string }) { rootOnly.push(tool.name); } } as never);
 		expect(universal.sort()).toEqual(["recall", "receipt"]);
-		expect(rootOnly.sort()).toEqual(["goal_create", "goal_dependencies", "handoff_create", "worker_group", "worker_spawn"]);
+		expect(rootOnly.sort()).toEqual(["goal_create", "goal_dependencies", "handoff_create", "handoff_spawn", "worker_group", "worker_spawn"]);
 	});
 
 	test("every Worker launch is a fresh Pi context with extension discovery disabled", () => {

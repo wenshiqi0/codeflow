@@ -1,6 +1,6 @@
 {
   "worker": {
-    "model": "deepseek/deepseek-v4-pro",
+    "model": "zhipuai-coding-plan/glm-5.3",
     "prompt": "references/worker.md"
   },
   "services": {

@@ -7,7 +7,9 @@
  * ├── _spool/                      run-level events, for cross-run discovery
  * └── <run-id>/
  *     ├── task.json                 stable external intent; also the graph root Goal
- *     ├── handoffs/<handoff-id>/   immutable handoff.json and optional receipt.json
+ *     ├── handoffs/<handoff-id>/   immutable handoff.json plus an append-only
+ *     │                             receipts/ chain; a legacy schema-v1
+ *     │                             receipt.json reads as one terminal Receipt
  *     ├── goals/<goal-id>/          child Goal contracts
  *     ├── active/<handoff-id>      sentinel per in-flight handoff
  *     ├── events/                  the outer loop's only listening surface
@@ -72,6 +74,9 @@ export class RunPaths {
 	get usageSummary(): string {
 		return path.join(this.runDir, "usage.json");
 	}
+	get runFactsLedger(): string {
+		return path.join(this.runDir, "run-observations.jsonl");
+	}
 	get eventSeq(): string {
 		return path.join(this.runDir, ".events.seq");
 	}
@@ -96,6 +101,13 @@ export class RunPaths {
 	}
 	receiptPath(handoffId: string): string {
 		return path.join(this.handoffDir(handoffId), "receipt.json");
+	}
+	receiptDir(handoffId: string): string {
+		return path.join(this.handoffDir(handoffId), "receipts");
+	}
+	/** One immutable Receipt in the append-only chain of a Handoff. */
+	receiptChainPath(handoffId: string, seq: number, receiptId: string): string {
+		return path.join(this.receiptDir(handoffId), `${String(seq).padStart(5, "0")}--${receiptId}.json`);
 	}
 }
 

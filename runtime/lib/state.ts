@@ -1,5 +1,12 @@
 import { type GoalRecord, goalRecords, loadGoal } from "./goals";
-import { handoffHistory, type HandoffView, type ReceiptStatus } from "./handoff";
+import {
+	foldReceipts,
+	handoffHistory,
+	isTerminalStatus,
+	type HandoffView,
+	type ReceiptRecord,
+	type ReceiptStatus,
+} from "./handoff";
 import { RunPaths } from "./paths";
 import { loadTask, type TaskRecord } from "./tasks";
 
@@ -28,10 +35,6 @@ export interface TaskState {
 	goals: GoalState[];
 }
 
-function unique(values: string[]): string[] {
-	return [...new Set(values)];
-}
-
 function reduceHistory(
 	goalId: string,
 	objective: string,
@@ -39,15 +42,17 @@ function reduceHistory(
 	history: HandoffView[],
 	dependencyStates: Map<string, GoalStatus>,
 ): GoalState {
-	const receipts = history
-		.flatMap((view) => view.receipt ? [view.receipt] : [])
+	const receipts: ReceiptRecord[] = history
+		.flatMap((view) => view.folded.receipts)
 		.sort((left, right) => left.seq - right.seq || left.id.localeCompare(right.id));
-	const hasOpen = history.some((view) => view.receipt === null);
+	const hasOpen = history.some((view) => view.folded.terminal === null);
+	const terminal = receipts.filter((receipt) => isTerminalStatus(receipt.status));
 	const dependenciesComplete = dependencies.every((id) => dependencyStates.get(id) === "completed");
 	let status: GoalStatus;
 	if (hasOpen) status = "active";
-	else if (receipts.length > 0) status = receipts.at(-1)!.status;
+	else if (terminal.length > 0) status = terminal.at(-1)!.status as ReceiptStatus;
 	else status = dependenciesComplete ? "pending" : "waiting";
+	const facts = foldReceipts(receipts);
 	return {
 		goal_id: goalId,
 		objective,
@@ -56,11 +61,11 @@ function reduceHistory(
 		runnable: dependenciesComplete && !hasOpen && status !== "completed" && status !== "superseded",
 		handoff_refs: history.map((view) => view.handoff.id),
 		receipt_refs: receipts.map((receipt) => receipt.id),
-		established: unique(receipts.flatMap((receipt) => receipt.established)),
-		decisions: unique(receipts.flatMap((receipt) => receipt.decisions)),
-		discovered: unique(receipts.flatMap((receipt) => receipt.discovered)),
-		unresolved: unique(receipts.flatMap((receipt) => receipt.unresolved)),
-		blockers: unique(receipts.flatMap((receipt) => receipt.blockers)),
+		established: facts.established,
+		decisions: facts.decisions,
+		discovered: facts.discovered,
+		unresolved: facts.unresolved,
+		blockers: facts.blockers,
 	};
 }
 

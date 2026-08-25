@@ -14,6 +14,11 @@ import { summarizeToolCalls } from "../../runtime/lib/observability/tool-executi
 import { summarizeTokenUsage, type AttemptUsageRecord, type TokenUsageSummary } from "../../runtime/lib/observability/model-usage";
 import type { ToolCallRecord } from "../../runtime/lib/observability/tool-execution";
 import {
+	summarizePrefixCache,
+	type PrefixCacheMetrics,
+	type RunFactsRecord,
+} from "../../runtime/lib/observability/run-facts";
+import {
 	summarizeHandoffStates,
 	type HandoffObservabilitySummary,
 	type HandoffStateProjection,
@@ -48,6 +53,7 @@ export interface AttemptMetricsInput {
 	handoffStates?: HandoffStateProjection[];
 	/** True only when a canonical handoff telemetry artifact was produced. */
 	handoffTelemetryAvailable?: boolean;
+	runFactsRecords?: RunFactsRecord[];
 	timeToFirstPatchSeconds?: number | null;
 	wallStartedAtMs?: number | null;
 	wallSeconds: number;
@@ -81,6 +87,7 @@ export interface AttemptMetrics {
 	time_to_first_patch_seconds: number | null;
 	waste: WasteSummary;
 	context_growth: ContextGrowthSummary;
+	prefix_cache: PrefixCacheMetrics;
 }
 
 export function buildAttemptMetrics(input: AttemptMetricsInput): AttemptMetrics {
@@ -131,5 +138,6 @@ export function buildAttemptMetrics(input: AttemptMetricsInput): AttemptMetrics 
 			input.handoffStates ?? [],
 			telemetryAvailable,
 		),
+		prefix_cache: summarizePrefixCache(input.runFactsRecords ?? []),
 	};
 }

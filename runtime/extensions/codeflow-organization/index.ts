@@ -1,7 +1,13 @@
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { createGoal, updateGoalDependencies } from "../../lib/goals";
-import { loadHandoff, loadReceipt, openHandoff } from "../../lib/handoff";
+import { createGoal, prepareGoal, updateGoalDependencies } from "../../lib/goals";
+import {
+	loadHandoff,
+	loadTerminalReceipt,
+	openHandoff,
+	prepareHandoff,
+	recordRuntimeFailure,
+} from "../../lib/handoff";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
 import { goalState } from "../../lib/state";
 import { spawnWorker } from "./worker-launcher";
@@ -26,6 +32,84 @@ const Reference = Type.Object({
 	kind: Type.String({ minLength: 1 }),
 	ref: Type.String({ minLength: 1 }),
 });
+const InlineGoal = Type.Object({
+	id: Type.String({ minLength: 1 }),
+	objective: Type.String({ minLength: 1 }),
+	dependencies: Type.Optional(StringArray),
+});
+
+export interface HandoffSpawnParams {
+	digest: string;
+	intent: string;
+	known?: string[];
+	references?: Array<{ kind: string; ref: string }>;
+	constraints?: string[];
+	expected_outcome: string[];
+	evidence_requirement?: string[];
+	goal?: { id: string; objective: string; dependencies?: string[] };
+	goal_id?: string;
+}
+
+type WorkerLauncher = typeof spawnWorker;
+
+/** Validate the whole compound operation before its first durable write. */
+export async function executeHandoffSpawn(
+	paths: RunPaths,
+	params: HandoffSpawnParams,
+	parentHandoffId: string | null,
+	signal: AbortSignal | undefined,
+	cwd: string,
+	launcher: WorkerLauncher = spawnWorker,
+): Promise<Awaited<ReturnType<WorkerLauncher>>> {
+	if (params.goal !== undefined && params.goal_id !== undefined) {
+		throw new Error("goal and goal_id are mutually exclusive");
+	}
+	const plannedGoal = params.goal === undefined ? null : prepareGoal(paths, params.goal);
+	const goalId = plannedGoal?.id ?? params.goal_id ?? paths.runId;
+	const dependencies = plannedGoal?.dependencies
+		?? (goalId === paths.runId ? [] : goalState(paths, goalId).dependencies);
+	if (!dependencies.every((dependency) => goalState(paths, dependency).status === "completed")) {
+		throw new Error(`goal dependencies are not completed: ${goalId}`);
+	}
+	prepareHandoff(paths, {
+		goalId,
+		digest: params.digest,
+		intent: params.intent,
+		known: params.known,
+		references: params.references,
+		constraints: params.constraints,
+		expectedOutcome: params.expected_outcome,
+		evidenceRequirement: params.evidence_requirement,
+		parentHandoffId,
+	}, plannedGoal ? [plannedGoal.id] : []);
+
+	if (params.goal) createGoal(paths, params.goal);
+	const handoff = openHandoff(paths, {
+		goalId,
+		digest: params.digest,
+		intent: params.intent,
+		known: params.known,
+		references: params.references,
+		constraints: params.constraints,
+		expectedOutcome: params.expected_outcome,
+		evidenceRequirement: params.evidence_requirement,
+		parentHandoffId,
+	});
+	try {
+		return await launcher(handoff.id, signal, cwd);
+	} catch {
+		recordRuntimeFailure(paths, handoff.id, ["WORKER_LAUNCH_FAILURE"], "Worker launcher failed before execution");
+		return {
+			handoff_id: handoff.id,
+			exit_code: -1,
+			stop_reason: null,
+			receipt_id: null,
+			status: "interrupted",
+			runtime_failure_reasons: ["WORKER_LAUNCH_FAILURE"],
+			retryable: true,
+		};
+	}
+}
 
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
@@ -85,6 +169,33 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerTool({
+		name: "handoff_spawn",
+		label: "Create Handoff and Spawn Worker",
+		description: "Open one Handoff and execute it in a fresh Worker context, with an optional inline child Goal.",
+		parameters: Type.Object({
+			digest: Type.String({ minLength: 1, maxLength: 240 }),
+			intent: Type.String({ minLength: 1 }),
+			known: Type.Optional(StringArray),
+			references: Type.Optional(Type.Array(Reference)),
+			constraints: Type.Optional(StringArray),
+			expected_outcome: StringArray,
+			evidence_requirement: Type.Optional(StringArray),
+			goal: Type.Optional(InlineGoal),
+			goal_id: Type.Optional(Type.String({ minLength: 1 })),
+		}),
+		async execute(_id, params, signal, _update, ctx) {
+			const result = await executeHandoffSpawn(
+				currentRun(),
+				params,
+				process.env.CODEFLOW_HANDOFF_ID ?? null,
+				signal,
+				ctx.cwd,
+			);
+			return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+		},
+	});
+
+	pi.registerTool({
 		name: "worker_spawn",
 		label: "Spawn Worker",
 		description: "Execute one existing Handoff in a fresh Worker context.",
@@ -92,7 +203,7 @@ export default function (pi: ExtensionAPI) {
 		async execute(_id, params, signal, _update, ctx) {
 			const paths = currentRun();
 			const handoff = loadHandoff(paths, params.handoff_id);
-			if (loadReceipt(paths, handoff.id)) throw new Error(`handoff is already closed: ${handoff.id}`);
+			if (loadTerminalReceipt(paths, handoff.id)) throw new Error(`handoff is already closed: ${handoff.id}`);
 			if (!dependenciesCompleted(paths, handoff.goal_id)) {
 				throw new Error(`goal dependencies are not completed: ${handoff.goal_id}`);
 			}
@@ -119,7 +230,7 @@ export default function (pi: ExtensionAPI) {
 					const index = cursor++;
 					const paths = currentRun();
 					const handoff = loadHandoff(paths, ids[index]);
-					if (loadReceipt(paths, handoff.id)) throw new Error(`handoff is already closed: ${handoff.id}`);
+					if (loadTerminalReceipt(paths, handoff.id)) throw new Error(`handoff is already closed: ${handoff.id}`);
 					if (!dependenciesCompleted(paths, handoff.goal_id)) {
 						throw new Error(`goal dependencies are not completed: ${handoff.goal_id}`);
 					}

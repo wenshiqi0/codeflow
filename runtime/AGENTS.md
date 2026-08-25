@@ -14,23 +14,32 @@ tool observations, hypotheses, and reasoning are temporary.
 - Child Goals are outcome, dependency, scheduling, and recall scopes.
 - A Handoff opens one bounded commitment. Its constraints describe what must
   remain true, not which files or tools a Worker may use.
-- A Receipt closes exactly one Handoff. Submit it with the `receipt` tool using
-  `completed`, `partial`, `blocked`, `failed`, or `superseded`.
+- Each Receipt belongs to exactly one Handoff, while one Handoff may accept
+  multiple incremental Receipts. Submit `progress` without closing the
+  commitment; submit at most one terminal Receipt using `completed`, `partial`,
+  `blocked`, `failed`, or `superseded` to close it.
 - Effects reference observable external state using Git refs, file paths,
   external ids, service references, or a minimal semantic description. Do not
   copy diffs or logs into a Receipt.
 
-Failed, blocked, and partial work still receives a Receipt when the Worker can
-form a grounded semantic conclusion. A process crash, provider failure, tool
+Failed, blocked, and partial work still receives a terminal Receipt when the
+Worker can form a grounded semantic conclusion; durable findings may first be
+recorded as progress Receipts. A process crash, provider failure, tool
 infrastructure failure, cancellation, or context exhaustion is a Runtime event
-and must not be converted into an invented Receipt.
+and must not be converted into an invented Receipt: an attempt that ends after
+durable progress is recorded as missing a terminal Receipt, not as missing any
+delegation artifact.
 
 ## Context and recall
 
-The injected working set contains the Task, root Handoff/Receipt history, the
-current Goal's local history, reduced Goal state, and the current Handoff.
-Sibling Goal state is not implicit. Use `recall(goal_id, level)` explicitly;
-start with `state` or `semantic`, and request `full` only when needed.
+The injected working set is pull-first: the Task, reduced root and current
+Goal state, the current Handoff, its folded Receipt state, and Receipt head
+metadata. Full Handoff/Receipt history is never injected. Recall a Goal, a
+Handoff, or an exact Receipt explicitly; same-goal lookup may use the ambient
+scope, while cross-goal lookup must be explicit. Start with `state` or
+`semantic`, and request `full` only when needed. Goal `semantic` recall returns
+the latest relevant Handoff with its folded Receipt state and head; it does not
+replay the incremental Receipt chain.
 
 Do not create checkpoints, conversation summaries, continuation files, or
 private memory. Re-ground an interrupted Handoff from its original contract,
@@ -52,14 +61,36 @@ durable Receipts, Effect references, and current external state.
 
 Obligations bind the Receipt, not the path taken to reach it.
 
-- A `completed` Receipt for a behavior change must reference regression
-  evidence under `$CODEFLOW_EVIDENCE_DIR`: which relevant existing tests ran
-  and their outcome. If no covering tests exist, state that in `discovered`
-  or `unresolved` — never silently.
-- A bug fix must reference a reproduction that failed before the change and
-  passes after it.
-- When a change alters what a function returns, fetches, or guarantees,
-  enumerate its downstream consumers by file or symbol and record the
-  compatibility conclusion in `established`.
-- An obligation judged inapplicable requires a one-line reason in the
-  Receipt; silent omission is a `partial`, not a `completed`.
+- Regression evidence for a behavior change is an absolute file path under
+  `$CODEFLOW_EVIDENCE_DIR` recording the relevant existing tests and outcome.
+- Reproduction evidence for a bug fix is an absolute file path under
+  `$CODEFLOW_EVIDENCE_DIR` recording failure without the fix and success with
+  the fix.
+- A change to what a function returns, fetches, or guarantees identifies its
+  downstream consumers by `file:symbol` and records the compatibility
+  conclusion in `established`.
+- An inapplicable obligation carries a one-line reason.
+
+Every root Receipt, and every `completed` or `partial` child Receipt, records
+exactly one decision line for each obligation. These obligations bind the
+terminal Receipt only; progress Receipts carry no obligation declarations. Evidence paths also appear as
+`{file}` entries in the same Receipt's `effects` array.
+
+Offline verification resolves each evidence path and the evidence root to
+canonical realpaths. The target is an existing regular file inside the root;
+path traversal and symlink escape are malformed declarations.
+
+```text
+obligation.regression:   met — <evidence ref> | exempt — <reason>
+obligation.reproduction: met — <evidence ref> | exempt — <reason>
+obligation.consumers:    met — <file:symbol, ...> | exempt — <reason>
+```
+
+These declarations are classified by offline reporting. Receipt submission
+does not reject or change a status because a declaration is absent or invalid.
+
+Every root Receipt also records exactly one decomposition decision:
+
+```text
+decomposition: split | solo — <reason>
+```

@@ -16,18 +16,61 @@ Task -> Goal Graph -> Handoff -> Receipt
 身份，也不预设 workflow。Root 仍是 Worker；它的特殊性只来自 Runtime 实际
 加载的 Goal、Handoff 和 Worker organization tools。
 
+## 外层启用判定
+
+是否进入 Codeflow 由外层宿主判断，Runtime 内部不做任务分类。调用 skill 执行
+新 Task 时，外层提供以下 admission 输入；它不是 `codeflow exec` 的 CLI 参数，
+也不会写入 Task objective：
+
+```yaml
+admission:
+  multi_agent: true | false
+  source: explicit_user | outer_assessment
+  time:
+    solo_estimate: <duration or range>
+    parallelizable: true | false
+    rationale: <brief evidence>
+  coding_complexity:
+    level: low | medium | high
+    rationale: <brief evidence>
+```
+
+时间维度关注单 Worker 的预计关键路径，以及是否存在能抵消启动、同步和收敛成本的
+并行工作；编码复杂度关注独立模块、接口、不变量、未知项与验证面的数量和耦合。
+预计耗时较长但只能串行等待，或数量很多但机械重复的修改，本身不足以启用。
+用户明确指定 Codeflow 时 `source = explicit_user` 并尊重该选择；否则只有
+`multi_agent = true` 才启动 Codeflow，缺失或为 `false` 时由外层直接处理。
+
+这个输入只决定是否进入具备多 Worker 能力的 Runtime，不规定角色、阶段、Goal
+数量或拆分路径。进入后 Root Worker 仍根据实际发现自主组织，并在最终 Receipt
+声明 `decomposition: split | solo — <reason>`。
+
 ## 协议
 
 - Goal 是可独立推进、依赖、调度和召回的结果作用域，不是步骤或角色。
 - Handoff 在一个 Goal 内开启有边界的 Work Commitment。
-- Receipt 以 `completed`、`partial`、`blocked`、`failed` 或 `superseded`
-  关闭一个 Handoff。
+- 一个 Handoff 可携带 append-only 的不可变 Receipt 链；Receipt 是增量语义
+  delta，不是 snapshot 或 checkpoint。`progress` Receipt 不关闭 Handoff 地
+  推进持久语义；只有 terminal Receipt（`completed`、`partial`、`blocked`、
+  `failed`、`superseded`）关闭 Handoff 并结束 root run。旧的 schema-v1
+  `receipt.json` 记录按单个 terminal Receipt 读取。
+- 后续 Receipt 可按稳定引用 resolve 或 supersede 同一 Goal 内的早前事实，
+  包括前序 Handoff 产生的语义；折叠后的 decisions、unresolved、blockers
+  不会累积过期值。
 - Effect 只通过 Git ref、文件路径、外部 ID、服务引用或最小语义描述引用现实状态。
 - Context、tool observation、推理和 session 都不是持久语义。
 - Runtime failure 只产生中断事件，不伪造 Receipt。
 
-Root Handoff/Receipt 的语义层天然向 Child Goal 继承；当前 Goal 的本地历史天然
-可见；兄弟 Goal 必须用 `recall(goal_id, level)` 显式召回。所有 Handoff/Receipt
+每个 Root Receipt，以及状态为 `completed` 或 `partial` 的 Child Receipt，声明
+回归证据、问题复现和下游消费者三类交付义务；不适用时给出理由。义务声明与 Root
+的拆分声明由离线观察面分类，不改变 Receipt 状态，也不构成预设执行流程。
+
+默认 Worker context 是 pull-first：只注入 Task、精简后的 root/当前 Goal
+state、当前 Handoff、当前 Handoff 的折叠 Receipt 状态和 Receipt head 元数据，
+绝不注入完整 root/当前 Goal Handoff/Receipt 历史。显式 recall 支持 Goal、
+Handoff 或某个精确 Receipt。Goal 的 `semantic` 只返回最新相关 Handoff 的
+折叠 Receipt 状态与 head，不重放增量链；完整链只在 `full` 时返回；
+同 Goal 查询可使用 ambient 作用域，跨 Goal 查询必须显式。所有 Handoff/Receipt
 使用 canonical JSON 和 SHA-256 content identity，并按共享单调逻辑序保持
 append-only 前缀。
 
@@ -48,24 +91,32 @@ codeflow stop <task-id>
 
 ```text
 receipt submit
-recall goal
+recall goal|handoff|receipt
 evidence run|batch|log
 check source
 ```
 
 Root 进程额外加载模型可见的 `goal_create`、`goal_dependencies`、
-`handoff_create`、`worker_spawn`、`worker_group`；所有 Worker 都有 `receipt` 和
-`recall`。Runtime 关闭 Pi 的扩展自动发现，只加载各进程显式声明的扩展，
-因此 Child Worker 不会继承 Root 的 organization tools。Child Worker 每次启动
-新的 Pi 进程且不传入既有 session id；完整 session 会保留为审计记录。
+`handoff_create`、`handoff_spawn`、`worker_spawn`、`worker_group`；所有 Worker
+都有 `receipt` 和 `recall`。`handoff_spawn` 将可选 Child Goal、Handoff 创建和
+Worker 启动合并为一次调用，并在首次持久化前整体校验，降低有价值拆分的固定成本。
+Runtime 关闭 Pi 的扩展自动发现，只加载各进程显式声明的扩展，因此 Child Worker
+不会继承 Root 的 organization tools。Child Worker 每次启动新的 Pi 进程且不传入
+既有 session id；完整 session 会保留为审计记录。
+
+每次 provider 请求前，Runtime 在上下文尾部注入统一结构的 `run_facts`，暴露当前
+execution 已用轮次与 context utilization，并把隐私安全的数值观测追加到
+`run-observations.jsonl`。这些数据提供决策与实验观察信号，不是指令，也不进入
+Task/Goal/Handoff/Receipt 的持久语义。
 
 ## 恢复语义
 
 每次 attempt 必须先产生以下之一：
 
-- `run_finished`：Root Handoff 已提交 Receipt；
+- `run_finished`：Root Handoff 已提交 terminal Receipt；
 - `run_interrupted`：Root Worker 因进程、provider、tool、取消或上下文故障退出，
-  且没有 Receipt；
+  且没有 terminal Receipt；已有持久进度的中断记录为 missing terminal
+  Receipt，而不是 DELEGATION_ARTIFACT_MISSING；
 
 之后产生 `runner_exited`，该 Task 才允许显式 `resume`。中断恢复会重新执行原
 Handoff，并从 Task、Root/Goal H/R、Goal State 和当前外部状态重新 grounding；
@@ -85,8 +136,10 @@ benchmark/                              SWE-bench driver 与报告
 ```
 
 每个 Task 的运行数据位于 `.codeflow/runs/code/<task-id>/`：`task.json`、
-`goals/`、`handoffs/`、`events/`、`usage.jsonl` 和 `runner.json`。不存在 facts
-ledger、conversation snapshot、collaboration index 或 mutable handoff state。
+`goals/`、`handoffs/<id>/handoff.json` 加 `handoffs/<id>/receipts/` 的
+Receipt 链、`events/`、`usage.jsonl`、`run-observations.jsonl` 和
+`runner.json`。不存在用于恢复或传递语义的 facts ledger、conversation snapshot、
+collaboration index 或 mutable handoff state；观测 ledger 不能替代 Receipt。
 
 ## 配置与验证
 

@@ -3,7 +3,7 @@
     "zhipuai-coding-plan": {
       "name": "ZhipuAI Coding Plan",
       "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
-      "apiKey": "$ZHIPU_API_KEY",
+      "apiKey": "$ZHIPU_BACKUP_API_KEY",
       "api": "openai-completions",
       "models": [
         {

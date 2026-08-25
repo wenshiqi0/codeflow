@@ -83,12 +83,16 @@ import {
 	scanHandoffStates,
 	type HandoffStateProjection,
 } from "../../runtime/lib/observability/handoff-state";
+import { scanRunFacts } from "../../runtime/lib/observability/run-facts";
 import {
 	BENCHMARK_CASE_SCHEMA_VERSION,
 	BENCHMARK_MANIFEST_SCHEMA_VERSION,
+	OBSERVATION_SCHEMA_VERSION,
 	type BenchmarkManifest,
 	type CaseAttemptRecord,
 	type CaseFile,
+	type InterventionFlags,
+	type ObservationConfig,
 } from "./artifacts";
 
 export interface BenchmarkRunOptions {
@@ -126,6 +130,10 @@ export interface BenchmarkRunOptions {
 	pilot?: boolean;
 	/** Default 1. Values >1 are pilot/diagnostic multi-attempt runs, not official scores. */
 	attempts?: number;
+	/** Observation code is uniform; these flags identify only the behavior treatment. */
+	interventionFlags?: Partial<InterventionFlags>;
+	/** True only when the model-visible request itself explicitly requires decomposition. */
+	requestNamedSplit?: boolean;
 }
 
 export interface BenchmarkRunResult {
@@ -167,6 +175,7 @@ interface RunContext {
 	evaluator: BenchmarkEvaluator;
 	/** null in fixture mode (empty git-init workspace). */
 	provisionWorkspace: BenchmarkWorkspaceProvisioner | null;
+	observation: ObservationConfig;
 }
 
 interface AttemptOutcome {
@@ -454,6 +463,7 @@ async function runInstanceAttempt(
 	// before metrics are built. The benchmark report later reads this canonical
 	// artifact rather than reaching back into runtime state files.
 	let handoffStates: HandoffStateProjection[] = [];
+	let runFactsRecords = [] as ReturnType<typeof scanRunFacts>;
 	let handoffTelemetryAvailable = false;
 	if (fs.existsSync(codeflowRunsDir)) {
 		const scan = scanHandoffStates(codeflowRunsDir);
@@ -463,6 +473,7 @@ async function runInstanceAttempt(
 			schema_version: HANDOFF_STATE_PROJECTION_SCHEMA_VERSION,
 			states: handoffStates,
 		});
+		runFactsRecords = scanRunFacts(codeflowRunsDir);
 	}
 
 	const endedAt = new Date(clock.now()).toISOString();
@@ -511,6 +522,7 @@ async function runInstanceAttempt(
 		toolCallRecords: toolRecords,
 		handoffStates,
 		handoffTelemetryAvailable,
+		runFactsRecords,
 		timeToFirstPatchSeconds,
 		wallStartedAtMs: startMs,
 		wallSeconds: state.wall_seconds,
@@ -526,6 +538,7 @@ async function runInstanceAttempt(
 		started_at: startedAt,
 		ended_at: endedAt,
 		metrics,
+		observation: context.observation,
 		patch_hygiene: {
 			stripped_binary_paths: extraction.strippedBinaryPaths,
 		},
@@ -569,8 +582,22 @@ export async function runBenchmark(options: BenchmarkRunOptions): Promise<Benchm
 			? { ...options.budgets }
 			: null;
 
+	const interventionFlags: InterventionFlags = {
+		delivery_obligations: true,
+		decomposition_record: true,
+		handoff_spawn: true,
+		run_facts: true,
+		midcourse_handoff_text: true,
+		...options.interventionFlags,
+	};
+	const observation: ObservationConfig = {
+		schema_version: OBSERVATION_SCHEMA_VERSION as 1,
+		intervention_flags: interventionFlags,
+		request_named_split: options.requestNamedSplit ?? false,
+	};
+
 	const manifest: BenchmarkManifest = {
-		schema_version: BENCHMARK_MANIFEST_SCHEMA_VERSION as 4,
+		schema_version: BENCHMARK_MANIFEST_SCHEMA_VERSION as 5,
 		benchmark_run_id: benchmarkRunId,
 		created_at: new Date(clock.now()).toISOString(),
 		dataset: {
@@ -599,6 +626,7 @@ export async function runBenchmark(options: BenchmarkRunOptions): Promise<Benchm
 		},
 		consumption_metrics: { axes: [...CONSUMPTION_METRICS] },
 		driver_mode: driverMode,
+		observation,
 	};
 
 	fs.mkdirSync(options.outDir, { recursive: true });
@@ -614,6 +642,7 @@ export async function runBenchmark(options: BenchmarkRunOptions): Promise<Benchm
 		driver: options.driver,
 		evaluator: options.evaluator,
 		provisionWorkspace: options.workspaceProvisioner ?? null,
+		observation,
 	};
 
 	const outcomes: AttemptOutcome[][] = Array.from({ length: selected.length }, () => []);
@@ -651,7 +680,7 @@ export async function runBenchmark(options: BenchmarkRunOptions): Promise<Benchm
 					? "infra_error"
 					: "not_evaluated";
 		const caseFile: CaseFile = {
-			schema_version: BENCHMARK_CASE_SCHEMA_VERSION as 2,
+			schema_version: BENCHMARK_CASE_SCHEMA_VERSION as 3,
 			instance_id: selected[index].instance_id,
 			attempts: instanceOutcomes.map((outcome) => outcome.record),
 			final_verdict: finalVerdict as CaseFile["final_verdict"],

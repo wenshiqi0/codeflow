@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { randomBytes } from "node:crypto";
 import { buildWorkerArgv, ConfigError, resolveOutputCompression, resolveWorker } from "../lib/config";
 import {
-	loadReceipt,
+	loadTerminalReceipt,
 	handoffHistory,
 	attachHandoffProcess,
 	openHandoff,
@@ -79,14 +79,13 @@ function interruptedReasons(
 	const diagnostics = `${observation.stderrTail}\n${observation.errorMessage ?? ""}`;
 	if (diagnostics.includes("CODEFLOW_EXECUTION_TIMEOUT")) reasons.push("EXECUTION_TIMEOUT");
 	if (code !== 0 || observation.stopReason === "error") reasons.push("PROVIDER_FAILURE");
-	if (reasons.length === 0) reasons.push("DELEGATION_ARTIFACT_MISSING");
 	return [...new Set(reasons)];
 }
 
 function rootHandoffForAttempt(paths: RunPaths, prompt: string, resumed: boolean) {
 	if (resumed) {
 		const interrupted = handoffHistory(paths)
-			.filter((view) => view.handoff.goal_id === paths.runId && view.receipt === null)
+			.filter((view) => view.handoff.goal_id === paths.runId && view.folded.terminal === null)
 			.sort((left, right) => right.handoff.seq - left.handoff.seq)[0];
 		if (interrupted) return interrupted.handoff;
 	}
@@ -161,7 +160,7 @@ export async function run(
 
 	console.error(`codeflow task_id=${taskId} task_dir=${paths.runDir} handoff_id=${root.id}${options.resume ? " resumed=true" : ""}`);
 	const child = Bun.spawn(
-		buildWorkerArgv(resolved, "Execute the current root Handoff from the injected Codeflow context and submit one Receipt.", ROOT_EXTENSIONS),
+		buildWorkerArgv(resolved, "Execute the current root Handoff from the injected Codeflow context and submit a terminal Receipt; intermediate durable findings may be recorded as progress Receipts.", ROOT_EXTENSIONS),
 		{
 			stdin: "ignore",
 			stdout: "pipe",
@@ -205,7 +204,7 @@ export async function run(
 	if (escalation) clearTimeout(escalation);
 	process.off("SIGTERM", terminate);
 	process.off("SIGINT", terminate);
-	const receipt = loadReceipt(paths, root.id);
+	const receipt = loadTerminalReceipt(paths, root.id);
 	try {
 		runnerExited(
 			paths,
@@ -213,13 +212,13 @@ export async function run(
 			true,
 			receipt ? undefined : {
 				reasons: interruptedReasons(code, observation, aborted),
-				summary: "root Worker execution ended without a Receipt",
+				summary: "root Worker execution ended without a terminal Receipt",
 			},
 		);
 	} catch { /* bookkeeping cannot mask execution */ }
 	if (!receipt) {
 		const tail = (observation.errorMessage ?? observation.stderrTail ?? observation.stdoutTail).trim().slice(-2_000);
-		console.error(`codeflow ${entry}: root Worker exited without a Receipt${tail ? `; diagnostic tail:\n${tail}` : ""}`);
+		console.error(`codeflow ${entry}: root Worker exited without a terminal Receipt${tail ? `; diagnostic tail:\n${tail}` : ""}`);
 	}
 	try {
 		const summary = writeUsageSummary(paths);

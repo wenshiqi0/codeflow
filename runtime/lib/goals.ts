@@ -28,6 +28,13 @@ export interface CreateGoalOptions {
 	dependencies?: string[];
 }
 
+export interface PreparedGoal {
+	id: string;
+	objective: string;
+	dependencies: string[];
+	existing: GoalRecord | null;
+}
+
 function normalizeGoalId(value: string): string {
 	const id = slug(value);
 	if (!GOAL_ID_PATTERN.test(id) || id.startsWith("_")) {
@@ -99,10 +106,11 @@ function assertAcyclic(paths: RunPaths, replacement?: GoalRecord): void {
 	for (const id of goals.keys()) visit(id);
 }
 
-export function createGoal(
+/** Validate a Goal definition without allocating a sequence or writing state. */
+export function prepareGoal(
 	paths: RunPaths,
 	options: CreateGoalOptions,
-): { goal_id: string; ref: string; idempotent: boolean } {
+): PreparedGoal {
 	loadTask(paths);
 	const id = normalizeGoalId(options.id);
 	if (id === paths.runId) throw new GoalError("task id is already the root Goal");
@@ -118,6 +126,28 @@ export function createGoal(
 		if (canonicalJson(existing) !== canonicalJson(expected)) {
 			throw new GoalError(`goal already exists with different content: ${id}`);
 		}
+		return { id, objective, dependencies, existing };
+	}
+
+	assertAcyclic(paths, {
+		schema_version: GOAL_SCHEMA_VERSION,
+		seq: 0,
+		id,
+		task_id: paths.runId,
+		objective,
+		dependencies,
+	});
+	return { id, objective, dependencies, existing: null };
+}
+
+export function createGoal(
+	paths: RunPaths,
+	options: CreateGoalOptions,
+): { goal_id: string; ref: string; idempotent: boolean } {
+	const prepared = prepareGoal(paths, options);
+	const { id, objective, dependencies } = prepared;
+	const file = paths.goalPath(id);
+	if (prepared.existing) {
 		return { goal_id: id, ref: path.relative(process.cwd(), file), idempotent: true };
 	}
 
@@ -129,7 +159,6 @@ export function createGoal(
 		objective,
 		dependencies,
 	};
-	assertAcyclic(paths, goal);
 	writeJsonAtomic(file, goal);
 	deliverEvent({
 		stagingDir: paths.tmp,

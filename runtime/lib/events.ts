@@ -50,6 +50,7 @@ export const EVENT_STATUSES = [
 	"SUPERSEDED",
 	"INTERRUPTED",
 	"EXITED",
+	"PROGRESS",
 ] as const;
 
 export type EventStatus = (typeof EVENT_STATUSES)[number];
@@ -57,10 +58,12 @@ export type EventStatus = (typeof EVENT_STATUSES)[number];
 export const EVENT_REASONS = [
 	"CONTEXT_BUDGET_EXCEEDED",
 	"DELEGATION_ARTIFACT_MISSING",
+	"TERMINAL_RECEIPT_MISSING",
 	"EXECUTION_TIMEOUT",
 	"OUTPUT_TRUNCATED",
 	"PROVIDER_FAILURE",
 	"USER_CANCELLED",
+	"WORKER_LAUNCH_FAILURE",
 ] as const;
 
 export type EventReason = (typeof EVENT_REASONS)[number];
