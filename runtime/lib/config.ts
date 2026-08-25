@@ -16,9 +16,13 @@ interface RuntimeConfig {
 export interface ResolvedExecutor {
 	provider: string;
 	model: string;
+	thinkingLevel?: ThinkingLevel;
 	systemPrompt: string;
 	promptPath: string;
 }
+
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -82,8 +86,34 @@ function resolveExecutor(configFile: string, config: ExecutorConfig, field: stri
 	};
 }
 
-export function resolveWorker(configFile: string): ResolvedExecutor {
-	return resolveExecutor(configFile, loadRuntimeConfig(configFile).worker, "worker");
+export function resolveWorker(configFile: string, modelOverride?: string): ResolvedExecutor {
+	const worker = loadRuntimeConfig(configFile).worker;
+	const resolved = resolveExecutor(
+		configFile,
+		modelOverride === undefined ? worker : { ...worker, model: modelOverride },
+		"worker",
+	);
+	const modelsFile = path.join(path.dirname(configFile), "models.json");
+	let manifest: unknown;
+	try {
+		manifest = JSON.parse(fs.readFileSync(modelsFile, "utf8"));
+	} catch (error) {
+		throw new ConfigError(`cannot read models config ${modelsFile}: ${(error as Error).message}`);
+	}
+	const providers = isRecord(manifest) && isRecord(manifest.providers) ? manifest.providers : {};
+	const provider = providers[resolved.provider];
+	const models: unknown[] = isRecord(provider) && Array.isArray(provider.models) ? provider.models : [];
+	const declaration = models.find((value) => isRecord(value) && value.id === resolved.model);
+	if (!isRecord(declaration) || declaration.thinkingLevel === undefined) return resolved;
+	if (
+		typeof declaration.thinkingLevel !== "string" ||
+		!(THINKING_LEVELS as readonly string[]).includes(declaration.thinkingLevel)
+	) {
+		throw new ConfigError(
+			`models.json ${resolved.provider}/${resolved.model}.thinkingLevel must be one of: ${THINKING_LEVELS.join(", ")}`,
+		);
+	}
+	return { ...resolved, thinkingLevel: declaration.thinkingLevel as ThinkingLevel };
 }
 
 export function resolveOutputCompression(configFile: string): ResolvedExecutor {
@@ -105,6 +135,7 @@ export function buildWorkerArgv(
 		"--mode", "json",
 		"--provider", resolved.provider,
 		"--model", resolved.model,
+		...(resolved.thinkingLevel ? ["--thinking", resolved.thinkingLevel] : []),
 		"--system-prompt", resolved.systemPrompt,
 		"--no-extensions",
 		"--no-skills",

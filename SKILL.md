@@ -45,7 +45,7 @@ eventually records `decomposition: split` or `decomposition: solo`.
 ## Commands
 
 ```bash
-codeflow exec "<objective>"
+codeflow exec [--worker-model <provider/model>] "<objective>"
 codeflow resume <task-id>
 codeflow ls
 codeflow sub <task-id> [--since <seq>] [--kind <kind>,...] [--timeout 600]
@@ -65,7 +65,10 @@ lower-level Goal/Handoff/Worker tools. Every root Receipt records a split/solo
 decomposition decision. Delivery-obligation declarations and decomposition
 are classified by offline observation; they do not change Receipt status.
 
-`exec` creates a Task and root Handoff. `resume` is explicit and accepts only a
+`exec --worker-model <provider>/<model>` overrides the configured model for all
+Workers in that Task's running process tree without changing internal service
+models or the runtime config. `exec` creates a Task and root Handoff. `resume`
+is explicit and accepts only a
 fully stopped attempt: `run_finished` or `run_interrupted`, followed by
 `runner_exited`. An interrupted attempt has no terminal Receipt and resumes the
 original Handoff from durable semantics and current external state. It never

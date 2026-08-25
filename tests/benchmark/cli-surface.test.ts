@@ -24,6 +24,12 @@ describe("benchmark CLI discoverability", () => {
 		expect(result.stdout).toContain("benchmark");
 	});
 
+	test("codeflow --help advertises the per-Task Worker model override", () => {
+		const result = runCodeflow(["--help"]);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("exec [--worker-model <provider/model>]");
+	});
+
 	test("codeflow benchmark --help lists run and report", () => {
 		const result = runCodeflow(["benchmark", "--help"]);
 		expect(result.exitCode).toBe(0);

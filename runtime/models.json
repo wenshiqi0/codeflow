@@ -3,7 +3,7 @@
     "zhipuai-coding-plan": {
       "name": "ZhipuAI Coding Plan",
       "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
-      "apiKey": "$ZHIPU_BACKUP_API_KEY",
+      "apiKey": "$ZHIPU_API_KEY",
       "api": "openai-completions",
       "models": [
         {
@@ -12,7 +12,24 @@
         },
         {
           "id": "glm-5.3",
-          "name": "GLM-5.3"
+          "name": "GLM-5.3",
+          "reasoning": true,
+          "thinkingLevel": "high",
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "high",
+            "medium": "high",
+            "high": "high",
+            "max": "max"
+          },
+          "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": true,
+            "maxTokensField": "max_tokens",
+            "thinkingFormat": "zai",
+            "zaiToolStream": true
+          }
         }
       ]
     },
@@ -52,7 +69,13 @@
       "models": [
         {
           "id": "mimo-v2.5-pro",
-          "name": "MiMo v2.5 Pro"
+          "name": "MiMo v2.5 Pro",
+          "reasoning": true,
+          "thinkingLevel": "high",
+          "compat": {
+            "requiresReasoningContentOnAssistantMessages": true,
+            "thinkingFormat": "deepseek"
+          }
         }
       ]
     }

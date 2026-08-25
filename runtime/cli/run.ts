@@ -133,18 +133,55 @@ async function drain(
 
 interface RunOptions { resume?: ResumeSource }
 
+export interface ExecArguments {
+	prompt: string;
+	workerModel?: string;
+}
+
+export function parseExecArguments(argv: string[]): ExecArguments {
+	const objective: string[] = [];
+	let workerModel: string | undefined;
+	for (let index = 0; index < argv.length; index += 1) {
+		const value = argv[index];
+		if (value === "--worker-model") {
+			if (workerModel !== undefined) throw new ConfigError("--worker-model may be specified only once");
+			const next = argv[index + 1];
+			if (!next || next.startsWith("--")) throw new ConfigError("--worker-model requires '<provider>/<model>'");
+			workerModel = next;
+			index += 1;
+			continue;
+		}
+		if (value.startsWith("--worker-model=")) {
+			if (workerModel !== undefined) throw new ConfigError("--worker-model may be specified only once");
+			workerModel = value.slice("--worker-model=".length);
+			if (!workerModel) throw new ConfigError("--worker-model requires '<provider>/<model>'");
+			continue;
+		}
+		if (value.startsWith("--")) throw new ConfigError(`unknown exec option: ${value}`);
+		objective.push(value);
+	}
+	const prompt = objective.join(" ").trim();
+	if (!prompt) throw new ConfigError("exec requires a requirement");
+	return { prompt, workerModel };
+}
+
 export async function run(
 	argv: string[],
 	entry: "exec" | "resume" = "exec",
 	options: RunOptions = {},
 ): Promise<number> {
 	if (process.env.CODEFLOW_RUN_ID) return fail(`${entry} cannot start inside a Codeflow Task`, entry);
-	if (argv.some((value) => value.startsWith("--"))) return fail(`unknown ${entry} option`, entry);
-	const prompt = argv.join(" ").trim();
-	if (!prompt) return fail(`${entry} requires a requirement`, entry);
+	let prompt: string;
+	let workerModel: string | undefined;
 	let resolved;
 	try {
-		resolved = resolveWorker(CONFIG_FILE);
+		if (entry === "exec") ({ prompt, workerModel } = parseExecArguments(argv));
+		else {
+			if (argv.some((value) => value.startsWith("--"))) throw new ConfigError(`unknown ${entry} option`);
+			prompt = argv.join(" ").trim();
+			if (!prompt) throw new ConfigError(`${entry} requires a requirement`);
+		}
+		resolved = resolveWorker(CONFIG_FILE, workerModel);
 	} catch (error) {
 		if (error instanceof ConfigError) return fail(error.message, entry);
 		throw error;
@@ -159,6 +196,20 @@ export async function run(
 	startHandoff(paths, root.id);
 
 	console.error(`codeflow task_id=${taskId} task_dir=${paths.runDir} handoff_id=${root.id}${options.resume ? " resumed=true" : ""}`);
+	const childEnv: Record<string, string | undefined> = {
+		...process.env,
+		PATH: `${path.join(RUNTIME_DIR, "bin")}:${process.env.PATH ?? ""}`,
+		PI_CODING_AGENT_DIR: RUNTIME_DIR,
+		CODEFLOW_PROCESS_KIND: "root",
+		CODEFLOW_RUN_ID: taskId,
+		CODEFLOW_RUNS_DIR: paths.code,
+		CODEFLOW_PROJECT_DIR: path.resolve(process.cwd()),
+		CODEFLOW_EVIDENCE_DIR: paths.evidence,
+		CODEFLOW_HANDOFF_ID: root.id,
+		CODEFLOW_GOAL_ID: taskId,
+	};
+	delete childEnv.CODEFLOW_WORKER_MODEL;
+	if (workerModel !== undefined) childEnv.CODEFLOW_WORKER_MODEL = workerModel;
 	const child = Bun.spawn(
 		buildWorkerArgv(resolved, "Execute the current root Handoff from the injected Codeflow context and submit a terminal Receipt; intermediate durable findings may be recorded as progress Receipts.", ROOT_EXTENSIONS),
 		{
@@ -166,18 +217,7 @@ export async function run(
 			stdout: "pipe",
 			stderr: "pipe",
 			detached: true,
-			env: {
-				...process.env,
-				PATH: `${path.join(RUNTIME_DIR, "bin")}:${process.env.PATH ?? ""}`,
-				PI_CODING_AGENT_DIR: RUNTIME_DIR,
-				CODEFLOW_PROCESS_KIND: "root",
-				CODEFLOW_RUN_ID: taskId,
-				CODEFLOW_RUNS_DIR: paths.code,
-				CODEFLOW_PROJECT_DIR: path.resolve(process.cwd()),
-				CODEFLOW_EVIDENCE_DIR: paths.evidence,
-				CODEFLOW_HANDOFF_ID: root.id,
-				CODEFLOW_GOAL_ID: taskId,
-			},
+			env: childEnv,
 		},
 	);
 	if (child.pid !== undefined) runnerChildStarted(paths, child.pid);
@@ -247,7 +287,11 @@ function debug(argv: string[]): number {
 	const worker = resolveWorker(CONFIG_FILE);
 	const compression = resolveOutputCompression(CONFIG_FILE);
 	console.log(JSON.stringify({
-		worker: { model: `${worker.provider}/${worker.model}`, prompt: path.relative(path.dirname(RUNTIME_DIR), worker.promptPath) },
+		worker: {
+			model: `${worker.provider}/${worker.model}`,
+			thinking_level: worker.thinkingLevel ?? null,
+			prompt: path.relative(path.dirname(RUNTIME_DIR), worker.promptPath),
+		},
 		services: {
 			output_compression: {
 				model: `${compression.provider}/${compression.model}`,

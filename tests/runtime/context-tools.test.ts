@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import organization from "../../runtime/extensions/codeflow-organization";
 import protocol from "../../runtime/extensions/codeflow-protocol";
-import { buildChildWorkerArgs } from "../../runtime/extensions/codeflow-organization/worker-launcher";
+import { buildChildWorkerArgs, resolveLaunchWorker } from "../../runtime/extensions/codeflow-organization/worker-launcher";
 import { buildWorkerContext } from "../../runtime/extensions/codeflow-context/context";
 import { buildWorkerArgv, type ResolvedExecutor } from "../../runtime/lib/config";
 import { createGoal } from "../../runtime/lib/goals";
@@ -93,5 +93,27 @@ describe("capability is the loaded tool surface", () => {
 		expect(rootArgs).not.toContain("--no-session");
 		expect(childArgs).not.toContain("--no-session");
 		expect(launcher).not.toContain("--session-id");
+	});
+
+	test("delegated Workers inherit the run-scoped model override", () => {
+		const resolved = resolveLaunchWorker("explicit-provider/explicit-model");
+		expect({ provider: resolved.provider, model: resolved.model }).toEqual({
+			provider: "explicit-provider",
+			model: "explicit-model",
+		});
+	});
+
+	test("the configured GLM Worker carries its models.json thinking level into Pi", () => {
+		const resolved = resolveLaunchWorker("zhipuai-coding-plan/glm-5.3");
+		const args = buildChildWorkerArgs(resolved);
+		expect(resolved.thinkingLevel).toBe("high");
+		expect(args.slice(args.indexOf("--thinking"), args.indexOf("--thinking") + 2)).toEqual(["--thinking", "high"]);
+	});
+
+	test("the configured MiMo Worker uses its highest supported thinking level", () => {
+		const resolved = resolveLaunchWorker("mimo/mimo-v2.5-pro");
+		const args = buildChildWorkerArgs(resolved);
+		expect(resolved.thinkingLevel).toBe("high");
+		expect(args.slice(args.indexOf("--thinking"), args.indexOf("--thinking") + 2)).toEqual(["--thinking", "high"]);
 	});
 });

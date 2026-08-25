@@ -77,7 +77,7 @@ append-only 前缀。
 ## 命令
 
 ```bash
-codeflow exec "<objective>"
+codeflow exec [--worker-model <provider/model>] "<objective>"
 codeflow resume <task-id>
 codeflow ls
 codeflow sub <task-id> [--since <seq>]
@@ -143,9 +143,15 @@ collaboration index 或 mutable handoff state；观测 ledger 不能替代 Recei
 
 ## 配置与验证
 
-`runtime/config.json` 是唯一 executor 配置，区分通用 Worker 和内部
-`output_compression` service。provider 定义来自 `runtime/models.json` 与可选的
-本机 `runtime/providers.json`；密钥只从环境读取。
+`runtime/config.json` 提供默认 executor 配置，区分通用 Worker 和内部
+`output_compression` service。`exec --worker-model <provider>/<model>` 可为本次 Task
+显式覆盖所有 Worker（Root 与 delegated Worker）使用的模型，不影响内部 service，
+也不修改配置文件。provider 定义来自 `runtime/models.json` 与可选的本机
+`runtime/providers.json`；密钥只从环境读取。`runtime/models.json` 中的模型可用
+`thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"`
+声明该模型的 Worker 默认思考强度；Codeflow 会将它显式传给 Pi。该字段只控制
+Worker，模型仍须使用 Pi 的 `reasoning`、`thinkingLevelMap` 和 `compat` 正确声明
+上游能力。
 
 ```bash
 bun install

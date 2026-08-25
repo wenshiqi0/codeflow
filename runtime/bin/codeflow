@@ -26,7 +26,8 @@ usage() {
   cat <<'EOF'
 usage: codeflow <command> [options]
 
-  exec "<objective>"                start a Task and follow it
+  exec [--worker-model <provider/model>] "<objective>"
+                                    start a Task and follow it
   resume <task-id>                  resume a fully stopped Task
   ls                                list Tasks: id, status, duration, objective
   sub <task-id> [--since <seq>]     subscribe to a Task's event stream

@@ -43,6 +43,10 @@ export interface WorkerLauncherDependencies {
 	spawnProcess?: typeof spawn;
 }
 
+export function resolveLaunchWorker(modelOverride = process.env.CODEFLOW_WORKER_MODEL): ResolvedExecutor {
+	return resolveWorker(CONFIG_FILE, modelOverride);
+}
+
 export function buildChildWorkerArgs(resolved: ResolvedExecutor): string[] {
 	return buildWorkerArgv(
 		resolved,
@@ -101,7 +105,7 @@ export async function spawnWorker(
 	let args: string[];
 	let command: { command: string; args: string[] };
 	try {
-		const resolved = (dependencies.resolve ?? (() => resolveWorker(CONFIG_FILE)))();
+		const resolved = (dependencies.resolve ?? resolveLaunchWorker)();
 		args = buildChildWorkerArgs(resolved);
 		command = invocation(args);
 	} catch {
