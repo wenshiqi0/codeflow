@@ -45,17 +45,19 @@ for required in \
   "$RUNTIME_DIR/models.json" \
   "$RUNTIME_DIR/providers.json.example" \
   "$RUNTIME_DIR/AGENTS.md" \
+  "$ROOT_DIR/references/worker.md" \
+  "$ROOT_DIR/references/engineering-methods.md" \
+  "$ROOT_DIR/references/organization-methods.md" \
   "$RUNTIME_DIR/lib/canonical.ts" \
   "$RUNTIME_DIR/lib/tasks.ts" \
   "$RUNTIME_DIR/lib/goals.ts" \
-  "$RUNTIME_DIR/lib/handoff/index.ts" \
+  "$RUNTIME_DIR/lib/commitment/index.ts" \
+  "$RUNTIME_DIR/lib/executions.ts" \
   "$RUNTIME_DIR/lib/state.ts" \
-  "$RUNTIME_DIR/lib/recall.ts" \
+  "$RUNTIME_DIR/lib/inspection.ts" \
   "$RUNTIME_DIR/cli/run.ts" \
-  "$RUNTIME_DIR/cli/protocol.ts" \
   "$RUNTIME_DIR/extensions/codeflow-organization/index.ts" \
   "$RUNTIME_DIR/extensions/codeflow-organization/worker-launcher.ts" \
-  "$RUNTIME_DIR/extensions/codeflow-protocol/index.ts" \
   "$RUNTIME_DIR/extensions/codeflow-context/index.ts"; do
   if [[ -f "$required" ]]; then
     ok "${required#"$RUNTIME_DIR"/}"

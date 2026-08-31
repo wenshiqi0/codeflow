@@ -44,7 +44,7 @@ function runScript(
 }
 
 /** A PATH prefix whose docker/python3 stubs exist but cannot serve. */
-function stubbedPath(kind: "docker-down" | "python-down"): { path: string; cleanup: () => void } {
+function stubbedPath(kind: "docker-down" | "python-down"): { path: string; python: string; cleanup: () => void } {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-bench-stub-"));
 	fs.writeFileSync(path.join(dir, "python3"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 	if (kind === "docker-down") {
@@ -52,6 +52,7 @@ function stubbedPath(kind: "docker-down" | "python-down"): { path: string; clean
 	}
 	return {
 		path: `${dir}:${process.env.PATH ?? ""}`,
+		python: path.join(dir, "python3"),
 		cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
 	};
 }
@@ -79,6 +80,46 @@ describe("production repo-clone.sh (live boundary)", () => {
 		]);
 		expect(result.exitCode).toBe(2);
 		expect(result.stderr).toContain("owner/name");
+	});
+
+	test("uses a read-only local source cache without network access", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-bench-cache-"));
+		const cacheRoot = path.join(root, "cache");
+		const source = path.join(cacheRoot, "repo");
+		const destination = path.join(root, "workspace");
+		try {
+			fs.mkdirSync(source, { recursive: true });
+			expect(runScript(["git", "-C", source, "init", "--quiet", "--initial-branch=main"]).exitCode).toBe(0);
+			fs.writeFileSync(path.join(source, "tracked.txt"), "cached source\n");
+			expect(runScript(["git", "-C", source, "add", "--all"]).exitCode).toBe(0);
+			expect(runScript([
+				"git", "-C", source,
+				"-c", "user.name=cache-test",
+				"-c", "user.email=cache@example.invalid",
+				"commit", "--quiet", "-m", "cached base",
+			]).exitCode).toBe(0);
+			const sourceHead = runScript(["git", "-C", source, "rev-parse", "HEAD"]).stdout.trim();
+			const result = runScript([
+				path.join(SCRIPTS, "repo-clone.sh"),
+				"owner/repo",
+				sourceHead,
+				destination,
+			], {
+				env: {
+					CODEFLOW_BENCHMARK_REPO_CACHE_DIR: cacheRoot,
+					HTTP_PROXY: "http://127.0.0.1:1",
+					HTTPS_PROXY: "http://127.0.0.1:1",
+					ALL_PROXY: "socks5://127.0.0.1:1",
+				},
+			});
+			expect(result).toMatchObject({ exitCode: 0, stderr: "" });
+			expect(fs.readFileSync(path.join(destination, "tracked.txt"), "utf8")).toBe("cached source\n");
+			expect(runScript(["git", "-C", source, "rev-parse", "HEAD"]).stdout.trim()).toBe(sourceHead);
+			expect(runScript(["git", "-C", source, "status", "--short"]).stdout).toBe("");
+			expect(runScript(["git", "-C", destination, "remote"]).stdout).toBe("");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
 	});
 });
 
@@ -153,7 +194,7 @@ describe("production swebench-harness.sh (live boundary)", () => {
 					"--instance",
 					"demo/demo-1",
 				],
-				{ env: { PATH: stubs.path } },
+				{ env: { PATH: stubs.path, CODEFLOW_BENCHMARK_HARNESS_PYTHON: stubs.python } },
 			);
 			expect(result.exitCode).toBe(127);
 			expect(result.stdout.trim()).not.toMatch(/^(resolved|unresolved)$/m);

@@ -6,9 +6,9 @@
  * Inert unless CODEFLOW_BENCHMARK_DRIVER_LEDGER_DIR is set — normal runs load
  * this extension and it does nothing. The benchmark driver script
  * (benchmark/scripts/codeflow-driver.ts) sets the variable for every
- * worker process of the attempt's Codeflow run (root and delegated
+ * worker process of the attempt's Codeflow run (root and spawned
  * children alike, via inherited env), so rounds are attributed by
- * Task/Goal/Handoff, Worker kind, provider, and model
+ * Task/Goal/Commitment, Worker kind, provider, and model
  * (design §6/§14: reuse the existing usage/attribution machinery — one
  * assistant usage record is one model round, no transcript parsing).
  *
@@ -29,7 +29,7 @@
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { appendToolCallRecord, type ToolCallRecord } from "../../lib/observability/tool-execution";
+import { appendToolCallRecord, TOOL_CALL_SCHEMA_VERSION, type ToolCallRecord } from "../../lib/observability/tool-execution";
 import { appendAttemptUsageRecord, type AttemptUsageRecord } from "../../lib/observability/model-usage";
 
 const LEDGER_DIR_ENV = "CODEFLOW_BENCHMARK_DRIVER_LEDGER_DIR";
@@ -72,26 +72,26 @@ function commandText(input: unknown): string {
 	return typeof command === "string" ? command : "";
 }
 
-function operationKind(tool: string, input: unknown): ToolCallRecord["operation_kind"] {
+export function operationKind(tool: string, input: unknown): ToolCallRecord["operation_kind"] {
 	if (tool === "edit" || tool === "write") return "edit";
-	if (tool === "goal_create") return "goal_create";
-	if (tool === "goal_dependencies") return "goal_dependencies";
-	if (tool === "handoff_create") return "handoff_create";
-	if (tool === "handoff_spawn") return "organization";
-	if (tool === "recall") return "recall";
-	if (tool === "worker_spawn" || tool === "worker_group") return "organization";
-	if (tool === "read") return "explore";
+	if (tool === "collaborate") {
+		const action = asRecord(asRecord(input).action).name;
+		if (action === "inspect" || action === "claim" || action === "report"
+			|| action === "delegate" || action === "wait") return action;
+		return "other";
+	}
+	if (tool === "read") return "source_discovery";
 	if (tool !== "bash") return "other";
 
 	const command = commandText(input);
-	if (/^code-agent\s+recall\s+goal(?:\s|$)/.test(command)) return "recall";
 	if (/^code-agent\s+evidence\s+log(?:\s|$)/.test(command)) return "evidence_log";
 	if (/^code-agent\s+evidence\s+run(?:\s|$)/.test(command)) return "evidence_run";
+	if (/^code-agent\s+check\s+source(?:\s|$)/.test(command)) return "execute";
 	if (/(^|\s)(?:pytest|py\.test|bun|npm|pnpm|yarn|go|cargo|make)(?:\s|$)/.test(command)) {
 		return "execute";
 	}
 	if (/(^|\s)(?:git|grep|rg|find|fd|ls|cat|head|tail|sed|awk)(?:\s|$)/.test(command)) {
-		return "explore";
+		return "source_discovery";
 	}
 	return "other";
 }
@@ -126,13 +126,13 @@ export default function (pi: ExtensionAPI): void {
 		emitting: EmittingContext,
 	): Pick<
 		ToolCallRecord,
-		"at" | "task_id" | "worker_kind" | "handoff_id" | "goal_id" | "provider" | "model"
+		"at" | "task_id" | "worker_kind" | "commitment_id" | "goal_id" | "provider" | "model"
 	> {
 		return {
 			at,
 			task_id: env("CODEFLOW_RUN_ID") ?? null,
 			worker_kind: env("CODEFLOW_PROCESS_KIND") === "service" ? "service" : "worker",
-			handoff_id: optionalEnv("CODEFLOW_HANDOFF_ID"),
+			commitment_id: optionalEnv("CODEFLOW_COMMITMENT_ID"),
 			goal_id: optionalEnv("CODEFLOW_GOAL_ID"),
 			provider: emitting.provider,
 			model: emitting.model,
@@ -146,10 +146,13 @@ export default function (pi: ExtensionAPI): void {
 	const callOperations = new Map<string, ToolCallRecord["operation_kind"]>();
 	/** 1-based turn attribution when Pi emitted a turn_start event. */
 	let currentTurn: number | null = null;
+	/** Provider request boundary for the current model round. */
+	let requestStartedAt: string | null = null;
 
 	pi.on("turn_start", (event) => {
 		const turn = Number((event as { turnIndex?: unknown }).turnIndex);
 		if (Number.isInteger(turn) && turn >= 0) currentTurn = turn + 1;
+		requestStartedAt = new Date().toISOString();
 	});
 
 	pi.on("message_end", (event) => {
@@ -157,12 +160,16 @@ export default function (pi: ExtensionAPI): void {
 		if (message.role !== "assistant") return;
 		const rawUsage = asRecord(message.usage);
 		const hasUsage = typeof event.message === "object" && event.message !== null && "usage" in message;
-		const timestamp = plainNumber(message.timestamp);
-		const at = timestamp > 0 ? new Date(timestamp).toISOString() : new Date().toISOString();
+		// Pi's assistant message timestamp marks the message/request origin, not
+		// when message_end is observed. Use the event boundary's wall clock so
+		// request_started_at -> at measures the completed provider round.
+		const at = new Date().toISOString();
 		const taskId = optionalEnv("CODEFLOW_RUN_ID");
 		const workerKind = env("CODEFLOW_PROCESS_KIND") === "service" ? "service" : "worker";
 		const provider = String(message.provider ?? "") || "unknown";
 		const model = String(message.responseModel ?? message.model ?? "") || "unknown";
+		const observedRequestStartedAt = requestStartedAt;
+		requestStartedAt = null;
 		// This assistant response IS the emitting context for the tool calls it
 		// carries — with usage or not, the attribution is the response's own.
 		lastEmitting = { provider, model };
@@ -198,14 +205,14 @@ export default function (pi: ExtensionAPI): void {
 		const record: AttemptUsageRecord = {
 			schema_version: 1,
 			at,
-			request_started_at: null,
+			request_started_at: observedRequestStartedAt,
 			attempt,
 			task_id: taskId,
 			worker_kind: workerKind,
 			provider,
 			model,
 			turn: currentTurn,
-			handoff_id: optionalEnv("CODEFLOW_HANDOFF_ID"),
+			commitment_id: optionalEnv("CODEFLOW_COMMITMENT_ID"),
 			goal_id: optionalEnv("CODEFLOW_GOAL_ID"),
 			usage: {
 				input,
@@ -235,7 +242,7 @@ export default function (pi: ExtensionAPI): void {
 		const operation = operationKind(event.toolName, event.input);
 		callOperations.set(event.toolCallId, operation);
 		const row: ToolCallRecord = {
-			schema_version: 1,
+			schema_version: TOOL_CALL_SCHEMA_VERSION,
 			kind: "requested",
 			call_id: event.toolCallId,
 			tool: event.toolName,
@@ -254,7 +261,7 @@ export default function (pi: ExtensionAPI): void {
 		const operation = callOperations.get(event.toolCallId) ?? "other";
 		callOperations.delete(event.toolCallId);
 		const row: ToolCallRecord = {
-			schema_version: 1,
+			schema_version: TOOL_CALL_SCHEMA_VERSION,
 			kind: "result",
 			call_id: event.toolCallId,
 			tool: event.toolName,

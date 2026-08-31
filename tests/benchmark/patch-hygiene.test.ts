@@ -26,7 +26,7 @@ describe("benchmark patch hygiene", () => {
 		const dir = path.join(makeTmpDir(), "workspace");
 		mod.prepareBenchmarkWorkspace(dir);
 		write(dir, "a.py", "print('fixed')\n");
-		write(dir, ".codeflow/runs/x/receipt.json", "{}\n");
+		write(dir, ".codeflow/runs/x/commitments/c1/receipts/r1.json", "{}\n");
 		write(dir, "a.py.bak", "old\n");
 		write(dir, "fix.orig", "old\n");
 
@@ -36,7 +36,7 @@ describe("benchmark patch hygiene", () => {
 
 		const extraction = mod.extractPatchDetailed(dir);
 		expect(extraction.patch).toContain("a.py");
-		expect(extraction.patch).not.toContain("receipt.json");
+		expect(extraction.patch).not.toContain("receipts/r1.json");
 		expect(extraction.patch).not.toContain("a.py.bak");
 		expect(extraction.patch).not.toContain("fix.orig");
 		expect(extraction.strippedBinaryPaths).toEqual([]);

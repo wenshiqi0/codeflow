@@ -59,6 +59,7 @@ real mode (no --fixture) spawns external commands; each has an
 overrideable seam and a production default under benchmark/scripts:
   CODEFLOW_BENCHMARK_DRIVER_BIN       the Codeflow process
   CODEFLOW_BENCHMARK_REPO_CLONE_BIN   workspace provisioning at base_commit
+  CODEFLOW_BENCHMARK_REPO_CACHE_DIR   read-only source clones; defaults to ~/Documents/swe
   CODEFLOW_BENCHMARK_HARNESS_BIN      the official SWE-bench evaluator
   CODEFLOW_BENCHMARK_DATASET_FETCH_BIN hub dataset resolution
 

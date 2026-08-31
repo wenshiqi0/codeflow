@@ -35,7 +35,7 @@ export interface DriverRound {
 	provider: string;
 	model: string;
 	turn?: number | null;
-	handoff_id?: string | null;
+	commitment_id?: string | null;
 	goal_id?: string | null;
 	usage: AttemptUsage;
 	/** Source provider request start boundary when observed. */
@@ -70,7 +70,7 @@ export interface DriverToolCallsEvent {
 	provider: string;
 	/** Model of the assistant response that emitted these calls. */
 	model: string;
-	handoff_id?: string | null;
+	commitment_id?: string | null;
 	goal_id?: string | null;
 	/** Calls that reached a terminal status (or "incomplete" at stream end). */
 	calls: DriverToolCall[];

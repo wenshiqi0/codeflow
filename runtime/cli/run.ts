@@ -4,18 +4,18 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
-import { buildWorkerArgv, ConfigError, resolveOutputCompression, resolveWorker } from "../lib/config";
+import { buildWorkerArgv, ConfigError, resolveAgent, resolveOutputCompression } from "../lib/config";
 import {
+	commitmentForExecution,
 	loadTerminalReceipt,
-	handoffHistory,
-	attachHandoffProcess,
-	openHandoff,
-	startHandoff,
+	commitmentHistory,
+	resumeCommitment,
 	runResume,
 	runStart,
 	runnerChildStarted,
 	runnerExited,
-} from "../lib/handoff";
+} from "../lib/commitment";
+import { loadWorkerReport } from "../lib/executions";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../lib/paths";
 import { loadResumeSource, ResumeError, type ResumeSource } from "../lib/resume";
 import { renderUsageSummary, writeUsageSummary } from "../lib/usage";
@@ -24,13 +24,12 @@ const RUNTIME_DIR = path.resolve(import.meta.dir, "..");
 const CONFIG_FILE = path.join(RUNTIME_DIR, "config.json");
 const VERSION = "0.2.0";
 const ROOT_OUTPUT_DIAGNOSTIC_LIMIT = 8_000;
+const ROOT_TOOL_ALLOWLIST = ["read", "collaborate"] as const;
 const ROOT_EXTENSIONS = [
 	"provider-profiles",
 	"codeflow-organization",
-	"codeflow-protocol",
 	"host-guard",
 	"codeflow-context",
-	"bash-compressor",
 	"usage-ledger",
 	"telemetry-ledger",
 	"agent-watchdog",
@@ -43,17 +42,6 @@ export function newRunId(now = new Date()): string {
 
 export function resolveRunsDir(configured: string | undefined, cwd: string = process.cwd()): string {
 	return path.resolve(cwd, configured ?? DEFAULT_RUNS_DIR);
-}
-
-export function openRootHandoffForRun(paths: RunPaths, objective: string) {
-	const digest = objective.replace(/\s+/g, " ").trim().slice(0, 240);
-	return openHandoff(paths, {
-		goalId: paths.runId,
-		digest,
-		intent: objective,
-		expectedOutcome: ["The Task objective is fulfilled and remaining uncertainty is explicit"],
-		evidenceRequirement: ["Provide executable or directly observable evidence where applicable"],
-	});
 }
 
 function fail(message: string, command = "exec"): number {
@@ -72,8 +60,8 @@ function interruptedReasons(
 	code: number,
 	observation: RootOutputObservation,
 	aborted: boolean,
-): import("../lib/handoff").RuntimeFailureReason[] {
-	const reasons: import("../lib/handoff").RuntimeFailureReason[] = [];
+): import("../lib/commitment").RuntimeFailureReason[] {
+	const reasons: import("../lib/commitment").RuntimeFailureReason[] = [];
 	if (aborted || observation.stopReason === "aborted") reasons.push("USER_CANCELLED");
 	if (observation.stopReason === "length") reasons.push("OUTPUT_TRUNCATED");
 	const diagnostics = `${observation.stderrTail}\n${observation.errorMessage ?? ""}`;
@@ -82,14 +70,10 @@ function interruptedReasons(
 	return [...new Set(reasons)];
 }
 
-function rootHandoffForAttempt(paths: RunPaths, prompt: string, resumed: boolean) {
-	if (resumed) {
-		const interrupted = handoffHistory(paths)
-			.filter((view) => view.handoff.goal_id === paths.runId && view.folded.terminal === null)
-			.sort((left, right) => right.handoff.seq - left.handoff.seq)[0];
-		if (interrupted) return interrupted.handoff;
-	}
-	return openRootHandoffForRun(paths, prompt);
+function rootCommitmentForResume(paths: RunPaths) {
+	return commitmentHistory(paths)
+		.filter((view) => view.commitment.goal_id === paths.runId && view.folded.terminal === null)
+		.sort((left, right) => right.commitment.seq - left.commitment.seq)[0]?.commitment ?? null;
 }
 
 function appendTail(current: string, chunk: string): string {
@@ -135,26 +119,38 @@ interface RunOptions { resume?: ResumeSource }
 
 export interface ExecArguments {
 	prompt: string;
+	managerModel?: string;
 	workerModel?: string;
 }
 
 export function parseExecArguments(argv: string[]): ExecArguments {
 	const objective: string[] = [];
+	let managerModel: string | undefined;
 	let workerModel: string | undefined;
 	for (let index = 0; index < argv.length; index += 1) {
 		const value = argv[index];
-		if (value === "--worker-model") {
-			if (workerModel !== undefined) throw new ConfigError("--worker-model may be specified only once");
+		if (value === "--manager-model" || value === "--worker-model") {
+			const manager = value === "--manager-model";
+			if (manager ? managerModel !== undefined : workerModel !== undefined) {
+				throw new ConfigError(`${value} may be specified only once`);
+			}
 			const next = argv[index + 1];
-			if (!next || next.startsWith("--")) throw new ConfigError("--worker-model requires '<provider>/<model>'");
-			workerModel = next;
+			if (!next || next.startsWith("--")) throw new ConfigError(`${value} requires '<provider>/<model>'`);
+			if (manager) managerModel = next;
+			else workerModel = next;
 			index += 1;
 			continue;
 		}
-		if (value.startsWith("--worker-model=")) {
-			if (workerModel !== undefined) throw new ConfigError("--worker-model may be specified only once");
-			workerModel = value.slice("--worker-model=".length);
-			if (!workerModel) throw new ConfigError("--worker-model requires '<provider>/<model>'");
+		if (value.startsWith("--manager-model=") || value.startsWith("--worker-model=")) {
+			const manager = value.startsWith("--manager-model=");
+			const flag = manager ? "--manager-model" : "--worker-model";
+			if (manager ? managerModel !== undefined : workerModel !== undefined) {
+				throw new ConfigError(`${flag} may be specified only once`);
+			}
+			const model = value.slice(`${flag}=`.length);
+			if (!model) throw new ConfigError(`${flag} requires '<provider>/<model>'`);
+			if (manager) managerModel = model;
+			else workerModel = model;
 			continue;
 		}
 		if (value.startsWith("--")) throw new ConfigError(`unknown exec option: ${value}`);
@@ -162,7 +158,7 @@ export function parseExecArguments(argv: string[]): ExecArguments {
 	}
 	const prompt = objective.join(" ").trim();
 	if (!prompt) throw new ConfigError("exec requires a requirement");
-	return { prompt, workerModel };
+	return { prompt, managerModel, workerModel };
 }
 
 export async function run(
@@ -172,16 +168,17 @@ export async function run(
 ): Promise<number> {
 	if (process.env.CODEFLOW_RUN_ID) return fail(`${entry} cannot start inside a Codeflow Task`, entry);
 	let prompt: string;
+	let managerModel: string | undefined;
 	let workerModel: string | undefined;
 	let resolved;
 	try {
-		if (entry === "exec") ({ prompt, workerModel } = parseExecArguments(argv));
+		if (entry === "exec") ({ prompt, managerModel, workerModel } = parseExecArguments(argv));
 		else {
 			if (argv.some((value) => value.startsWith("--"))) throw new ConfigError(`unknown ${entry} option`);
 			prompt = argv.join(" ").trim();
 			if (!prompt) throw new ConfigError(`${entry} requires a requirement`);
 		}
-		resolved = resolveWorker(CONFIG_FILE, workerModel);
+		resolved = resolveAgent(CONFIG_FILE, "manager", managerModel);
 	} catch (error) {
 		if (error instanceof ConfigError) return fail(error.message, entry);
 		throw error;
@@ -192,10 +189,10 @@ export async function run(
 	const objective = options.resume?.objective ?? prompt;
 	if (options.resume) runResume(paths, process.pid);
 	else runStart(paths, process.pid, objective);
-	const root = rootHandoffForAttempt(paths, prompt, options.resume !== undefined);
-	startHandoff(paths, root.id);
+	const resumedCommitment = options.resume ? rootCommitmentForResume(paths) : null;
+	const executionId = `exec_${randomBytes(12).toString("hex")}`;
 
-	console.error(`codeflow task_id=${taskId} task_dir=${paths.runDir} handoff_id=${root.id}${options.resume ? " resumed=true" : ""}`);
+	console.error(`codeflow task_id=${taskId} task_dir=${paths.runDir} execution_id=${executionId}${resumedCommitment ? ` commitment_id=${resumedCommitment.id}` : ""}${options.resume ? " resumed=true" : ""}`);
 	const childEnv: Record<string, string | undefined> = {
 		...process.env,
 		PATH: `${path.join(RUNTIME_DIR, "bin")}:${process.env.PATH ?? ""}`,
@@ -205,13 +202,24 @@ export async function run(
 		CODEFLOW_RUNS_DIR: paths.code,
 		CODEFLOW_PROJECT_DIR: path.resolve(process.cwd()),
 		CODEFLOW_EVIDENCE_DIR: paths.evidence,
-		CODEFLOW_HANDOFF_ID: root.id,
 		CODEFLOW_GOAL_ID: taskId,
+		CODEFLOW_EXECUTION_ID: executionId,
 	};
+	delete childEnv.CODEFLOW_PARENT_COMMITMENT_ID;
+	delete childEnv.CODEFLOW_WORK_FOCUS;
+	if (resumedCommitment) childEnv.CODEFLOW_COMMITMENT_ID = resumedCommitment.id;
+	else delete childEnv.CODEFLOW_COMMITMENT_ID;
 	delete childEnv.CODEFLOW_WORKER_MODEL;
 	if (workerModel !== undefined) childEnv.CODEFLOW_WORKER_MODEL = workerModel;
 	const child = Bun.spawn(
-		buildWorkerArgv(resolved, "Execute the current root Handoff from the injected Codeflow context and submit a terminal Receipt; intermediate durable findings may be recorded as progress Receipts.", ROOT_EXTENSIONS),
+		buildWorkerArgv(
+			resolved,
+			resumedCommitment
+				? "Re-ground the Task from durable state and continue it to closure."
+				: "Inspect the Task and organize the work needed to close it.",
+			ROOT_EXTENSIONS,
+			ROOT_TOOL_ALLOWLIST,
+		),
 		{
 			stdin: "ignore",
 			stdout: "pipe",
@@ -221,7 +229,7 @@ export async function run(
 		},
 	);
 	if (child.pid !== undefined) runnerChildStarted(paths, child.pid);
-	if (child.pid !== undefined) attachHandoffProcess(paths, root.id, child.pid);
+	if (child.pid !== undefined && resumedCommitment) resumeCommitment(paths, resumedCommitment.id, executionId, child.pid);
 
 	let escalation: ReturnType<typeof setTimeout> | undefined;
 	let aborted = false;
@@ -244,21 +252,28 @@ export async function run(
 	if (escalation) clearTimeout(escalation);
 	process.off("SIGTERM", terminate);
 	process.off("SIGINT", terminate);
-	const receipt = loadTerminalReceipt(paths, root.id);
+	const rootCommitment = commitmentForExecution(paths, executionId) ?? resumedCommitment;
+	const receipt = rootCommitment ? loadTerminalReceipt(paths, rootCommitment.id) : null;
+	const report = loadWorkerReport(paths, executionId);
+	const reasons = interruptedReasons(code, observation, aborted);
+	if (!rootCommitment && !report && reasons.length === 0) reasons.push("COMMITMENT_CLAIM_MISSING");
 	try {
 		runnerExited(
 			paths,
 			child.pid,
 			true,
+			executionId,
 			receipt ? undefined : {
-				reasons: interruptedReasons(code, observation, aborted),
-				summary: "root Worker execution ended without a terminal Receipt",
+				reasons,
+				summary: report?.summary ?? (rootCommitment
+					? "root Worker execution ended without a terminal Receipt"
+					: "root Worker execution ended before claiming a Work Commitment"),
 			},
 		);
 	} catch { /* bookkeeping cannot mask execution */ }
 	if (!receipt) {
 		const tail = (observation.errorMessage ?? observation.stderrTail ?? observation.stdoutTail).trim().slice(-2_000);
-		console.error(`codeflow ${entry}: root Worker exited without a terminal Receipt${tail ? `; diagnostic tail:\n${tail}` : ""}`);
+		console.error(`codeflow ${entry}: root Worker exited without a terminal Receipt${report ? `; report=${JSON.stringify(report)}` : ""}${tail ? `; diagnostic tail:\n${tail}` : ""}`);
 	}
 	try {
 		const summary = writeUsageSummary(paths);
@@ -275,7 +290,7 @@ async function resume(argv: string[]): Promise<number> {
 	if (process.env.CODEFLOW_RUN_ID) return fail("resume cannot run inside a Codeflow task", "resume");
 	try {
 		const source = loadResumeSource(resolveRunsDir(process.env.CODEFLOW_RUNS_DIR), argv[0]);
-		return await run(["Re-ground from durable Task, Goal, Handoff, Receipt, and current external state; then continue the Task."], "resume", { resume: source });
+		return await run(["Re-ground from durable Task, Goal, Commitment, Receipt, and current external state; then continue the Task."], "resume", { resume: source });
 	} catch (error) {
 		if (error instanceof ResumeError) return fail(error.message, "resume");
 		throw error;
@@ -284,18 +299,26 @@ async function resume(argv: string[]): Promise<number> {
 
 function debug(argv: string[]): number {
 	if (argv.length !== 1 || argv[0] !== "runtime") return fail("debug requires: runtime", "debug");
-	const worker = resolveWorker(CONFIG_FILE);
+	const manager = resolveAgent(CONFIG_FILE, "manager");
+	const worker = resolveAgent(CONFIG_FILE, "worker");
 	const compression = resolveOutputCompression(CONFIG_FILE);
 	console.log(JSON.stringify({
-		worker: {
-			model: `${worker.provider}/${worker.model}`,
-			thinking_level: worker.thinkingLevel ?? null,
-			prompt: path.relative(path.dirname(RUNTIME_DIR), worker.promptPath),
+		agents: {
+			manager: {
+				model: `${manager.provider}/${manager.model}`,
+				thinking_level: manager.thinkingLevel ?? null,
+				prompt: path.relative(path.dirname(RUNTIME_DIR), manager.promptPaths[0]),
+			},
+			worker: {
+				model: `${worker.provider}/${worker.model}`,
+				thinking_level: worker.thinkingLevel ?? null,
+				prompt: path.relative(path.dirname(RUNTIME_DIR), worker.promptPaths[0]),
+			},
 		},
 		services: {
 			output_compression: {
 				model: `${compression.provider}/${compression.model}`,
-				prompt: path.relative(path.dirname(RUNTIME_DIR), compression.promptPath),
+				prompt: path.relative(path.dirname(RUNTIME_DIR), compression.promptPaths[0]),
 			},
 		},
 	}));

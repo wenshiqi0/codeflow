@@ -19,10 +19,10 @@ import {
 	type RunFactsRecord,
 } from "../../runtime/lib/observability/run-facts";
 import {
-	summarizeHandoffStates,
-	type HandoffObservabilitySummary,
-	type HandoffStateProjection,
-} from "../../runtime/lib/observability/handoff-state";
+	summarizeCommitmentStates,
+	type CommitmentObservabilitySummary,
+	type CommitmentStateProjection,
+} from "../../runtime/lib/observability/commitment-state";
 import { summarizeWallBreakdown, type WallBreakdown } from "../../runtime/lib/observability/timing";
 import {
 	summarizeContextGrowth,
@@ -50,9 +50,9 @@ export interface AttemptMetricsInput {
 	usageRecords: AttemptUsageRecord[];
 	failedModelAttempts: FailedModelAttempt[];
 	toolCallRecords: ToolCallRecord[];
-	handoffStates?: HandoffStateProjection[];
-	/** True only when a canonical handoff telemetry artifact was produced. */
-	handoffTelemetryAvailable?: boolean;
+	commitmentStates?: CommitmentStateProjection[];
+	/** True only when a canonical commitment telemetry artifact was produced. */
+	commitmentTelemetryAvailable?: boolean;
 	runFactsRecords?: RunFactsRecord[];
 	timeToFirstPatchSeconds?: number | null;
 	wallStartedAtMs?: number | null;
@@ -82,7 +82,7 @@ export interface AttemptMetrics {
 	tokens: TokenUsageSummary;
 	wall_seconds: number;
 	terminated_by: BudgetName | null;
-	handoffs: HandoffObservabilitySummary;
+	commitments: CommitmentObservabilitySummary;
 	wall_breakdown: WallBreakdown;
 	time_to_first_patch_seconds: number | null;
 	waste: WasteSummary;
@@ -99,11 +99,11 @@ export function buildAttemptMetrics(input: AttemptMetricsInput): AttemptMetrics 
 		else worker++;
 	}
 	const rounds = input.usageRecords.length;
-	const handoffs = summarizeHandoffStates(
-		input.handoffStates ?? [],
-		input.handoffTelemetryAvailable ?? false,
+	const commitments = summarizeCommitmentStates(
+		input.commitmentStates ?? [],
+		input.commitmentTelemetryAvailable ?? false,
 	);
-	const telemetryAvailable = input.handoffTelemetryAvailable ?? false;
+	const telemetryAvailable = input.commitmentTelemetryAvailable ?? false;
 	return {
 		model_rounds_total: rounds,
 		worker_model_rounds: worker,
@@ -124,7 +124,7 @@ export function buildAttemptMetrics(input: AttemptMetricsInput): AttemptMetrics 
 		tokens: summarizeTokenUsage(input.usageRecords),
 		wall_seconds: input.wallSeconds,
 		terminated_by: input.terminatedBy,
-		handoffs,
+		commitments,
 		wall_breakdown: summarizeWallBreakdown(
 			input.usageRecords,
 			input.toolCallRecords,
@@ -132,10 +132,10 @@ export function buildAttemptMetrics(input: AttemptMetricsInput): AttemptMetrics 
 			input.wallStartedAtMs,
 		),
 		time_to_first_patch_seconds: input.timeToFirstPatchSeconds ?? null,
-		waste: summarizeWaste(input.usageRecords, input.handoffStates ?? [], telemetryAvailable),
+		waste: summarizeWaste(input.usageRecords, input.commitmentStates ?? [], telemetryAvailable),
 		context_growth: summarizeContextGrowth(
 			input.usageRecords,
-			input.handoffStates ?? [],
+			input.commitmentStates ?? [],
 			telemetryAvailable,
 		),
 		prefix_cache: summarizePrefixCache(input.runFactsRecords ?? []),

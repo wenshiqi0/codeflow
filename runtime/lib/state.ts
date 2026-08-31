@@ -1,12 +1,13 @@
 import { type GoalRecord, goalRecords, loadGoal } from "./goals";
 import {
 	foldReceipts,
-	handoffHistory,
+	commitmentHistory,
 	isTerminalStatus,
-	type HandoffView,
+	type EffectReference,
+	type CommitmentView,
 	type ReceiptRecord,
 	type ReceiptStatus,
-} from "./handoff";
+} from "./commitment";
 import { RunPaths } from "./paths";
 import { loadTask, type TaskRecord } from "./tasks";
 
@@ -17,14 +18,11 @@ export interface GoalState {
 	objective: string;
 	dependencies: string[];
 	status: GoalStatus;
-	runnable: boolean;
-	handoff_refs: string[];
+	commitment_refs: string[];
 	receipt_refs: string[];
-	established: string[];
-	decisions: string[];
-	discovered: string[];
-	unresolved: string[];
-	blockers: string[];
+	summaries: string[];
+	effects: EffectReference[];
+	remaining: string[];
 }
 
 export interface TaskState {
@@ -39,7 +37,7 @@ function reduceHistory(
 	goalId: string,
 	objective: string,
 	dependencies: string[],
-	history: HandoffView[],
+	history: CommitmentView[],
 	dependencyStates: Map<string, GoalStatus>,
 ): GoalState {
 	const receipts: ReceiptRecord[] = history
@@ -52,20 +50,17 @@ function reduceHistory(
 	if (hasOpen) status = "active";
 	else if (terminal.length > 0) status = terminal.at(-1)!.status as ReceiptStatus;
 	else status = dependenciesComplete ? "pending" : "waiting";
-	const facts = foldReceipts(receipts);
+	const reports = foldReceipts(receipts);
 	return {
 		goal_id: goalId,
 		objective,
 		dependencies,
 		status,
-		runnable: dependenciesComplete && !hasOpen && status !== "completed" && status !== "superseded",
-		handoff_refs: history.map((view) => view.handoff.id),
+		commitment_refs: history.map((view) => view.commitment.id),
 		receipt_refs: receipts.map((receipt) => receipt.id),
-		established: facts.established,
-		decisions: facts.decisions,
-		discovered: facts.discovered,
-		unresolved: facts.unresolved,
-		blockers: facts.blockers,
+		summaries: reports.summaries,
+		effects: reports.effects,
+		remaining: reports.remaining,
 	};
 }
 
@@ -88,9 +83,9 @@ function topologicalGoals(goals: GoalRecord[]): GoalRecord[] {
 
 export function goalState(paths: RunPaths, goalId: string): GoalState {
 	const task = loadTask(paths);
-	const history = handoffHistory(paths);
+	const history = commitmentHistory(paths);
 	if (goalId === task.id) {
-		return reduceHistory(task.id, task.objective, [], history.filter((view) => view.handoff.goal_id === task.id), new Map());
+		return reduceHistory(task.id, task.objective, [], history.filter((view) => view.commitment.goal_id === task.id), new Map());
 	}
 	const states = new Map<string, GoalStatus>();
 	let selected: GoalState | undefined;
@@ -99,7 +94,7 @@ export function goalState(paths: RunPaths, goalId: string): GoalState {
 			goal.id,
 			goal.objective,
 			goal.dependencies,
-			history.filter((view) => view.handoff.goal_id === goal.id),
+			history.filter((view) => view.commitment.goal_id === goal.id),
 			states,
 		);
 		states.set(goal.id, state.status);
@@ -111,12 +106,12 @@ export function goalState(paths: RunPaths, goalId: string): GoalState {
 
 export function taskState(paths: RunPaths): TaskState {
 	const task: TaskRecord = loadTask(paths);
-	const history = handoffHistory(paths);
+	const history = commitmentHistory(paths);
 	const root = reduceHistory(
 		task.id,
 		task.objective,
 		[],
-		history.filter((view) => view.handoff.goal_id === task.id),
+		history.filter((view) => view.commitment.goal_id === task.id),
 		new Map(),
 	);
 	const dependencyStates = new Map<string, GoalStatus>();
@@ -125,18 +120,18 @@ export function taskState(paths: RunPaths): TaskState {
 			goal.id,
 			goal.objective,
 			goal.dependencies,
-			history.filter((view) => view.handoff.goal_id === goal.id),
+			history.filter((view) => view.commitment.goal_id === goal.id),
 			dependencyStates,
 		);
 		dependencyStates.set(goal.id, state.status);
 		return state;
 	});
 	const hasOpen = root.status === "active" || goals.some((goal) => goal.status === "active");
-	const childrenClosed = goals.every((goal) => goal.status === "completed" || goal.status === "superseded");
+	const childrenClosed = goals.every((goal) => goal.status === "completed" || goal.status === "blocked");
 	const status: GoalStatus = hasOpen
 		? "active"
 		: root.status === "completed" && !childrenClosed
-			? "partial"
+			? "blocked"
 			: root.status;
 	return { task_id: task.id, objective: task.objective, status, root, goals };
 }

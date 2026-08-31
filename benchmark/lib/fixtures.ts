@@ -154,7 +154,7 @@ function parseRound(value: unknown): DriverRound {
 		provider: asString(round.provider, "round.provider"),
 		model: asString(round.model, "round.model"),
 		turn: asNullableNonnegativeInteger(round.turn),
-		handoff_id: typeof round.handoff_id === "string" ? round.handoff_id : null,
+		commitment_id: typeof round.commitment_id === "string" ? round.commitment_id : null,
 		goal_id: typeof round.goal_id === "string" ? round.goal_id : null,
 		usage: parseUsage(round.usage),
 		request_started_at: asNullableIso(round.request_started_at),

@@ -1,9 +1,14 @@
 /** Fails closed when a Worker tries to modify the host Codeflow runtime. */
 
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { runtimeBashViolation, runtimeWriteViolation } from "./policy";
+import {
+	preClaimToolViolation,
+	runtimeBashViolation,
+	runtimeWriteViolation,
+} from "./policy";
 
 const VIOLATION_TYPE = "codeflow:host_runtime_violation";
+const CLAIM_REQUIRED_TYPE = "codeflow:claim_required";
 
 export default function (pi: ExtensionAPI): void {
 	pi.on("tool_call", (event) => {
@@ -15,8 +20,13 @@ export default function (pi: ExtensionAPI): void {
 			const command = (event.input as { command?: unknown }).command;
 			if (typeof command === "string") reason = runtimeBashViolation(command);
 		}
-		if (!reason) return undefined;
-		pi.appendEntry(VIOLATION_TYPE, { tool: event.toolName, reason });
-		return { block: true, reason, terminate: true };
+		if (reason) {
+			pi.appendEntry(VIOLATION_TYPE, { tool: event.toolName, reason });
+			return { block: true, reason, terminate: true };
+		}
+		const claimReason = preClaimToolViolation(event.toolName, event.input);
+		if (!claimReason) return undefined;
+		pi.appendEntry(CLAIM_REQUIRED_TYPE, { tool: event.toolName, reason: claimReason });
+		return { block: true, reason: claimReason };
 	});
 }

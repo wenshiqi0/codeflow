@@ -34,7 +34,7 @@ export interface UsageRecord {
 	at: string;
 	task_id: string;
 	worker_kind: "worker" | "service";
-	handoff_id: string | null;
+	commitment_id: string | null;
 	goal_id: string | null;
 	turn: number;
 	provider: string;
@@ -129,7 +129,7 @@ export function usageRecordFromMessage(message: unknown, turn: number): UsageRec
 		at: timestamp > 0 ? new Date(timestamp).toISOString() : nowIso(),
 		task_id: runId,
 		worker_kind: env("CODEFLOW_PROCESS_KIND") === "service" ? "service" : "worker",
-		handoff_id: env("CODEFLOW_HANDOFF_ID") ?? null,
+		commitment_id: env("CODEFLOW_COMMITMENT_ID") ?? null,
 		goal_id: env("CODEFLOW_GOAL_ID") ?? null,
 		turn,
 		provider,

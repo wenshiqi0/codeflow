@@ -19,23 +19,31 @@ describe("run root resolution", () => {
 });
 
 describe("exec arguments", () => {
-	test("accepts an explicit Worker model before or after the objective", () => {
-		expect(parseExecArguments(["--worker-model", "provider/model", "build", "it"])).toEqual({
+	test("accepts independent Manager and Worker model overrides before or after the objective", () => {
+		expect(parseExecArguments(["--manager-model", "manager/model", "--worker-model", "worker/model", "build", "it"])).toEqual({
 			prompt: "build it",
-			workerModel: "provider/model",
+			managerModel: "manager/model",
+			workerModel: "worker/model",
 		});
-		expect(parseExecArguments(["build it", "--worker-model=other/model"])).toEqual({
+		expect(parseExecArguments(["build it", "--manager-model=manager/other", "--worker-model=worker/other"])).toEqual({
 			prompt: "build it",
-			workerModel: "other/model",
+			managerModel: "manager/other",
+			workerModel: "worker/other",
 		});
 	});
 
 	test("preserves the configured default when no override is supplied", () => {
-		expect(parseExecArguments(["build", "it"])).toEqual({ prompt: "build it", workerModel: undefined });
+		expect(parseExecArguments(["build", "it"])).toEqual({
+			prompt: "build it",
+			managerModel: undefined,
+			workerModel: undefined,
+		});
 	});
 
 	test("rejects missing, duplicate, and unknown options", () => {
+		expect(() => parseExecArguments(["--manager-model"])).toThrow("--manager-model requires");
 		expect(() => parseExecArguments(["--worker-model"])).toThrow("--worker-model requires");
+		expect(() => parseExecArguments(["--manager-model", "a/b", "--manager-model=c/d", "work"])).toThrow("only once");
 		expect(() => parseExecArguments(["--worker-model", "a/b", "--worker-model=c/d", "work"])).toThrow("only once");
 		expect(() => parseExecArguments(["--other", "work"])).toThrow("unknown exec option: --other");
 	});

@@ -3,7 +3,7 @@
  * The outer ring: Task-level `codeflow ls`, `sub`, `stop`, and `audit`.
  *
  * Everything here is about a whole Task, never about one Work Commitment.
- * Handoff closure, Recall, and mechanical evidence stay on the Worker-facing
+ * Commitment closure, Recall, and mechanical evidence stay on the Worker-facing
  * `code-agent` surface.
  *
  * Output is one JSON object per line on stdout and diagnostics on stderr, so a
@@ -12,7 +12,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { handoffHistory } from "../lib/handoff";
+import { commitmentHistory } from "../lib/commitment";
 import { taskState } from "../lib/state";
 import { probeAll } from "../lib/liveness";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../lib/paths";
@@ -324,18 +324,18 @@ function parseAudit(argv: string[]): AuditArgs {
 	return { runId, force };
 }
 
-function auditHandoffs(paths: RunPaths): Array<{
+function auditCommitments(paths: RunPaths): Array<{
 	id: string;
 	goal_id: string;
 	status: string;
 	receipt_id: string | null;
 }> {
-	const rows = handoffHistory(paths);
+	const rows = commitmentHistory(paths);
 	return rows.map((view) => ({
-		id: view.handoff.id,
-		goal_id: view.handoff.goal_id,
+		id: view.commitment.id,
+		goal_id: view.commitment.goal_id,
 		status: view.status,
-		receipt_id: view.receipt?.id ?? null,
+		receipt_id: view.folded.terminal?.id ?? null,
 	}));
 }
 
@@ -373,9 +373,9 @@ function audit(runsDir: string, argv: string[]): number {
 
 	const runner = readRunner(paths.runDir);
 	const row = classify(runsDir, args.runId as string);
-	const handoffs = auditHandoffs(paths);
-	const hasBlocked = handoffs.some((handoff) => handoff.status === "blocked");
-	const hasActive = handoffs.some((handoff) => handoff.status === "open" || handoff.status === "running");
+	const commitments = auditCommitments(paths);
+	const hasBlocked = commitments.some((commitment) => commitment.status === "blocked");
+	const hasActive = commitments.some((commitment) => commitment.status === "open" || commitment.status === "running");
 
 	let trigger: "blocked" | "dead_runner" | "missing_runner" | "forced";
 	if (hasBlocked) trigger = "blocked";
@@ -392,7 +392,7 @@ function audit(runsDir: string, argv: string[]): number {
 			trigger,
 			run_status: row.status,
 			forced: args.force,
-			handoffs,
+			commitments,
 			workers: auditWorkers(paths),
 			last_event: lastEventIdentity(paths),
 		}),

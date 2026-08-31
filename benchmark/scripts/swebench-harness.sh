@@ -13,8 +13,9 @@
 # Verdict authority is the official evaluator (design §9) — nothing is graded
 # locally. This wrapper only translates what the pinned commit actually does:
 #
-#   - run_evaluation is invoked as `python3 -m swebench.harness.run_evaluation`
-#     from the pinned-commit checkout, with an explicit --dataset_name: that
+#   - run_evaluation is invoked with the dedicated evaluator Python from the
+#     benchmark cache (or CODEFLOW_BENCHMARK_HARNESS_PYTHON) from the
+#     pinned-commit checkout, with an explicit --dataset_name: that
 #     commit's own argparse default is SWE-bench/SWE-bench_Lite, so the
 #     benchmark's dataset must never fall through to the harness default.
 #   - run_instance() writes the per-instance report at the cwd-relative path
@@ -27,7 +28,7 @@
 #   - grading.get_eval_report() shapes the per-instance report as a dict keyed
 #     by instance_id whose value carries a boolean 'resolved'.
 #
-# Exit 127 means evaluator unavailable (python3/docker missing or the
+# Exit 127 means evaluator unavailable (evaluator Python/Docker missing or the
 # harness cannot start); the benchmark records not_evaluated and reports the
 # run as unexecuted external verification (design §14). This is the live
 # boundary: real Docker, real containers, network on first use. It is only
@@ -43,6 +44,7 @@ HARNESS_COMMIT="7a21e05772954cc81471ae19d56f436cecf43c54"
 DATASET_NAME="${CODEFLOW_BENCHMARK_EVAL_DATASET:-SWE-bench/SWE-bench_Verified}"
 CACHE_DIR="${CODEFLOW_BENCHMARK_HARNESS_CACHE:-$HOME/.cache/codeflow-benchmark}"
 REPO_DIR="$CACHE_DIR/SWE-bench-$HARNESS_COMMIT"
+HARNESS_PYTHON="${CODEFLOW_BENCHMARK_HARNESS_PYTHON:-$CACHE_DIR/swebench-venv/bin/python3}"
 EVAL_TIMEOUT="${CODEFLOW_BENCHMARK_EVAL_TIMEOUT:-3600}"
 
 usage() { echo "usage: $0 --predictions <file> --run-id <id> --instance <id>" >&2; exit 2; }
@@ -61,7 +63,21 @@ done
 [ -n "$predictions" ] && [ -n "$run_id" ] && [ -n "$instance" ] || usage
 [ -f "$predictions" ] || { echo "swebench-harness: predictions file not found: $predictions" >&2; exit 2; }
 
-command -v python3 >/dev/null 2>&1 || { echo "swebench-harness: python3 is not installed" >&2; exit 127; }
+# The harness must run from its pinned checkout because it writes logs relative
+# to cwd. Resolve the caller's prediction path before changing directories so a
+# relative benchmark output directory remains readable by the evaluator.
+predictions_dir="$(cd "$(dirname "$predictions")" && pwd -P)" || exit 2
+predictions="$predictions_dir/$(basename "$predictions")"
+
+[ -x "$HARNESS_PYTHON" ] || {
+  echo "swebench-harness: evaluator Python is not executable: $HARNESS_PYTHON" >&2
+  echo "swebench-harness: set CODEFLOW_BENCHMARK_HARNESS_PYTHON to the SWE-bench environment's python3" >&2
+  exit 127
+}
+if ! "$HARNESS_PYTHON" -c 'import docker' >/dev/null 2>&1; then
+  echo "swebench-harness: evaluator Python cannot import the Docker SDK: $HARNESS_PYTHON" >&2
+  exit 127
+fi
 command -v docker >/dev/null 2>&1 || { echo "swebench-harness: docker is not installed" >&2; exit 127; }
 docker info >/dev/null 2>&1 || { echo "swebench-harness: docker daemon is unreachable" >&2; exit 127; }
 
@@ -73,7 +89,7 @@ docker info >/dev/null 2>&1 || { echo "swebench-harness: docker daemon is unreac
 # get_predictions_from_file() accepts. If this attempt's prediction cannot be
 # found, the model dir stays empty: the harness itself then fails or writes no
 # report, so the verdict below stays not_evaluated (never fabricated).
-model_dir="$(python3 - "$predictions" "$instance" <<'PYEOF'
+model_dir="$("$HARNESS_PYTHON" - "$predictions" "$instance" <<'PYEOF'
 import json, sys
 
 predictions_path, instance = sys.argv[1], sys.argv[2]
@@ -114,7 +130,7 @@ fi
 # unique evaluation run id. The harness caches by run_id + instance_id, which
 # is why every attempt gets a distinct id.
 cd "$REPO_DIR"
-if ! python3 -m swebench.harness.run_evaluation \
+if ! "$HARNESS_PYTHON" -m swebench.harness.run_evaluation \
     --predictions_path "$predictions" \
     --run_id "$run_id" \
     --dataset_name "$DATASET_NAME" \
@@ -135,7 +151,7 @@ if [ ! -f "$report" ]; then
   echo "not_evaluated"
   exit 0
 fi
-python3 - "$report" "$instance" <<'PYEOF'
+"$HARNESS_PYTHON" - "$report" "$instance" <<'PYEOF'
 import json, sys
 
 report = json.load(open(sys.argv[1]))

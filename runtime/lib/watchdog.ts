@@ -3,7 +3,7 @@
  * Liveness monitor for one codeflow agent process.
  *
  * An extension runs *inside* the process it would report on, so it dies with
- * it: a SIGKILLed or OOM-killed agent can never file its own exit receipt.
+ * it: a SIGKILLed or OOM-killed agent can never file its own exit observation.
  * This is a separate detached process, which is why it can.
  *
  * It does two things and nothing else:
@@ -21,7 +21,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { runnerExited } from "./handoff";
+import { runnerExited } from "./commitment";
 import { DEFAULT_RUNS_DIR, nowIso, RunPaths, writeJsonAtomic } from "./paths";
 
 const DEFAULT_INTERVAL_SECONDS = 60;
@@ -112,7 +112,12 @@ export async function watch(options: WatchdogOptions): Promise<void> {
 	// The exit is the whole reason this process exists; record it even if the
 	// heartbeats failed.
 	try {
-		runnerExited(paths, options.pid, options.process === "root");
+		runnerExited(
+			paths,
+			options.pid,
+			options.process === "root",
+			process.env.CODEFLOW_EXECUTION_ID ?? `watchdog-${options.pid}`,
+		);
 	} catch {
 		// Nothing left to do: the monitored process is already gone.
 	}

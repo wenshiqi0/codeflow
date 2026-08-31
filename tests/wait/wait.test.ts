@@ -59,28 +59,28 @@ describe("scanning", () => {
 	});
 
 	test("parses every field from the file name alone", () => {
-		writeEvent(1, "h00001-planner", "handoff_opened", "OPEN");
+		writeEvent(1, "c00001-planner", "commitment_claimed", "RUNNING");
 		const [event] = scan(events, 0, []).events;
 		expect(event).toEqual({
 			seq: 1,
-			subject: "h00001-planner",
-			kind: "handoff_opened",
-			status: "OPEN",
-			file: "00001--h00001-planner--handoff_opened--OPEN.json",
-			summary: "handoff_opened OPEN",
+			subject: "c00001-planner",
+			kind: "commitment_claimed",
+			status: "RUNNING",
+			file: "00001--c00001-planner--commitment_claimed--RUNNING.json",
+			summary: "commitment_claimed RUNNING",
 		});
 	});
 
 	test("reads only whitelisted reasons and one-line summary from a terminal body", () => {
-		writeEvent(2, "h00002-tester", "handoff_finished", "BLOCKED", {
-			reasons: ["PROVIDER_FAILURE", "DELEGATION_ARTIFACT_MISSING"],
+		writeEvent(2, "c00002-tester", "execution_interrupted", "BLOCKED", {
+			reasons: ["PROVIDER_FAILURE", "COMMITMENT_CLAIM_MISSING"],
 			summary: "provider request ended with error",
-			ref: "handoffs/h00002/receipt.json",
+			ref: "commitments/c00002/receipts/r_test.json",
 			error: "monthly quota exhausted",
 			prose: "long diagnostic narrative",
 		});
 		const [event] = scan(events, 0, []).events;
-		expect(event.reasons).toEqual(["PROVIDER_FAILURE", "DELEGATION_ARTIFACT_MISSING"]);
+		expect(event.reasons).toEqual(["PROVIDER_FAILURE", "COMMITMENT_CLAIM_MISSING"]);
 		expect(event.summary).toBe("provider request ended with error");
 		expect(Object.keys(event)).not.toContain("ref");
 		expect(Object.keys(event)).not.toContain("error");
@@ -89,45 +89,45 @@ describe("scanning", () => {
 
 	test("returns events in sequence order", () => {
 		writeEvent(3, "a", "run_finished", "PASS");
-		writeEvent(1, "b", "handoff_opened", "OPEN");
+		writeEvent(1, "b", "commitment_claimed", "RUNNING");
 		expect(scan(events, 0, []).events.map((event) => event.seq)).toEqual([1, 3]);
 	});
 
 	test("since excludes what the caller already saw", () => {
-		writeEvent(1, "a", "handoff_opened", "OPEN");
-		writeEvent(2, "b", "handoff_finished", "PASS");
+		writeEvent(1, "a", "commitment_claimed", "RUNNING");
+		writeEvent(2, "b", "execution_interrupted", "PASS");
 		expect(scan(events, 1, []).events.map((event) => event.seq)).toEqual([2]);
 	});
 
 	test("the watermark is the largest sequence seen", () => {
-		writeEvent(1, "a", "handoff_opened", "OPEN");
-		writeEvent(7, "b", "handoff_finished", "PASS");
+		writeEvent(1, "a", "commitment_claimed", "RUNNING");
+		writeEvent(7, "b", "execution_interrupted", "PASS");
 		expect(scan(events, 0, []).waterMark).toBe(7);
 	});
 
 	test("a filtered kind still advances the watermark", () => {
 		// Otherwise a later call would keep re-examining events it was told to
 		// ignore.
-		writeEvent(1, "a", "handoff_opened", "OPEN");
+		writeEvent(1, "a", "commitment_claimed", "RUNNING");
 		writeEvent(2, "b", "artifact_written", "WRITTEN");
-		const result = scan(events, 0, ["handoff_opened"]);
+		const result = scan(events, 0, ["commitment_claimed"]);
 		expect(result.events).toHaveLength(1);
 		expect(result.waterMark).toBe(2);
 	});
 
 	test("kind filtering selects only requested kinds", () => {
-		writeEvent(1, "a", "handoff_opened", "OPEN");
-		writeEvent(2, "b", "handoff_finished", "PASS");
-		expect(scan(events, 0, ["handoff_finished"]).events.map((event) => event.kind)).toEqual([
-			"handoff_finished",
+		writeEvent(1, "a", "commitment_claimed", "RUNNING");
+		writeEvent(2, "b", "execution_interrupted", "PASS");
+		expect(scan(events, 0, ["execution_interrupted"]).events.map((event) => event.kind)).toEqual([
+			"execution_interrupted",
 		]);
 	});
 
 	test("several kinds may be requested", () => {
-		writeEvent(1, "a", "handoff_opened", "OPEN");
+		writeEvent(1, "a", "commitment_claimed", "RUNNING");
 		writeEvent(2, "b", "artifact_written", "WRITTEN");
 		writeEvent(3, "c", "run_finished", "PASS");
-		expect(scan(events, 0, ["handoff_opened", "run_finished"]).events).toHaveLength(2);
+		expect(scan(events, 0, ["commitment_claimed", "run_finished"]).events).toHaveLength(2);
 	});
 
 	test("files that are not events are ignored", () => {
@@ -137,15 +137,15 @@ describe("scanning", () => {
 	});
 
 	test("a gap in the sequence is tolerated", () => {
-		writeEvent(1, "a", "handoff_opened", "OPEN");
-		writeEvent(5, "b", "handoff_finished", "PASS");
+		writeEvent(1, "a", "commitment_claimed", "RUNNING");
+		writeEvent(5, "b", "execution_interrupted", "PASS");
 		expect(scan(events, 0, []).events.map((event) => event.seq)).toEqual([1, 5]);
 	});
 });
 
 describe("waiting", () => {
 	test("returns immediately when events already exist", async () => {
-		writeEvent(1, "a", "handoff_opened", "OPEN");
+		writeEvent(1, "a", "commitment_claimed", "RUNNING");
 		const started = Date.now();
 		const result = await wait({
 			runsDir: dir,
@@ -173,7 +173,7 @@ describe("waiting", () => {
 	});
 
 	test("reconnecting at the watermark never replays", async () => {
-		writeEvent(1, "a", "handoff_opened", "OPEN");
+		writeEvent(1, "a", "commitment_claimed", "RUNNING");
 		const first = await wait({
 			runsDir: dir,
 			runId: "run-1",
@@ -201,7 +201,7 @@ describe("waiting", () => {
 			timeoutSeconds: 10,
 		});
 		await Bun.sleep(150);
-		writeEvent(1, "a", "handoff_finished", "PASS");
+		writeEvent(1, "a", "execution_interrupted", "PASS");
 		const result = await pending;
 		expect(result.events.map((event) => event.seq)).toEqual([1]);
 	}, 15_000);

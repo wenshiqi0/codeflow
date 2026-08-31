@@ -34,17 +34,17 @@ import { readAttemptUsageRecords } from "../../runtime/lib/observability/model-u
 import { readToolCallRecords } from "../../runtime/lib/observability/tool-execution";
 import type { BenchmarkVerdict } from "./driver";
 import {
-	readHandoffStateProjections,
-	type HandoffStateProjection,
-} from "../../runtime/lib/observability/handoff-state";
+	readCommitmentStateProjections,
+	type CommitmentStateProjection,
+} from "../../runtime/lib/observability/commitment-state";
 import {
-	addHandoffState as accumulateHandoffState,
-	emptyHandoffObservabilitySummary,
-	type HandoffObservabilitySummary,
+	addCommitmentState as accumulateCommitmentState,
+	emptyCommitmentObservabilitySummary,
+	type CommitmentObservabilitySummary,
 } from "../../runtime/lib/observability/summary";
 import type { ContextGrowthSummary, WasteSummary } from "../../runtime/lib/observability/usage-analysis";
 
-export const BENCHMARK_REPORT_SCHEMA_VERSION = 4;
+export const BENCHMARK_REPORT_SCHEMA_VERSION = 5;
 
 export class BenchmarkReportError extends Error {
 	constructor(message: string) {
@@ -60,7 +60,7 @@ export interface BreakdownTotals {
 }
 
 export interface BenchmarkReport {
-	schema_version: 4;
+	schema_version: 5;
 	benchmark_run_id: string;
 	generated_at: string;
 	attempts_per_instance: number;
@@ -112,25 +112,33 @@ export interface BenchmarkReport {
 		prefix_transition_count: number;
 		prefix_invalidation_count: number;
 		prefix_invalidation_rate: number | null;
+		system_prompt_change_count: number;
+		tool_schema_change_count: number;
+		worker_context_change_count: number;
+		message_prefix_invalidation_count: number;
+		prompt_shape_metrics_available: boolean;
+		component_chars: {
+			system_prompt: number[];
+			tool_schema: number[];
+			worker_context: number[];
+			message_prefix_min: number | null;
+			message_prefix_max: number | null;
+		};
+		max_context_utilization: number | null;
 		metrics_available: boolean;
 	};
 	split_economics: {
 		spontaneous_split_eligible: number;
 		spontaneous_split_count: number;
 		spontaneous_split_rate: number | null;
-		decomposition_mismatch_rate: number | null;
-		verified_declarations: {
-			decomposition: HandoffObservabilitySummary["decomposition"];
-			obligations: HandoffObservabilitySummary["obligations"];
-		};
 		rounds_buckets: Record<string, { resolved: number; unresolved: number; resolved_rate: number | null }>;
 	};
 	observation: BenchmarkManifest["observation"];
 	tool_calls_per_model_round: number | null;
 	collaboration: {
-		recall_operations: number;
-		explore_operations: number;
-		redundant_discovery_rate: number | null;
+		source_discovery_operations: number;
+		validation_operations: number;
+		integration_operations: number;
 	};
 	breakdowns: {
 		by_goal: Record<string, BreakdownTotals>;
@@ -150,8 +158,8 @@ export interface BenchmarkReport {
 		time_to_first_patch_seconds: { median: number | null; p90: number | null };
 	};
 	runtime_observability: {
-		handoffs: HandoffObservabilitySummary & {
-			by_goal: Record<string, HandoffObservabilitySummary>;
+		commitments: CommitmentObservabilitySummary & {
+			by_goal: Record<string, CommitmentObservabilitySummary>;
 		};
 		waste: WasteSummary;
 		context_growth: ContextGrowthSummary;
@@ -222,20 +230,20 @@ function aggregateWaste(attempts: CaseAttemptRecord[]): WasteSummary {
 	const available = attempts.length > 0 && attempts.every((attempt) => attempt.metrics.waste.metrics_available);
 	if (!available) {
 		return {
-			rounds_in_non_completed_handoffs: null,
-			tokens_in_non_completed_handoffs: null,
+			rounds_in_non_completed_commitments: null,
+			tokens_in_non_completed_commitments: null,
 			non_completed_round_ratio: null,
 			worker_rounds_ratio: null,
-			handoffs_per_goal_median: null,
+			commitments_per_goal_median: null,
 			metrics_available: false,
 		};
 	}
 	const nonCompletedRounds = attempts.reduce(
-		(sum, attempt) => sum + (attempt.metrics.waste.rounds_in_non_completed_handoffs ?? 0),
+		(sum, attempt) => sum + (attempt.metrics.waste.rounds_in_non_completed_commitments ?? 0),
 		0,
 	);
 	const nonCompletedTokens = attempts.reduce(
-		(sum, attempt) => sum + (attempt.metrics.waste.tokens_in_non_completed_handoffs ?? 0),
+		(sum, attempt) => sum + (attempt.metrics.waste.tokens_in_non_completed_commitments ?? 0),
 		0,
 	);
 	const workerWeighted = attempts.filter((attempt) => attempt.metrics.waste.worker_rounds_ratio !== null);
@@ -244,12 +252,12 @@ function aggregateWaste(attempts: CaseAttemptRecord[]): WasteSummary {
 		0,
 	);
 	const totalRounds = attempts.reduce((sum, attempt) => sum + attempt.metrics.model_rounds_total, 0);
-	const handoffsPerGoal = attempts
-		.map((attempt) => attempt.metrics.waste.handoffs_per_goal_median)
+	const commitmentsPerGoal = attempts
+		.map((attempt) => attempt.metrics.waste.commitments_per_goal_median)
 		.filter((value): value is number => value !== null);
 	return {
-		rounds_in_non_completed_handoffs: nonCompletedRounds,
-		tokens_in_non_completed_handoffs: nonCompletedTokens,
+		rounds_in_non_completed_commitments: nonCompletedRounds,
+		tokens_in_non_completed_commitments: nonCompletedTokens,
 		non_completed_round_ratio: totalRounds > 0 ? nonCompletedRounds / totalRounds : null,
 		worker_rounds_ratio:
 			workerDenominator > 0
@@ -258,7 +266,7 @@ function aggregateWaste(attempts: CaseAttemptRecord[]): WasteSummary {
 						0,
 					) / workerDenominator
 				: null,
-		handoffs_per_goal_median: medianOrNull(handoffsPerGoal),
+		commitments_per_goal_median: medianOrNull(commitmentsPerGoal),
 		metrics_available: true,
 	};
 }
@@ -266,22 +274,22 @@ function aggregateWaste(attempts: CaseAttemptRecord[]): WasteSummary {
 function aggregateContextGrowth(attempts: CaseAttemptRecord[]): ContextGrowthSummary {
 	const available =
 		attempts.length > 0 && attempts.every((attempt) => attempt.metrics.context_growth.metrics_available);
-	if (!available) return { first_turn_input_by_handoff_index: null, metrics_available: false };
+	if (!available) return { first_turn_input_by_commitment_index: null, metrics_available: false };
 	const sequences = attempts
-		.map((attempt) => attempt.metrics.context_growth.first_turn_input_by_handoff_index)
+		.map((attempt) => attempt.metrics.context_growth.first_turn_input_by_commitment_index)
 		.filter((value): value is number[] => value !== null);
-	if (sequences.length === 0) return { first_turn_input_by_handoff_index: null, metrics_available: false };
+	if (sequences.length === 0) return { first_turn_input_by_commitment_index: null, metrics_available: false };
 	const maxLength = Math.max(...sequences.map((values) => values.length));
 	const sequence: number[] = [];
 	for (let index = 0; index < maxLength; index++) {
 		const values = sequences.map((entries) => entries[index]).filter((value) => value !== undefined);
 		const value = medianOrNull(values);
 		if (value === null) {
-			return { first_turn_input_by_handoff_index: null, metrics_available: false };
+			return { first_turn_input_by_commitment_index: null, metrics_available: false };
 		}
 		sequence.push(value);
 	}
-	return { first_turn_input_by_handoff_index: sequence, metrics_available: true };
+	return { first_turn_input_by_commitment_index: sequence, metrics_available: true };
 }
 
 function emptyTotals(): BreakdownTotals {
@@ -336,7 +344,7 @@ function readCases(outDir: string): CaseFile[] {
 			if (!TERMINATION_KEYS.includes(terminated)) {
 				throw new BenchmarkReportError(`invalid terminated_by in ${file}: ${String(attempt.terminated_by)}`);
 			}
-			if (!attempt.metrics?.handoffs || !attempt.metrics.wall_breakdown || !attempt.metrics.waste || !attempt.metrics.context_growth || !attempt.metrics.prefix_cache) {
+			if (!attempt.metrics?.commitments || !attempt.metrics.wall_breakdown || !attempt.metrics.waste || !attempt.metrics.context_growth || !attempt.metrics.prefix_cache) {
 				throw new BenchmarkReportError(`incomplete current-schema metrics in ${file}`);
 			}
 			if (attempt.observation?.schema_version !== OBSERVATION_SCHEMA_VERSION) {
@@ -417,37 +425,37 @@ function accumulateLedgers(outDir: string, cases: CaseFile[], out: LedgerBreakdo
 	}
 }
 
-function addHandoffState(
-	total: HandoffObservabilitySummary,
-	byGoal: Record<string, HandoffObservabilitySummary>,
-	state: HandoffStateProjection,
+function addCommitmentState(
+	total: CommitmentObservabilitySummary,
+	byGoal: Record<string, CommitmentObservabilitySummary>,
+	state: CommitmentStateProjection,
 ): void {
 	total.metrics_available = true;
-	accumulateHandoffState(total, state);
+	accumulateCommitmentState(total, state);
 
 	const goalKey = state.goal_id;
-	const goal = byGoal[goalKey] ?? emptyHandoffObservabilitySummary();
+	const goal = byGoal[goalKey] ?? emptyCommitmentObservabilitySummary();
 	goal.metrics_available = true;
 	byGoal[goalKey] = goal;
-	accumulateHandoffState(goal, state);
+	accumulateCommitmentState(goal, state);
 }
 
-function accumulateHandoffObservability(
+function accumulateCommitmentObservability(
 	outDir: string,
 	cases: CaseFile[],
-): HandoffObservabilitySummary & {
-	by_goal: Record<string, HandoffObservabilitySummary>;
+): CommitmentObservabilitySummary & {
+	by_goal: Record<string, CommitmentObservabilitySummary>;
 } {
-	const total = emptyHandoffObservabilitySummary();
-	const byGoal: Record<string, HandoffObservabilitySummary> = {};
+	const total = emptyCommitmentObservabilitySummary();
+	const byGoal: Record<string, CommitmentObservabilitySummary> = {};
 	for (const caseFile of cases) {
 		const slug = caseFile.instance_id.replace(/\//g, "__");
 		for (const attempt of caseFile.attempts) {
-			const file = path.join(outDir, "cases", slug, "attempts", String(attempt.attempt), "telemetry", "handoffs.json");
+			const file = path.join(outDir, "cases", slug, "attempts", String(attempt.attempt), "telemetry", "commitments.json");
 			if (!fs.existsSync(file)) continue;
 			total.metrics_available = true;
-			for (const state of readHandoffStateProjections(file)) {
-				addHandoffState(total, byGoal, state);
+			for (const state of readCommitmentStateProjections(file)) {
+				addCommitmentState(total, byGoal, state);
 			}
 		}
 	}
@@ -570,10 +578,11 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 			byOperation[operation] = (byOperation[operation] ?? 0) + count;
 		}
 	}
-	const recallOperations = ["recall", "evidence_log"]
+	const sourceDiscoveryOperations = byOperation.source_discovery ?? 0;
+	const validationOperations = ["execute", "evidence_run", "evidence_log"]
 		.reduce((sum, kind) => sum + (byOperation[kind] ?? 0), 0);
-	const exploreOperations = byOperation.explore ?? 0;
-	const discoveryDenominator = recallOperations + exploreOperations;
+	const integrationOperations = ["inspect", "claim", "report", "delegate", "wait"]
+		.reduce((sum, kind) => sum + (byOperation[kind] ?? 0), 0);
 	const breakdownInput: LedgerBreakdownInput = {
 		byGoal: {},
 		byModel: {},
@@ -582,7 +591,7 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 	accumulateLedgers(outDir, cases, breakdownInput);
 
 	const effective = manifest.termination_budgets.effective;
-	const handoffObservability = accumulateHandoffObservability(outDir, cases);
+	const commitmentObservability = accumulateCommitmentObservability(outDir, cases);
 	const prefixTransitionCount = attempts.reduce(
 		(sum, attempt) => sum + attempt.metrics.prefix_cache.prefix_transition_count,
 		0,
@@ -593,12 +602,33 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 	);
 	const prefixMetricsAvailable = attempts.length > 0
 		&& attempts.every((attempt) => attempt.metrics.prefix_cache.metrics_available);
+	const promptShapeMetricsAvailable = attempts.length > 0
+		&& attempts.every((attempt) => attempt.metrics.prefix_cache.prompt_shape_metrics_available);
+	const promptShapeValues = {
+		system_prompt: [...new Set(attempts.flatMap((attempt) => attempt.metrics.prefix_cache.component_chars.system_prompt))].sort((left, right) => left - right),
+		tool_schema: [...new Set(attempts.flatMap((attempt) => attempt.metrics.prefix_cache.component_chars.tool_schema))].sort((left, right) => left - right),
+		worker_context: [...new Set(attempts.flatMap((attempt) => attempt.metrics.prefix_cache.component_chars.worker_context))].sort((left, right) => left - right),
+	};
+	const messagePrefixMinimums = attempts.flatMap((attempt) => {
+		const value = attempt.metrics.prefix_cache.component_chars.message_prefix_min;
+		return value === null ? [] : [value];
+	});
+	const messagePrefixMaximums = attempts.flatMap((attempt) => {
+		const value = attempt.metrics.prefix_cache.component_chars.message_prefix_max;
+		return value === null ? [] : [value];
+	});
+	const contextUtilizations = attempts.flatMap((attempt) => {
+		const value = attempt.metrics.prefix_cache.max_context_utilization;
+		return value === null ? [] : [value];
+	});
 	const spontaneousEligible = manifest.observation.request_named_split
 		? 0
-		: handoffObservability.decomposition.eligible;
+		: attempts.filter((attempt) => attempt.metrics.commitments.metrics_available).length;
 	const spontaneousSplit = manifest.observation.request_named_split
 		? 0
-		: handoffObservability.decomposition.actual_split;
+		: attempts.filter((attempt) =>
+			attempt.metrics.commitments.metrics_available
+			&& attempt.metrics.commitments.delegating > 0).length;
 	const roundsBuckets: Record<string, { resolved: number; unresolved: number; resolved_rate: number | null }> = {};
 	for (const [label, minimum, maximum] of [
 		["0-19", 0, 19],
@@ -658,7 +688,7 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 		.map((attempt) => attempt.metrics.time_to_first_patch_seconds)
 		.filter((value): value is number => value !== null);
 	return {
-		schema_version: BENCHMARK_REPORT_SCHEMA_VERSION as 4,
+		schema_version: BENCHMARK_REPORT_SCHEMA_VERSION as 5,
 		benchmark_run_id: manifest.benchmark_run_id,
 		generated_at: nowIso(),
 		attempts_per_instance: attemptsPerInstance,
@@ -714,29 +744,43 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 			prefix_invalidation_rate: prefixMetricsAvailable && prefixTransitionCount > 0
 				? prefixInvalidationCount / prefixTransitionCount
 				: null,
+			system_prompt_change_count: attempts.reduce(
+				(sum, attempt) => sum + attempt.metrics.prefix_cache.system_prompt_change_count,
+				0,
+			),
+			tool_schema_change_count: attempts.reduce(
+				(sum, attempt) => sum + attempt.metrics.prefix_cache.tool_schema_change_count,
+				0,
+			),
+			worker_context_change_count: attempts.reduce(
+				(sum, attempt) => sum + attempt.metrics.prefix_cache.worker_context_change_count,
+				0,
+			),
+			message_prefix_invalidation_count: attempts.reduce(
+				(sum, attempt) => sum + attempt.metrics.prefix_cache.message_prefix_invalidation_count,
+				0,
+			),
+			prompt_shape_metrics_available: promptShapeMetricsAvailable,
+			component_chars: {
+				...promptShapeValues,
+				message_prefix_min: messagePrefixMinimums.length > 0 ? Math.min(...messagePrefixMinimums) : null,
+				message_prefix_max: messagePrefixMaximums.length > 0 ? Math.max(...messagePrefixMaximums) : null,
+			},
+			max_context_utilization: contextUtilizations.length > 0 ? Math.max(...contextUtilizations) : null,
 			metrics_available: prefixMetricsAvailable,
 		},
 		split_economics: {
 			spontaneous_split_eligible: spontaneousEligible,
 			spontaneous_split_count: spontaneousSplit,
 			spontaneous_split_rate: spontaneousEligible > 0 ? spontaneousSplit / spontaneousEligible : null,
-			decomposition_mismatch_rate: handoffObservability.decomposition.split + handoffObservability.decomposition.solo > 0
-				? handoffObservability.decomposition.mismatch /
-					(handoffObservability.decomposition.split + handoffObservability.decomposition.solo)
-				: null,
-			verified_declarations: {
-				decomposition: handoffObservability.decomposition,
-				obligations: handoffObservability.obligations,
-			},
 			rounds_buckets: roundsBuckets,
 		},
 		observation: manifest.observation,
 		tool_calls_per_model_round: roundsTotal > 0 ? callsTotal / roundsTotal : null,
 		collaboration: {
-			recall_operations: recallOperations,
-			explore_operations: exploreOperations,
-			redundant_discovery_rate:
-				discoveryDenominator > 0 ? exploreOperations / discoveryDenominator : null,
+			source_discovery_operations: sourceDiscoveryOperations,
+			validation_operations: validationOperations,
+			integration_operations: integrationOperations,
 		},
 		breakdowns: {
 			by_goal: breakdownInput.byGoal,
@@ -771,7 +815,7 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 			},
 		},
 		runtime_observability: {
-			handoffs: handoffObservability,
+			commitments: commitmentObservability,
 			waste: aggregateWaste(attempts),
 			context_growth: aggregateContextGrowth(attempts),
 		},

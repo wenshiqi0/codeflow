@@ -6,12 +6,11 @@
 # project, under .codeflow/runs/. That is why RUNTIME_DIR is resolved relative
 # to this file while the working directory becomes the target repository root.
 #
-# This binary speaks exec/resume/ls/sub/goals/usage/audit/stop and nothing else. The
-# universal protocol verbs a Worker needs (receipt, recall, evidence, check) live
-# in `code-agent`, which is not on a user PATH. Two vocabularies with no overlap
-# mean the ring boundary is enforced by which binary is reachable, not by a
-# paragraph asking an agent to behave. There is also no passthrough default: an
-# unknown verb fails here instead of quietly reaching a model.
+# This binary speaks exec/resume/ls/sub/goals/usage/audit/stop and nothing else.
+# Worker semantic actions live only in the model-visible `collaborate` tool;
+# `code-agent`, which is not on a user PATH, contains evidence and source-check
+# helpers only. There is no passthrough default: an unknown verb fails here
+# instead of quietly reaching a model.
 #
 # Everything below is Bun: the extensions are TypeScript loaded without a build
 # step, so a second runtime would only add a dependency and a cold start.
@@ -26,7 +25,7 @@ usage() {
   cat <<'EOF'
 usage: codeflow <command> [options]
 
-  exec [--worker-model <provider/model>] "<objective>"
+  exec [--manager-model <provider/model>] [--worker-model <provider/model>] "<objective>"
                                     start a Task and follow it
   resume <task-id>                  resume a fully stopped Task
   ls                                list Tasks: id, status, duration, objective

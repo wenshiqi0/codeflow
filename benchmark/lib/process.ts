@@ -244,7 +244,7 @@ function parseRound(value: unknown): DriverRound | null {
 		...(respondedAt === null ? {} : { at: respondedAt }),
 		task_id: taskId,
 		request_started_at: requestStartedAt,
-		handoff_id: optionalString(value.handoff_id),
+		commitment_id: optionalString(value.commitment_id),
 		goal_id: optionalString(value.goal_id),
 		usage,
 		tool_calls: toolCalls,
@@ -285,7 +285,7 @@ export function parseDriverEvent(value: unknown): DriverEvent | null {
 				worker_kind: kind,
 				provider,
 				model,
-				handoff_id: optionalString(value.handoff_id),
+				commitment_id: optionalString(value.commitment_id),
 				goal_id: optionalString(value.goal_id),
 				calls,
 			};

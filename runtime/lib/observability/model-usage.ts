@@ -56,7 +56,7 @@ export interface AttemptUsageRecord {
 	provider: string;
 	model: string;
 	turn: number | null;
-	handoff_id: string | null;
+	commitment_id: string | null;
 	goal_id: string | null;
 	usage: AttemptUsage;
 }
@@ -71,7 +71,7 @@ const RECORD_KEYS = [
 	"provider",
 	"model",
 	"turn",
-	"handoff_id",
+	"commitment_id",
 	"goal_id",
 	"usage",
 ] as const;
@@ -120,7 +120,7 @@ export function validateAttemptUsageRecord(record: unknown): string[] {
 	if (record.worker_kind !== "worker" && record.worker_kind !== "service") {
 		violations.push("worker_kind must be worker or service");
 	}
-	for (const key of ["task_id", "handoff_id", "goal_id"] as const) {
+	for (const key of ["task_id", "commitment_id", "goal_id"] as const) {
 		if (record[key] !== null && typeof record[key] !== "string") {
 			violations.push(`${key} must be a string or null`);
 		}

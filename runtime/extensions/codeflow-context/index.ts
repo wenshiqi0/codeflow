@@ -1,18 +1,28 @@
-/** Assemble a fresh, Goal-scoped working set for every Handoff. */
+/** Assemble a fresh, Goal-scoped working set for every Commitment. */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { canonicalJson } from "../../lib/canonical";
-import { loadHandoff } from "../../lib/handoff";
-import { appendRunFactsRecord, type ContextUtilization } from "../../lib/observability/run-facts";
+import { loadCommitment, loadTerminalReceipt, submitReceipt } from "../../lib/commitment";
+import { loadWorkerReport, writeWorkerReport } from "../../lib/executions";
+import {
+	appendRunFactsRecord,
+	RUN_FACTS_SCHEMA_VERSION,
+	type ContextUtilization,
+} from "../../lib/observability/run-facts";
+import { canonicalShape, textShape, type ToolSchemaShape, type WorkerContextShape } from "../../lib/observability/prompt-shape";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
 import { buildWorkerContext } from "./context";
 
 const CONTEXT_CUSTOM_TYPE = "codeflow:context";
 const RUN_FACTS_CUSTOM_TYPE = "codeflow:run_facts";
-const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const RUN_FACT_THRESHOLDS = [0.5, 0.7] as const;
+export const WORKER_CONTEXT_STOP_UTILIZATION = 0.8;
+export const CONTEXT_BUDGET_BLOCKED_SUMMARY =
+	"Execution context reached 80% utilization; this work is too large for one Worker to finish safely.";
+export const CONTEXT_BUDGET_REMAINING =
+	"The Manager should split the remaining Goal work into smaller Worker boundaries.";
 
 function readIfPresent(file: string): string {
 	try {
@@ -22,27 +32,56 @@ function readIfPresent(file: string): string {
 	}
 }
 
+function reportContextBudgetLimit(paths: RunPaths, goalId: string, executionId: string, commitmentId?: string) {
+	if (commitmentId) {
+		const terminal = loadTerminalReceipt(paths, commitmentId);
+		if (terminal) return terminal;
+		return submitReceipt(paths, {
+			commitmentId,
+			status: "blocked",
+			summary: CONTEXT_BUDGET_BLOCKED_SUMMARY,
+			remaining: [CONTEXT_BUDGET_REMAINING],
+		});
+	}
+	const existing = loadWorkerReport(paths, executionId);
+	if (existing) return existing;
+	return writeWorkerReport(paths, {
+		goal_id: goalId,
+		execution_id: executionId,
+		summary: CONTEXT_BUDGET_BLOCKED_SUMMARY,
+		remaining: [CONTEXT_BUDGET_REMAINING],
+	});
+}
+
 export default function (pi: ExtensionAPI) {
 	let executionRoundsElapsed = 0;
-	let previousStablePrefix: string | null = null;
+	let previousMessagePrefix: string | null = null;
+	let previousSystemPromptHash: string | null = null;
+	let previousToolSchemaHash: string | null = null;
+	let previousWorkerContextHash: string | null = null;
+	let workerContextShape: WorkerContextShape | null = null;
+	let notifiedThresholdIndex = -1;
+	let contextBudgetStopTriggered = false;
 
 	pi.on("before_agent_start", (event) => {
 		const taskId = process.env.CODEFLOW_RUN_ID;
-		const handoffId = process.env.CODEFLOW_HANDOFF_ID;
-		if (!taskId || !handoffId) throw new Error("Codeflow Worker requires a task and current handoff");
+		const goalId = process.env.CODEFLOW_GOAL_ID;
+		const commitmentId = process.env.CODEFLOW_COMMITMENT_ID;
+		if (!taskId || !goalId) throw new Error("Codeflow agent requires a Task and Goal");
 		const paths = new RunPaths(process.env.CODEFLOW_RUNS_DIR ?? DEFAULT_RUNS_DIR, taskId);
-		const current = loadHandoff(paths, handoffId);
+		const current = commitmentId ? loadCommitment(paths, commitmentId) : null;
 		const cwd = event.systemPromptOptions?.cwd || process.cwd();
-		const block = buildWorkerContext(paths, current, {
-			sharedRules: readIfPresent(path.join(RUNTIME_DIR, "AGENTS.md")),
+		const block = buildWorkerContext(paths, goalId, current, {
 			projectRules: readIfPresent(path.join(cwd, "AGENTS.md")),
+			workFocus: process.env.CODEFLOW_WORK_FOCUS,
 		});
+		workerContextShape = block.shape;
 		return {
 			message: {
 				customType: CONTEXT_CUSTOM_TYPE,
 				content: block.xml,
 				display: true,
-				details: { sources: block.sources },
+				details: { sources: block.sources, shape: block.shape },
 			},
 		};
 	});
@@ -53,16 +92,22 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("context", (event, ctx) => {
 		const taskId = process.env.CODEFLOW_RUN_ID;
-		const handoffId = process.env.CODEFLOW_HANDOFF_ID;
+		const commitmentId = process.env.CODEFLOW_COMMITMENT_ID;
 		const goalId = process.env.CODEFLOW_GOAL_ID;
-		if (!taskId || !handoffId || !goalId) throw new Error("Codeflow Worker requires run fact attribution");
+		const executionId = process.env.CODEFLOW_EXECUTION_ID;
+		if (!taskId || !goalId || !executionId) throw new Error("Codeflow agent requires run fact attribution");
+		const paths = new RunPaths(process.env.CODEFLOW_RUNS_DIR ?? DEFAULT_RUNS_DIR, taskId);
 		const messages = event.messages.filter(
 			(message) => (message as { customType?: string }).customType !== RUN_FACTS_CUSTOM_TYPE,
 		);
-		const stablePrefix = messages.map((message) => canonicalJson(message)).join("\n") + "\n";
-		const transition = previousStablePrefix === null ? 0 : 1;
-		const invalidation = previousStablePrefix !== null && !stablePrefix.startsWith(previousStablePrefix) ? 1 : 0;
-		previousStablePrefix = stablePrefix;
+		if (!workerContextShape) throw new Error("Codeflow agent context shape is unavailable before provider request");
+		const systemPromptShape = textShape(ctx.getSystemPrompt());
+		const activeToolNames = new Set(pi.getActiveTools());
+		const activeTools = pi.getAllTools()
+			.filter((tool) => activeToolNames.has(tool.name))
+			.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters }));
+		const rawToolShape = canonicalShape(activeTools);
+		const toolSchemaShape: ToolSchemaShape = { ...rawToolShape, count: activeTools.length };
 		const usage = ctx.getContextUsage();
 		const contextUtilization: ContextUtilization =
 			usage && usage.tokens !== null && usage.contextWindow > 0
@@ -72,20 +117,13 @@ export default function (pi: ExtensionAPI) {
 			execution_rounds_elapsed: executionRoundsElapsed,
 			context_utilization: contextUtilization,
 		};
-		appendRunFactsRecord(
-			new RunPaths(process.env.CODEFLOW_RUNS_DIR ?? DEFAULT_RUNS_DIR, taskId),
-			{
-				schema_version: 1,
-				task_id: taskId,
-				handoff_id: handoffId,
-				goal_id: goalId,
-				...facts,
-				prefix_transition_count: transition,
-				prefix_invalidation_count: invalidation,
-			},
-		);
-		return {
-			messages: [
+		const thresholdIndex = contextUtilization.basis === "pi_estimate"
+			? RUN_FACT_THRESHOLDS.findLastIndex((threshold) => contextUtilization.value >= threshold)
+			: -1;
+		const shouldNotify = thresholdIndex > notifiedThresholdIndex;
+		if (shouldNotify) notifiedThresholdIndex = thresholdIndex;
+		const providerMessages = shouldNotify
+			? [
 				...messages,
 				{
 					role: "user",
@@ -93,11 +131,60 @@ export default function (pi: ExtensionAPI) {
 					timestamp: Date.now(),
 					customType: RUN_FACTS_CUSTOM_TYPE,
 				} as (typeof event.messages)[number],
-			],
+			]
+			: messages;
+		const messagePrefix = providerMessages.map((message) => canonicalJson(message)).join("\n") + "\n";
+		const transition = previousMessagePrefix === null ? 0 : 1;
+		const systemPromptChanged = previousSystemPromptHash !== null && previousSystemPromptHash !== systemPromptShape.hash ? 1 : 0;
+		const toolSchemaChanged = previousToolSchemaHash !== null && previousToolSchemaHash !== toolSchemaShape.hash ? 1 : 0;
+		const workerContextChanged = previousWorkerContextHash !== null && previousWorkerContextHash !== workerContextShape.hash ? 1 : 0;
+		const messagePrefixInvalidated = previousMessagePrefix !== null && !messagePrefix.startsWith(previousMessagePrefix) ? 1 : 0;
+		const invalidation = transition === 1
+			&& (systemPromptChanged || toolSchemaChanged || workerContextChanged || messagePrefixInvalidated) ? 1 : 0;
+		previousMessagePrefix = messagePrefix;
+		previousSystemPromptHash = systemPromptShape.hash;
+		previousToolSchemaHash = toolSchemaShape.hash;
+		previousWorkerContextHash = workerContextShape.hash;
+		const promptShape = {
+			system_prompt: systemPromptShape,
+			tool_schema: toolSchemaShape,
+			worker_context: workerContextShape,
+			message_prefix: textShape(messagePrefix),
 		};
+		appendRunFactsRecord(
+			paths,
+			{
+				schema_version: RUN_FACTS_SCHEMA_VERSION,
+				task_id: taskId,
+				execution_id: executionId,
+				commitment_id: commitmentId ?? null,
+				goal_id: goalId,
+				...facts,
+				prompt_shape: promptShape,
+				prefix_transition_count: transition,
+				prefix_invalidation_count: invalidation,
+				system_prompt_changed: systemPromptChanged,
+				tool_schema_changed: toolSchemaChanged,
+				worker_context_changed: workerContextChanged,
+				message_prefix_invalidated: messagePrefixInvalidated,
+			},
+		);
+		const shouldStopForContextBudget = !contextBudgetStopTriggered
+			&& process.env.CODEFLOW_PROCESS_KIND === "worker"
+			&& contextUtilization.basis === "pi_estimate"
+			&& contextUtilization.value >= WORKER_CONTEXT_STOP_UTILIZATION;
+		if (shouldStopForContextBudget) {
+			contextBudgetStopTriggered = true;
+			reportContextBudgetLimit(paths, goalId, executionId, commitmentId);
+			// Print/JSON mode does not bind graceful shutdown, so abort the active
+			// turn as well. The durable blocked report is written before either call.
+			ctx.abort();
+			ctx.shutdown();
+		}
+		return { messages: providerMessages };
 	});
 
-	// A Handoff must close with a Receipt or be re-grounded from durable state.
+	// A Commitment must close with a Receipt or be re-grounded from durable state.
 	// Silent conversation compaction would create an untracked continuation state.
 	pi.on("session_before_compact", () => ({ cancel: true }));
 }

@@ -7,11 +7,11 @@
  * ├── _spool/                      run-level events, for cross-run discovery
  * └── <run-id>/
  *     ├── task.json                 stable external intent; also the graph root Goal
- *     ├── handoffs/<handoff-id>/   immutable handoff.json plus an append-only
- *     │                             receipts/ chain; a legacy schema-v1
- *     │                             receipt.json reads as one terminal Receipt
+ *     ├── commitments/<commitment-id>/ immutable commitment.json plus an
+ *     │                               append-only receipts/ chain
  *     ├── goals/<goal-id>/          child Goal contracts
- *     ├── active/<handoff-id>      sentinel per in-flight handoff
+ *     ├── active/<commitment-id>    sentinel per in-flight commitment
+ *     ├── executions/<execution-id>/ runtime-only Worker feedback
  *     ├── events/                  the outer loop's only listening surface
  *     ├── tmp/                     staging; rename into events/ delivers
  *     ├── liveness/                watchdog heartbeats
@@ -44,11 +44,14 @@ export class RunPaths {
 	get runDir(): string {
 		return path.join(this.code, this.runId);
 	}
-	get handoffs(): string {
-		return path.join(this.runDir, "handoffs");
+	get commitments(): string {
+		return path.join(this.runDir, "commitments");
 	}
 	get goals(): string {
 		return path.join(this.runDir, "goals");
+	}
+	get executions(): string {
+		return path.join(this.runDir, "executions");
 	}
 	get task(): string {
 		return path.join(this.runDir, "task.json");
@@ -86,9 +89,12 @@ export class RunPaths {
 	get goalSeq(): string {
 		return path.join(this.runDir, ".goals.seq");
 	}
+	get claimLocks(): string {
+		return path.join(this.runDir, ".claim-locks");
+	}
 
-	handoffDir(handoffId: string): string {
-		return path.join(this.handoffs, handoffId);
+	commitmentDir(commitmentId: string): string {
+		return path.join(this.commitments, commitmentId);
 	}
 	goalDir(goalId: string): string {
 		return path.join(this.goals, goalId);
@@ -96,18 +102,21 @@ export class RunPaths {
 	goalPath(goalId: string): string {
 		return path.join(this.goalDir(goalId), "goal.json");
 	}
-	handoffPath(handoffId: string): string {
-		return path.join(this.handoffDir(handoffId), "handoff.json");
+	commitmentPath(commitmentId: string): string {
+		return path.join(this.commitmentDir(commitmentId), "commitment.json");
 	}
-	receiptPath(handoffId: string): string {
-		return path.join(this.handoffDir(handoffId), "receipt.json");
+	receiptDir(commitmentId: string): string {
+		return path.join(this.commitmentDir(commitmentId), "receipts");
 	}
-	receiptDir(handoffId: string): string {
-		return path.join(this.handoffDir(handoffId), "receipts");
+	/** One immutable Receipt in the append-only chain of a Commitment. */
+	receiptChainPath(commitmentId: string, seq: number, receiptId: string): string {
+		return path.join(this.receiptDir(commitmentId), `${String(seq).padStart(5, "0")}--${receiptId}.json`);
 	}
-	/** One immutable Receipt in the append-only chain of a Handoff. */
-	receiptChainPath(handoffId: string, seq: number, receiptId: string): string {
-		return path.join(this.receiptDir(handoffId), `${String(seq).padStart(5, "0")}--${receiptId}.json`);
+	claimLockPath(goalId: string): string {
+		return path.join(this.claimLocks, `${slug(goalId)}.lock`);
+	}
+	executionReportPath(executionId: string): string {
+		return path.join(this.executions, slug(executionId), "report.json");
 	}
 }
 

@@ -1,7 +1,13 @@
 {
-  "worker": {
-    "model": "zhipuai-coding-plan/glm-5.3",
-    "prompt": "references/worker.md"
+  "agents": {
+    "manager": {
+      "model": "zhipuai-coding-plan/glm-5.3",
+      "prompt": "references/manager.md"
+    },
+      "worker": {
+        "model": "zhipuai-coding-plan/glm-5.3-flash",
+        "prompt": "references/worker.md"
+      }
   },
   "services": {
     "output_compression": {

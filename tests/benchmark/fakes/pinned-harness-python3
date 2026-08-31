@@ -24,6 +24,9 @@ set -euo pipefail
 REAL="${PINNED_HARNESS_REAL_PYTHON3:?PINNED_HARNESS_REAL_PYTHON3 must name a real python3}"
 LOGIC="${PINNED_HARNESS_LOGIC:?PINNED_HARNESS_LOGIC must name tests/benchmark/fakes/pinned-harness-logic.py}"
 
+if [ "${1:-}" = "-c" ] && [ "${2:-}" = "import docker" ]; then
+  exit 0
+fi
 if [ "${1:-}" = "-m" ] && [ "${2:-}" = "swebench.harness.run_evaluation" ]; then
   exec "$REAL" "$LOGIC" "$@"
 fi

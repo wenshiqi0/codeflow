@@ -1,18 +1,39 @@
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { createGoal, prepareGoal, updateGoalDependencies } from "../../lib/goals";
 import {
-	loadHandoff,
+	claimCommitment,
+	commitmentHistory,
+	goalClaimRevision,
+	loadReceiptChain,
 	loadTerminalReceipt,
-	openHandoff,
-	prepareHandoff,
-	recordRuntimeFailure,
-} from "../../lib/handoff";
+	submitReceipt,
+} from "../../lib/commitment";
+import { loadWorkerReport, writeWorkerReport } from "../../lib/executions";
+import { createGoal } from "../../lib/goals";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
+import { inspectCommitment, inspectGoal, inspectReceipt } from "../../lib/inspection";
 import { goalState } from "../../lib/state";
-import { spawnWorker } from "./worker-launcher";
+import { delegateWorker, hasLiveWorkers, waitForWorker } from "./worker-launcher";
 
-export const MAX_CONCURRENCY = 8;
+const COMMON_ACTIONS = ["inspect", "claim", "report"] as const;
+const ROOT_ACTIONS = ["delegate", "wait"] as const;
+type CollaborateAction = (typeof COMMON_ACTIONS)[number] | (typeof ROOT_ACTIONS)[number];
+
+function currentRun(): RunPaths {
+	const taskId = process.env.CODEFLOW_RUN_ID;
+	if (!taskId) throw new Error("collaborate requires a Codeflow Task");
+	return new RunPaths(process.env.CODEFLOW_RUNS_DIR ?? DEFAULT_RUNS_DIR, taskId);
+}
+
+function currentGoal(paths: RunPaths): string {
+	return process.env.CODEFLOW_GOAL_ID ?? paths.runId;
+}
+
+function currentExecution(): string {
+	const executionId = process.env.CODEFLOW_EXECUTION_ID;
+	if (!executionId) throw new Error("collaborate requires a Worker execution");
+	return executionId;
+}
 
 function dependenciesCompleted(paths: RunPaths, goalId: string): boolean {
 	if (goalId === paths.runId) return true;
@@ -21,224 +42,199 @@ function dependenciesCompleted(paths: RunPaths, goalId: string): boolean {
 	);
 }
 
-function currentRun(): RunPaths {
-	const taskId = process.env.CODEFLOW_RUN_ID;
-	if (!taskId) throw new Error("organization tools require a Codeflow task");
-	return new RunPaths(process.env.CODEFLOW_RUNS_DIR ?? DEFAULT_RUNS_DIR, taskId);
+function delegatedCommitments(paths: RunPaths, parentCommitmentId: string) {
+	return commitmentHistory(paths).filter(
+		(view) => view.commitment.parent_commitment_id === parentCommitmentId,
+	);
+}
+
+function result(value: unknown, details?: unknown) {
+	return {
+		content: [{ type: "text" as const, text: JSON.stringify(value) }],
+		details,
+	};
 }
 
 const StringArray = Type.Array(Type.String({ minLength: 1 }));
-const Reference = Type.Object({
-	kind: Type.String({ minLength: 1 }),
-	ref: Type.String({ minLength: 1 }),
-});
-const InlineGoal = Type.Object({
-	id: Type.String({ minLength: 1 }),
-	objective: Type.String({ minLength: 1 }),
-	dependencies: Type.Optional(StringArray),
-});
+const Effect = Type.Union([
+	Type.Object({ git: Type.String({ minLength: 1 }) }),
+	Type.Object({ file: Type.String({ minLength: 1 }) }),
+	Type.Object({ external: Type.String({ minLength: 1 }) }),
+	Type.Object({ service: Type.Record(Type.String(), Type.Unknown()) }),
+]);
+const ReceiptStatus = Type.Union([
+	Type.Literal("progress"),
+	Type.Literal("completed"),
+	Type.Literal("blocked"),
+]);
 
-export interface HandoffSpawnParams {
-	digest: string;
-	intent: string;
-	known?: string[];
-	references?: Array<{ kind: string; ref: string }>;
-	constraints?: string[];
-	expected_outcome: string[];
-	evidence_requirement?: string[];
-	goal?: { id: string; objective: string; dependencies?: string[] };
-	goal_id?: string;
-}
+const ACTION_SCHEMAS = {
+	inspect: Type.Object({
+		name: Type.Literal("inspect"),
+		goal_id: Type.Optional(Type.String({ minLength: 1 })),
+		commitment_id: Type.Optional(Type.String({ minLength: 1 })),
+		receipt_id: Type.Optional(Type.String({ minLength: 1 })),
+	}, { additionalProperties: false, description: "Recall a Goal, Commitment, or Receipt by id. Omit ids for the current Goal." }),
+	claim: Type.Object({
+		name: Type.Literal("claim"),
+		work: Type.String({ minLength: 1, maxLength: 600 }),
+		done_when: Type.Optional(StringArray),
+		constraints: Type.Optional(StringArray),
+	}, { additionalProperties: false, description: "Create this Worker's bounded Commitment." }),
+	report: Type.Object({
+		name: Type.Literal("report"),
+		status: ReceiptStatus,
+		summary: Type.String({ minLength: 1 }),
+		effects: Type.Optional(Type.Array(Effect)),
+		remaining: Type.Optional(StringArray),
+	}, { additionalProperties: false, description: "Report progress, completion, or a blocker. Before claim, only blocked is valid." }),
+	delegate: Type.Object({
+		name: Type.Literal("delegate"),
+		goal_id: Type.Optional(Type.String({ minLength: 1 })),
+		new_goal: Type.Optional(Type.Object({
+			goal_id: Type.String({ minLength: 1 }),
+			objective: Type.String({ minLength: 1 }),
+			dependencies: Type.Optional(StringArray),
+		}, { additionalProperties: false })),
+		focus: Type.String({ minLength: 1 }),
+		resume_commitment_id: Type.Optional(Type.String({ minLength: 1 })),
+	}, {
+		additionalProperties: false,
+		description: "Root only: start a Worker. Set exactly one of goal_id (reuse) or new_goal (create).",
+	}),
+	wait: Type.Object({
+		name: Type.Literal("wait"),
+		execution_id: Type.Optional(Type.String({ minLength: 1 })),
+	}, {
+		additionalProperties: false,
+		description: "Root only: when the next management decision cannot proceed without a Worker result, yield until one named Worker (or any Worker) claims work, reports progress, or ends.",
+	}),
+} as const;
 
-type WorkerLauncher = typeof spawnWorker;
-
-/** Validate the whole compound operation before its first durable write. */
-export async function executeHandoffSpawn(
-	paths: RunPaths,
-	params: HandoffSpawnParams,
-	parentHandoffId: string | null,
-	signal: AbortSignal | undefined,
-	cwd: string,
-	launcher: WorkerLauncher = spawnWorker,
-): Promise<Awaited<ReturnType<WorkerLauncher>>> {
-	if (params.goal !== undefined && params.goal_id !== undefined) {
-		throw new Error("goal and goal_id are mutually exclusive");
-	}
-	const plannedGoal = params.goal === undefined ? null : prepareGoal(paths, params.goal);
-	const goalId = plannedGoal?.id ?? params.goal_id ?? paths.runId;
-	const dependencies = plannedGoal?.dependencies
-		?? (goalId === paths.runId ? [] : goalState(paths, goalId).dependencies);
-	if (!dependencies.every((dependency) => goalState(paths, dependency).status === "completed")) {
-		throw new Error(`goal dependencies are not completed: ${goalId}`);
-	}
-	prepareHandoff(paths, {
-		goalId,
-		digest: params.digest,
-		intent: params.intent,
-		known: params.known,
-		references: params.references,
-		constraints: params.constraints,
-		expectedOutcome: params.expected_outcome,
-		evidenceRequirement: params.evidence_requirement,
-		parentHandoffId,
-	}, plannedGoal ? [plannedGoal.id] : []);
-
-	if (params.goal) createGoal(paths, params.goal);
-	const handoff = openHandoff(paths, {
-		goalId,
-		digest: params.digest,
-		intent: params.intent,
-		known: params.known,
-		references: params.references,
-		constraints: params.constraints,
-		expectedOutcome: params.expected_outcome,
-		evidenceRequirement: params.evidence_requirement,
-		parentHandoffId,
-	});
-	try {
-		return await launcher(handoff.id, signal, cwd);
-	} catch {
-		recordRuntimeFailure(paths, handoff.id, ["WORKER_LAUNCH_FAILURE"], "Worker launcher failed before execution");
-		return {
-			handoff_id: handoff.id,
-			exit_code: -1,
-			stop_reason: null,
-			receipt_id: null,
-			status: "interrupted",
-			runtime_failure_reasons: ["WORKER_LAUNCH_FAILURE"],
-			retryable: true,
-		};
-	}
+function parameters(root: boolean) {
+	const actions = root ? [...COMMON_ACTIONS, ...ROOT_ACTIONS] : [...COMMON_ACTIONS];
+	return Type.Object({
+		action: Type.Union(actions.map((action) => ACTION_SCHEMAS[action])),
+	}, { additionalProperties: false });
 }
 
 export default function (pi: ExtensionAPI) {
+	const root = process.env.CODEFLOW_PROCESS_KIND === "root";
 	pi.registerTool({
-		name: "goal_create",
-		label: "Create Goal",
-		description: "Create one outcome scope in the current Task Goal Graph.",
-		parameters: Type.Object({
-			id: Type.String({ minLength: 1 }),
-			objective: Type.String({ minLength: 1 }),
-			dependencies: Type.Optional(StringArray),
-		}),
-		async execute(_id, params) {
-			const result = createGoal(currentRun(), params);
-			return { content: [{ type: "text", text: JSON.stringify(result) }], details: undefined };
-		},
-	});
-
-	pi.registerTool({
-		name: "goal_dependencies",
-		label: "Update Goal Dependencies",
-		description: "Replace a Goal's outcome dependencies after validating that the graph stays acyclic.",
-		parameters: Type.Object({ goal_id: Type.String({ minLength: 1 }), dependencies: StringArray }),
-		async execute(_id, params) {
-			const result = updateGoalDependencies(currentRun(), params.goal_id, params.dependencies);
-			return { content: [{ type: "text", text: JSON.stringify(result) }], details: undefined };
-		},
-	});
-
-	pi.registerTool({
-		name: "handoff_create",
-		label: "Create Handoff",
-		description: "Open a bounded Work Commitment inside the Task root or a child Goal. This does not spawn a Worker.",
-		parameters: Type.Object({
-			goal_id: Type.String({ minLength: 1 }),
-			digest: Type.String({ minLength: 1, maxLength: 240 }),
-			intent: Type.String({ minLength: 1 }),
-			known: Type.Optional(StringArray),
-			references: Type.Optional(Type.Array(Reference)),
-			constraints: Type.Optional(StringArray),
-			expected_outcome: StringArray,
-			evidence_requirement: Type.Optional(StringArray),
-		}),
-		async execute(_id, params) {
-			const record = openHandoff(currentRun(), {
-				goalId: params.goal_id,
-				digest: params.digest,
-				intent: params.intent,
-				known: params.known,
-				references: params.references,
-				constraints: params.constraints,
-				expectedOutcome: params.expected_outcome,
-				evidenceRequirement: params.evidence_requirement,
-				parentHandoffId: process.env.CODEFLOW_HANDOFF_ID ?? null,
-			});
-			return { content: [{ type: "text", text: JSON.stringify({ handoff_id: record.id, goal_id: record.goal_id }) }], details: undefined };
-		},
-	});
-
-	pi.registerTool({
-		name: "handoff_spawn",
-		label: "Create Handoff and Spawn Worker",
-		description: "Open one Handoff and execute it in a fresh Worker context, with an optional inline child Goal.",
-		parameters: Type.Object({
-			digest: Type.String({ minLength: 1, maxLength: 240 }),
-			intent: Type.String({ minLength: 1 }),
-			known: Type.Optional(StringArray),
-			references: Type.Optional(Type.Array(Reference)),
-			constraints: Type.Optional(StringArray),
-			expected_outcome: StringArray,
-			evidence_requirement: Type.Optional(StringArray),
-			goal: Type.Optional(InlineGoal),
-			goal_id: Type.Optional(Type.String({ minLength: 1 })),
-		}),
-		async execute(_id, params, signal, _update, ctx) {
-			const result = await executeHandoffSpawn(
-				currentRun(),
-				params,
-				process.env.CODEFLOW_HANDOFF_ID ?? null,
-				signal,
-				ctx.cwd,
-			);
-			return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
-		},
-	});
-
-	pi.registerTool({
-		name: "worker_spawn",
-		label: "Spawn Worker",
-		description: "Execute one existing Handoff in a fresh Worker context.",
-		parameters: Type.Object({ handoff_id: Type.String({ minLength: 1 }) }),
-		async execute(_id, params, signal, _update, ctx) {
-			const paths = currentRun();
-			const handoff = loadHandoff(paths, params.handoff_id);
-			if (loadTerminalReceipt(paths, handoff.id)) throw new Error(`handoff is already closed: ${handoff.id}`);
-			if (!dependenciesCompleted(paths, handoff.goal_id)) {
-				throw new Error(`goal dependencies are not completed: ${handoff.goal_id}`);
+		name: "collaborate",
+		label: "Collaborate",
+		description: root
+			? "Coordinate Goal-scoped work. Use inspect, claim, report, delegate, or wait. Root alone can create Goals and delegate Workers."
+			: "Coordinate Goal-scoped work. Use inspect, claim, or report.",
+		parameters: parameters(root),
+		async execute(_id, rawParams, signal, _update, ctx) {
+			const params = (rawParams as { action: Record<string, unknown> }).action;
+			const action = params.name as CollaborateAction;
+			const allowed = root ? [...COMMON_ACTIONS, ...ROOT_ACTIONS] : [...COMMON_ACTIONS];
+			if (!(allowed as readonly string[]).includes(action)) {
+				throw new Error(`collaborate action is unavailable to this Worker: ${String(action)}`);
 			}
-			const result = await spawnWorker(handoff.id, signal, ctx.cwd);
-			return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
-		},
-	});
-
-	pi.registerTool({
-		name: "worker_group",
-		label: "Spawn Worker Group",
-		description: "Execute independent existing Handoffs concurrently in fresh Worker contexts.",
-		parameters: Type.Object({
-			handoff_ids: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-			max_concurrency: Type.Optional(Type.Number({ minimum: 1, maximum: MAX_CONCURRENCY })),
-		}),
-		async execute(_id, params, signal, _update, ctx) {
-			const ids = [...new Set(params.handoff_ids)];
-			const concurrency = Math.min(MAX_CONCURRENCY, Math.max(1, Math.floor(params.max_concurrency ?? 3)));
-			const results: unknown[] = new Array(ids.length);
-			let cursor = 0;
-			const runOne = async () => {
-				while (cursor < ids.length) {
-					const index = cursor++;
-					const paths = currentRun();
-					const handoff = loadHandoff(paths, ids[index]);
-					if (loadTerminalReceipt(paths, handoff.id)) throw new Error(`handoff is already closed: ${handoff.id}`);
-					if (!dependenciesCompleted(paths, handoff.goal_id)) {
-						throw new Error(`goal dependencies are not completed: ${handoff.goal_id}`);
-					}
-					results[index] = await spawnWorker(handoff.id, signal, ctx.cwd);
+			const paths = currentRun();
+			switch (action) {
+				case "inspect": {
+					const ids = [params.goal_id, params.commitment_id, params.receipt_id].filter(Boolean);
+					if (ids.length > 1) throw new Error("inspect accepts at most one of goal_id, commitment_id, or receipt_id");
+					if (params.receipt_id) return result(inspectReceipt(paths, params.receipt_id as string));
+					if (params.commitment_id) return result(inspectCommitment(paths, params.commitment_id as string));
+					return result(inspectGoal(paths, (params.goal_id as string | undefined) ?? currentGoal(paths)));
 				}
-			};
-			await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, runOne));
-			return { content: [{ type: "text", text: JSON.stringify(results) }], details: undefined };
+				case "claim": {
+					const executionId = currentExecution();
+					const goalId = currentGoal(paths);
+					if (!dependenciesCompleted(paths, goalId)) throw new Error(`goal dependencies are not completed: ${goalId}`);
+					if (loadWorkerReport(paths, executionId)) throw new Error("a Worker that reported a blocker cannot claim in the same execution");
+					const currentId = process.env.CODEFLOW_COMMITMENT_ID;
+					if (currentId && !loadTerminalReceipt(paths, currentId)) {
+						throw new Error(`current Commitment is still open: ${currentId}`);
+					}
+					const commitment = claimCommitment(paths, {
+						goalId,
+						workerExecutionId: executionId,
+						basedOnRevision: goalClaimRevision(paths, goalId),
+						work: params.work as string,
+						doneWhen: params.done_when as string[] | undefined,
+						constraints: params.constraints as string[] | undefined,
+						parentCommitmentId: process.env.CODEFLOW_PARENT_COMMITMENT_ID ?? null,
+					});
+					process.env.CODEFLOW_COMMITMENT_ID = commitment.id;
+					return result({ commitment_id: commitment.id, goal_id: commitment.goal_id });
+				}
+				case "report": {
+					const commitmentId = process.env.CODEFLOW_COMMITMENT_ID;
+					const status = params.status as Parameters<typeof submitReceipt>[1]["status"];
+					if (!commitmentId) {
+						if (status !== "blocked") throw new Error("a pre-claim report must be blocked");
+						return result(writeWorkerReport(paths, {
+							goal_id: currentGoal(paths),
+							execution_id: currentExecution(),
+							summary: params.summary as string,
+							remaining: (params.remaining as string[] | undefined) ?? [],
+						}));
+					}
+					if (root && status !== "progress") {
+						const children = delegatedCommitments(paths, commitmentId);
+						if (children.length === 0) {
+							throw new Error("terminal Root Receipt requires at least one Child Worker Commitment");
+						}
+						if (hasLiveWorkers() || children.some((child) => child.folded.terminal === null)) {
+							throw new Error("terminal Root Receipt requires every delegated Worker and Child Commitment to finish");
+						}
+					}
+					const receipt = submitReceipt(paths, {
+						commitmentId,
+						status,
+						summary: params.summary as string,
+						effects: params.effects as Parameters<typeof submitReceipt>[1]["effects"],
+						remaining: params.remaining as string[] | undefined,
+					});
+					return result({ receipt_id: receipt.id, status: receipt.status });
+				}
+				case "delegate": {
+					const parentId = process.env.CODEFLOW_COMMITMENT_ID;
+					if (!parentId) throw new Error("delegate requires the Root Worker to claim its own Commitment first");
+					if (loadReceiptChain(paths, parentId).terminal) throw new Error("delegate requires an open current Commitment");
+					const existingGoalId = params.goal_id as string | undefined;
+					const newGoal = params.new_goal as {
+						goal_id: string;
+						objective: string;
+						dependencies?: string[];
+					} | undefined;
+					if ((existingGoalId === undefined) === (newGoal === undefined)) {
+						throw new Error("delegate requires exactly one of goal_id or new_goal");
+					}
+					let goalId: string;
+					if (newGoal) {
+						goalId = newGoal.goal_id;
+						createGoal(paths, {
+							id: goalId,
+							objective: newGoal.objective,
+							dependencies: newGoal.dependencies,
+						});
+					} else {
+						goalId = existingGoalId as string;
+						goalState(paths, goalId);
+					}
+					if (!dependenciesCompleted(paths, goalId)) {
+						return result({ goal_id: goalId, status: "waiting", execution_id: null });
+					}
+					const execution = delegateWorker({
+						goalId,
+						focus: params.focus as string,
+						parentCommitmentId: parentId,
+						resumeCommitmentId: params.resume_commitment_id as string | undefined,
+					}, signal, ctx.cwd);
+					return result(execution, execution);
+				}
+				case "wait": {
+					const execution = await waitForWorker(params.execution_id as string | undefined);
+					return result(execution, execution);
+				}
+			}
 		},
 	});
 }

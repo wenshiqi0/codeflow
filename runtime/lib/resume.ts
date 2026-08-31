@@ -43,7 +43,7 @@ export function assertResumeStopped(paths: RunPaths): ResumableAttempt {
 }
 
 /**
- * Resume preserves the run identity but never reopens terminal handoffs.
+ * Resume preserves the run identity but never reopens terminal commitments.
  *
  * The latest execution attempt must have both its business terminal event and
  * runner exit after its most recent start/resume event. This prevents two

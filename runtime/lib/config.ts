@@ -9,7 +9,7 @@ interface ExecutorConfig {
 }
 
 interface RuntimeConfig {
-	worker: ExecutorConfig;
+	agents: Record<AgentScope, ExecutorConfig>;
 	services: { output_compression: ExecutorConfig };
 }
 
@@ -17,9 +17,11 @@ export interface ResolvedExecutor {
 	provider: string;
 	model: string;
 	thinkingLevel?: ThinkingLevel;
-	systemPrompt: string;
-	promptPath: string;
+	systemPrompts: string[];
+	promptPaths: string[];
 }
+
+export type AgentScope = "manager" | "worker";
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
@@ -43,6 +45,17 @@ function parseExecutor(value: unknown, field: string): ExecutorConfig {
 	return { model: value.model, prompt: value.prompt };
 }
 
+function parseAgents(value: unknown): Record<AgentScope, ExecutorConfig> {
+	if (!isRecord(value)) throw new ConfigError("agents must be an object");
+	if (Object.keys(value).some((key) => key !== "manager" && key !== "worker")) {
+		throw new ConfigError("agents contains unknown keys");
+	}
+	return {
+		manager: parseExecutor(value.manager, "agents.manager"),
+		worker: parseExecutor(value.worker, "agents.worker"),
+	};
+}
+
 export function loadRuntimeConfig(configFile: string): RuntimeConfig {
 	let value: unknown;
 	try {
@@ -51,47 +64,62 @@ export function loadRuntimeConfig(configFile: string): RuntimeConfig {
 		throw new ConfigError(`cannot read runtime config ${configFile}: ${(error as Error).message}`);
 	}
 	if (!isRecord(value) || !isRecord(value.services)) {
-		throw new ConfigError("runtime config requires worker and services");
+		throw new ConfigError("runtime config requires agents and services");
 	}
-	if (Object.keys(value).some((key) => key !== "worker" && key !== "services")) {
+	if (Object.keys(value).some((key) => key !== "agents" && key !== "services")) {
 		throw new ConfigError("runtime config contains unknown keys");
 	}
 	if (Object.keys(value.services).some((key) => key !== "output_compression")) {
 		throw new ConfigError("runtime config contains an unknown service");
 	}
 	return {
-		worker: parseExecutor(value.worker, "worker"),
+		agents: parseAgents(value.agents),
 		services: { output_compression: parseExecutor(value.services.output_compression, "services.output_compression") },
 	};
 }
 
-function resolveExecutor(configFile: string, config: ExecutorConfig, field: string): ResolvedExecutor {
-	const separator = config.model.indexOf("/");
-	if (separator <= 0 || separator === config.model.length - 1) {
-		throw new ConfigError(`${field}.model must be '<provider>/<model>'`);
-	}
+function resolvePrompt(configFile: string, prompt: string, field: string): { content: string; path: string } {
 	const packageRoot = path.dirname(path.dirname(configFile));
 	const referencesRoot = path.resolve(packageRoot, "references");
-	const promptPath = path.resolve(packageRoot, config.prompt);
+	const promptPath = path.resolve(packageRoot, prompt);
 	const relative = path.relative(referencesRoot, promptPath);
 	if (!promptPath.endsWith(".md") || relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
-		throw new ConfigError(`${field}.prompt must be Markdown below references/`);
+		throw new ConfigError(`${field} must be Markdown below references/`);
 	}
-	if (!fs.existsSync(promptPath)) throw new ConfigError(`${field}.prompt is unreadable: ${config.prompt}`);
+	if (!fs.existsSync(promptPath)) throw new ConfigError(`${field} is unreadable: ${prompt}`);
+	return { content: fs.readFileSync(promptPath, "utf8"), path: promptPath };
+}
+
+function resolveExecutor(
+	configFile: string,
+	model: string,
+	prompts: Array<{ ref: string; field: string }>,
+	field: string,
+): ResolvedExecutor {
+	const separator = model.indexOf("/");
+	if (separator <= 0 || separator === model.length - 1) {
+		throw new ConfigError(`${field}.model must be '<provider>/<model>'`);
+	}
+	const resolvedPrompts = prompts.map((prompt) => resolvePrompt(configFile, prompt.ref, prompt.field));
 	return {
-		provider: config.model.slice(0, separator),
-		model: config.model.slice(separator + 1),
-		systemPrompt: fs.readFileSync(promptPath, "utf8"),
-		promptPath,
+		provider: model.slice(0, separator),
+		model: model.slice(separator + 1),
+		systemPrompts: resolvedPrompts.map((prompt) => prompt.content),
+		promptPaths: resolvedPrompts.map((prompt) => prompt.path),
 	};
 }
 
-export function resolveWorker(configFile: string, modelOverride?: string): ResolvedExecutor {
-	const worker = loadRuntimeConfig(configFile).worker;
+export function resolveAgent(
+	configFile: string,
+	scope: AgentScope,
+	modelOverride?: string,
+): ResolvedExecutor {
+	const agent = loadRuntimeConfig(configFile).agents[scope];
 	const resolved = resolveExecutor(
 		configFile,
-		modelOverride === undefined ? worker : { ...worker, model: modelOverride },
-		"worker",
+		modelOverride ?? agent.model,
+		[{ ref: agent.prompt, field: `agents.${scope}.prompt` }],
+		`agents.${scope}`,
 	);
 	const modelsFile = path.join(path.dirname(configFile), "models.json");
 	let manifest: unknown;
@@ -117,17 +145,17 @@ export function resolveWorker(configFile: string, modelOverride?: string): Resol
 }
 
 export function resolveOutputCompression(configFile: string): ResolvedExecutor {
-	return resolveExecutor(
-		configFile,
-		loadRuntimeConfig(configFile).services.output_compression,
-		"services.output_compression",
-	);
+	const service = loadRuntimeConfig(configFile).services.output_compression;
+	return resolveExecutor(configFile, service.model, [
+		{ ref: service.prompt, field: "services.output_compression.prompt" },
+	], "services.output_compression");
 }
 
 export function buildWorkerArgv(
 	resolved: ResolvedExecutor,
 	prompt: string,
 	extensions: string[],
+	toolAllowlist: readonly string[] | null,
 ): string[] {
 	const argv = [
 		"pi",
@@ -136,10 +164,11 @@ export function buildWorkerArgv(
 		"--provider", resolved.provider,
 		"--model", resolved.model,
 		...(resolved.thinkingLevel ? ["--thinking", resolved.thinkingLevel] : []),
-		"--system-prompt", resolved.systemPrompt,
+		...resolved.systemPrompts.flatMap((systemPrompt) => ["--append-system-prompt", systemPrompt]),
 		"--no-extensions",
 		"--no-skills",
 		"--no-prompt-templates",
+		...(toolAllowlist ? ["--tools", toolAllowlist.join(",")] : []),
 	];
 	for (const extension of extensions) argv.push("--extension", extension);
 	argv.push("--no-context-files");

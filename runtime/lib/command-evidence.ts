@@ -1,5 +1,5 @@
 /**
- * Shell-free command execution and receipt aggregation for worker handoffs.
+ * Shell-free command execution and receipt aggregation for worker commitments.
  *
  * A model-written pipeline can accidentally report the status of `tail` or
  * `tee` instead of the command under test. This module executes the supplied
@@ -119,17 +119,17 @@ export interface RunCommandEvidenceOptions {
 	noDedupe?: boolean;
 }
 
-function currentPaths(): { paths: RunPaths; handoffId: string } {
+function currentPaths(): { paths: RunPaths; commitmentId: string } {
 	const runId = process.env.CODEFLOW_RUN_ID;
-	const handoffId = process.env.CODEFLOW_HANDOFF_ID;
+	const commitmentId = process.env.CODEFLOW_COMMITMENT_ID;
 	if (!runId) throw new EvidenceError("CODEFLOW_RUN_ID is required");
-	if (!handoffId) throw new EvidenceError("CODEFLOW_HANDOFF_ID is required");
+	if (!commitmentId) throw new EvidenceError("CODEFLOW_COMMITMENT_ID is required");
 	const runsDir = path.resolve(process.env.CODEFLOW_RUNS_DIR ?? DEFAULT_RUNS_DIR);
-	return { paths: new RunPaths(runsDir, runId), handoffId };
+	return { paths: new RunPaths(runsDir, runId), commitmentId };
 }
 
-function commandDir(paths: RunPaths, handoffId: string): string {
-	return path.join(paths.evidence, handoffId, "commands");
+function commandDir(paths: RunPaths, commitmentId: string): string {
+	return path.join(paths.evidence, commitmentId, "commands");
 }
 
 function shellQuote(value: string): string {
@@ -228,8 +228,8 @@ export async function runCommandEvidence(
 	const dedupeEnabled =
 		options.noDedupe !== true && process.env.CODEFLOW_EVIDENCE_DEDUPE !== "off";
 
-	const { paths, handoffId } = currentPaths();
-	const directory = commandDir(paths, handoffId);
+	const { paths, commitmentId } = currentPaths();
+	const directory = commandDir(paths, commitmentId);
 	const commandCwd = process.env.CODEFLOW_PROJECT_DIR ?? process.cwd();
 	const realCommandCwd = fs.realpathSync(commandCwd);
 	const realRunsRoot = fs.existsSync(paths.runsRoot) ? fs.realpathSync(paths.runsRoot) : paths.runsRoot;
@@ -247,7 +247,7 @@ export async function runCommandEvidence(
 	const stdoutPath = path.join(directory, `${id}.stdout.log`);
 	const stderrPath = path.join(directory, `${id}.stderr.log`);
 	if ([recordPath, claimPath, stdoutPath, stderrPath].some((target) => fs.existsSync(target))) {
-		throw new EvidenceError(`evidence id already exists for this handoff: ${id}`);
+		throw new EvidenceError(`evidence id already exists for this commitment: ${id}`);
 	}
 	const original = fingerprint === null
 		? undefined
@@ -260,7 +260,7 @@ export async function runCommandEvidence(
 		claim = fs.openSync(claimPath, "wx");
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-			throw new EvidenceError(`evidence id already exists for this handoff: ${id}`);
+			throw new EvidenceError(`evidence id already exists for this commitment: ${id}`);
 		}
 		throw error;
 	}
@@ -428,10 +428,10 @@ export async function runCommandEvidence(
 	return exitCode;
 }
 
-function loadEntries(paths: RunPaths, handoffId: string): CommandEvidenceEntry[] {
-	const directory = commandDir(paths, handoffId);
+function loadEntries(paths: RunPaths, commitmentId: string): CommandEvidenceEntry[] {
+	const directory = commandDir(paths, commitmentId);
 	if (!fs.existsSync(directory)) {
-		throw new EvidenceError("no command evidence exists for this handoff");
+		throw new EvidenceError("no command evidence exists for this commitment");
 	}
 	const entries = fs
 		.readdirSync(directory)
@@ -444,7 +444,7 @@ function loadEntries(paths: RunPaths, handoffId: string): CommandEvidenceEntry[]
 				throw new EvidenceError(`command evidence entry is unreadable: ${name}`);
 			}
 		});
-	if (entries.length === 0) throw new EvidenceError("no command evidence exists for this handoff");
+	if (entries.length === 0) throw new EvidenceError("no command evidence exists for this commitment");
 	for (const [index, entry] of entries.entries()) {
 		if (
 			typeof entry !== "object" ||
@@ -464,8 +464,8 @@ function loadEntries(paths: RunPaths, handoffId: string): CommandEvidenceEntry[]
 }
 
 export function writeCommandEvidenceBatch(output: string): { output: string; status: "PASS" | "FAIL"; count: number } {
-	const { paths, handoffId } = currentPaths();
-	const entries = loadEntries(paths, handoffId);
+	const { paths, commitmentId } = currentPaths();
+	const entries = loadEntries(paths, commitmentId);
 	const status = entries.every((entry) => entry.status === "PASS") ? "PASS" : "FAIL";
 	const target = path.resolve(output);
 	writeJsonAtomic(target, { status, entries });

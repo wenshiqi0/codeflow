@@ -29,8 +29,8 @@ describe("evidence directory policy", () => {
 	});
 
 	test("prompt contracts use the absolute evidence environment root", () => {
-		const agents = fs.readFileSync(path.join(REPO, "runtime/AGENTS.md"), "utf8");
-		expect(agents).not.toContain("below `.codeflow/runs/`");
-		expect(agents).toContain("$CODEFLOW_EVIDENCE_DIR");
+		const worker = fs.readFileSync(path.join(REPO, "references/worker.md"), "utf8");
+		expect(worker).not.toContain("below `.codeflow/runs/`");
+		expect(worker).toContain("$CODEFLOW_EVIDENCE_DIR");
 	});
 });

@@ -100,6 +100,44 @@ function readOnlyRuntimeCommand(normalized: string): boolean {
 	return new Set(["cat", "echo", "grep", "ls", "pwd", "rg", "test"]).has(firstWord);
 }
 
+function readOnlyInspectionCommand(normalized: string): boolean {
+	// Before Claim, inspection must be unambiguously read-only. Composed shell
+	// programs, redirection, substitution, and executable hooks are substantive
+	// because their effects cannot be established from the first command alone.
+	if (!normalized || /[\n;&|<>`]|\$\(/.test(normalized)) return false;
+	const words = normalized.split(/\s+/);
+	while (words[0] === "command") words.shift();
+	const executable = path.basename(words[0] ?? "");
+	if (executable === "git") return readOnlyGitCommand(normalized);
+	if (executable === "find") {
+		return !/(?:^|\s)-(?:delete|exec|execdir|fls|fprint|fprint0|fprintf|ok|okdir)(?:\s|$)/.test(
+			normalized,
+		);
+	}
+	if (executable === "rg" && /(?:^|\s)--pre(?:=|\s|$)/.test(normalized)) return false;
+	return new Set([
+		"basename", "cat", "dirname", "file", "grep", "head", "jq", "ls",
+		"pwd", "realpath", "rg", "stat", "tail", "test", "wc", "which",
+	]).has(executable);
+}
+
+export function preClaimToolViolation(
+	toolName: string,
+	input: unknown,
+	environment: Environment = process.env,
+): string | null {
+	if (
+		environment.CODEFLOW_PROCESS_KIND !== "worker"
+		|| environment.CODEFLOW_COMMITMENT_ID
+	) return null;
+	if (toolName === "read" || toolName === "collaborate") return null;
+	if (toolName === "bash") {
+		const command = (input as { command?: unknown } | null)?.command;
+		if (typeof command === "string" && readOnlyInspectionCommand(command.trim())) return null;
+	}
+	return "Claim a Commitment before substantive work; before Claim, only read-only repository inspection is allowed";
+}
+
 export function runtimeBashViolation(
 	command: string | undefined,
 	environment: Environment = process.env,
@@ -113,7 +151,7 @@ export function runtimeBashViolation(
 		normalized,
 	);
 	if (scansFilesystemRoot) {
-		return "Codeflow Workers must not scan the host filesystem root; use a project-scoped search path";
+		return "Codeflow agents must not scan the host filesystem root; use a project-scoped search path";
 	}
 	const runState = runStateRoot(environment);
 	const canonicalRunState = canonicalRunStateRoot(environment);

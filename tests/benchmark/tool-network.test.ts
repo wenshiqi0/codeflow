@@ -3,7 +3,7 @@
  * (benchmark/lib/tool-network.ts — design §4, fakes/README.md §6).
  *
  * The wall's end-to-end behavior (curl + fetch observable denial inside the
- * production driver's spawned tree, root AND delegated, provider exempt,
+ * production driver's process tree, root AND spawned Workers, provider exempt,
  * controls outside benchmark mode unaffected) is pinned by the business
  * suite tests/benchmark/tool-network-wall.test.ts (NET-*). These unit tests
  * pin the builder itself: exactly which environment it produces, that the

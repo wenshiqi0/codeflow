@@ -1,27 +1,24 @@
 /**
  * Liveness ignition for one codeflow agent process.
  *
- * Four responsibilities, then stay quiet:
+ * Three responsibilities, then stay quiet:
  *
- * 1. Mark this process's handoff `running`. The receiver owns that
- *    transition, and hanging it on a lifecycle hook means no model has to
- *    remember it.
- * 2. Spawn a detached watchdog for this pid. A plugin dies inside the
- *    process it would report on, so the exit receipt has to come from
+ * 1. Spawn a detached watchdog for this pid. A plugin dies inside the
+ *    process it would report on, so the exit observation has to come from
  *    outside; `detached` + ignored stdio + `unref()` is what lets the
  *    monitor outlive its subject without holding this event loop open.
- * 3. Stream-idle abort (see STREAM_IDLE_TIMEOUT_MS below): a provider can
+ * 2. Stream-idle abort (see STREAM_IDLE_TIMEOUT_MS below): a provider can
  *    stall mid-stream while keeping the connection byte-busy with heartbeat
  *    comments, which defeats every byte/transport-level timeout. This layer
  *    aborts the in-flight request when no real `message_update`/tool event
  *    arrives for the configured window, so the run fails fast instead of
  *    hanging forever.
- * 4. Bound bash tool wall time. Provider-idle protection cannot see a shell
+ * 3. Bound bash tool wall time. Provider-idle protection cannot see a shell
  *    process that never returns, so bash gets its own configurable hard limit.
  *
  * No tools are registered: this extension has no model-facing surface. With
- * no run-id in the environment there is no run to record, so (1) and (2)
- * are skipped — running `pi` by hand stays possible. (3) still applies.
+ * no run-id in the environment there is no run to record, so (1) is skipped
+ * — running `pi` by hand stays possible. The local timeout guards still apply.
  */
 
 import { spawn } from "node:child_process";
@@ -53,14 +50,9 @@ const HEARTBEAT_SECONDS = "60";
  * request via `ctx.abort()`, which trips the AbortSignal pi passes into the
  * provider fetch — turning an infinite hang into a recoverable turn failure.
  *
- * The default is derived from two existing bounds, not guessed:
- * DEFAULT_STALE_SECONDS = 600 in runtime/lib/handoff/index.ts is the age at which
- * the state layer first calls a silent handoff "stale" (its own docs treat
- * ten minutes of quiet reasoning as normal), plus the previous 300s of
- * abort patience on top. An idle abort firing before the age annotation
- * would kill requests the rest of the runtime still considers ordinary
- * work; a genuinely dead stream is still bounded at ~15 min instead of
- * never.
+ * The default is a conservative fifteen-minute backstop for long reasoning
+ * turns. It remains configurable, and still bounds a genuinely dead stream
+ * instead of allowing an infinite wait.
  */
 export const STREAM_IDLE_DEFAULT_MS = 900_000;
 export const STREAM_IDLE_TIMEOUT_MS = Number.parseInt(
@@ -151,7 +143,7 @@ export default function (pi: ExtensionAPI) {
 		igniteWatchdog(runId, processKind);
 	});
 
-	// --- Stream-idle abort (responsibility 3) -------------------------------
+	// --- Stream-idle abort (responsibility 2) -------------------------------
 	// Stamp progress on every real streaming/tool event. SSE heartbeat
 	// comments do not fire these, so the idle clock keeps running while a
 	// stalled provider trickles keepalive bytes. `providerInFlight` brackets

@@ -3,120 +3,119 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { canonicalJson, contentHash } from "../../runtime/lib/canonical";
+import { commitmentHistory, loadCommitment, submitReceipt } from "../../runtime/lib/commitment";
 import { createGoal, goalRecords, updateGoalDependencies } from "../../runtime/lib/goals";
-import { handoffHistory, loadHandoff, openHandoff, submitReceipt } from "../../runtime/lib/handoff";
 import { RunPaths } from "../../runtime/lib/paths";
-import { recallGoal } from "../../runtime/lib/recall";
+import { inspectGoal } from "../../runtime/lib/inspection";
 import { goalState, taskState } from "../../runtime/lib/state";
 import { createTask } from "../../runtime/lib/tasks";
+import { claimTestWork } from "./helpers";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
 
-function runtime(taskId = "task-root"): RunPaths {
+function runtime(): RunPaths {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-runtime-"));
 	dirs.push(root);
-	return new RunPaths(path.join(root, "runs"), taskId);
+	return new RunPaths(path.join(root, "runs"), "task-root");
 }
 
-function handoff(paths: RunPaths, goalId = paths.runId, intent = "deliver outcome") {
-	return openHandoff(paths, {
-		goalId,
-		digest: intent,
-		intent,
-		known: ["known fact"],
-		references: [{ kind: "file", ref: "src/example.ts" }],
-		constraints: ["preserve behavior"],
-		expectedOutcome: ["observable outcome"],
-		evidenceRequirement: ["focused test"],
-	});
-}
-
-describe("Task and Goal Graph", () => {
-	test("Task is the root Goal and no synthetic Goal is persisted", () => {
+describe("Goal and Commitment protocol", () => {
+	test("the Task is the root Goal and Child Goals form an acyclic dependency graph", () => {
 		const paths = runtime();
-		const task = createTask(paths, "Complete the system", ["tests pass"]);
+		const task = createTask(paths, "Complete the system");
 		expect(task.id).toBe(paths.runId);
-		const root = handoff(paths);
-		expect(root.goal_id).toBe(task.id);
-		expect(goalRecords(paths)).toEqual([]);
-		expect(fs.existsSync(paths.goalPath(task.id))).toBe(false);
-	});
-
-	test("child Goals form an acyclic result-dependency graph", () => {
-		const paths = runtime();
-		createTask(paths, "Ship feature");
 		createGoal(paths, { id: "contract", objective: "Establish contract" });
 		createGoal(paths, { id: "implementation", objective: "Implement behavior", dependencies: ["contract"] });
 		expect(() => updateGoalDependencies(paths, "contract", ["implementation"])).toThrow(/cycle/);
 		expect(goalRecords(paths).map((goal) => goal.id)).toEqual(["contract", "implementation"]);
 	});
-});
 
-describe("immutable Handoff and Receipt protocol", () => {
-	test("canonical serialization and identity are byte-stable", () => {
-		expect(canonicalJson({ b: 2, a: { d: 4, c: 3 } })).toBe('{"a":{"c":3,"d":4},"b":2}');
+	test("canonical identities and the shared sequence are stable", () => {
+		const paths = runtime();
+		createTask(paths, "Ship feature");
+		expect(canonicalJson({ b: 2, a: 1 })).toBe('{"a":1,"b":2}');
 		expect(contentHash({ b: 2, a: 1 })).toBe(contentHash({ a: 1, b: 2 }));
-	});
-
-	test("Handoffs and Receipts share one monotonic semantic sequence", () => {
-		const paths = runtime();
-		createTask(paths, "Ship feature");
-		const first = handoff(paths, paths.runId, "first");
+		const first = claimTestWork(paths, { goalId: paths.runId, work: "first pass" });
 		const receipt = submitReceipt(paths, {
-			handoffId: first.id,
+			commitmentId: first.id,
 			status: "completed",
-			effects: [{ git: "abc123" }, { file: "/tmp/result.json" }],
-			established: ["first outcome holds"],
+			summary: "first pass complete",
+			effects: [{ git: "abc123" }],
 		});
-		const second = handoff(paths, paths.runId, "second");
+		const second = claimTestWork(paths, { goalId: paths.runId, work: "follow-up" });
 		expect([first.seq, receipt.seq, second.seq]).toEqual([1, 2, 3]);
-		expect(receipt.id).toMatch(/^r_[0-9a-f]{64}$/);
-		expect(first.id).toMatch(/^h_[0-9a-f]{64}$/);
-		expect(() => submitReceipt(paths, { handoffId: first.id, status: "failed" })).toThrow(/already closed/);
+		expect([first.claim_revision, second.claim_revision]).toEqual([1, 2]);
 	});
 
-	test("tampering is rejected and every semantic Receipt status is supported", () => {
+	test("a Goal is one-to-many and can be claimed again after completion", () => {
 		const paths = runtime();
 		createTask(paths, "Ship feature");
-		for (const status of ["completed", "partial", "blocked", "failed", "superseded"] as const) {
-			const opened = handoff(paths, paths.runId, status);
-			submitReceipt(paths, {
-				handoffId: opened.id,
-				status,
-				blockers: status === "blocked" ? ["external dependency"] : [],
-			});
-		}
-		const target = handoffHistory(paths)[0].handoff;
-		const file = paths.handoffPath(target.id);
-		const value = JSON.parse(fs.readFileSync(file, "utf8"));
-		value.intent = "tampered";
-		fs.writeFileSync(file, JSON.stringify(value));
-		expect(() => loadHandoff(paths, target.id)).toThrow(/content hash mismatch/);
+		const first = claimTestWork(paths, { goalId: paths.runId, work: "initial implementation" });
+		submitReceipt(paths, { commitmentId: first.id, status: "completed", summary: "initial work complete" });
+		const second = claimTestWork(paths, { goalId: paths.runId, work: "verify new evidence" });
+		expect(second.goal_id).toBe(first.goal_id);
+		expect(commitmentHistory(paths)).toHaveLength(2);
+		expect(goalState(paths, paths.runId).status).toBe("active");
 	});
-});
 
-describe("state reduction and Recall", () => {
-	test("reduces Root and child state from Receipts", () => {
+	test("a Child Worker can claim the same Goal while its parent Commitment is open", () => {
 		const paths = runtime();
 		createTask(paths, "Ship feature");
-		const root = handoff(paths);
-		submitReceipt(paths, { handoffId: root.id, status: "completed", established: ["scope fixed"] });
-		createGoal(paths, { id: "child", objective: "Deliver child" });
-		const child = handoff(paths, "child", "child work");
-		submitReceipt(paths, { handoffId: child.id, status: "blocked", blockers: ["needs input"] });
-		expect(goalState(paths, paths.runId).established).toEqual(["scope fixed"]);
-		expect(goalState(paths, "child").status).toBe("blocked");
-		expect(taskState(paths).status).toBe("partial");
-		expect(recallGoal(paths, "child", "semantic")).toMatchObject({
-			level: "semantic",
-			goal_id: "child",
-			state: { status: "blocked" },
-			latest: {
-				handoff: { id: child.id },
-				head: { status: "blocked", terminal: true },
-				folded: { blockers: ["needs input"] },
-			},
+		const parent = claimTestWork(paths, { goalId: paths.runId, work: "coordinate delivery" });
+		const child = claimTestWork(paths, {
+			goalId: paths.runId,
+			parentCommitmentId: parent.id,
+			work: "implement the delegated change",
 		});
+		expect(child.parent_commitment_id).toBe(parent.id);
+		expect(commitmentHistory(paths).map((view) => view.commitment.id)).toEqual([parent.id, child.id]);
+		expect(Object.keys(goalState(paths, paths.runId))).not.toContain("runnable");
+	});
+
+	test("only completed and blocked are terminal Receipt outcomes", () => {
+		const paths = runtime();
+		createTask(paths, "Ship feature");
+		const completed = claimTestWork(paths, { goalId: paths.runId, work: "complete work" });
+		submitReceipt(paths, { commitmentId: completed.id, status: "completed", summary: "done" });
+		const blocked = claimTestWork(paths, { goalId: paths.runId, work: "blocked work" });
+		submitReceipt(paths, {
+			commitmentId: blocked.id,
+			status: "blocked",
+			summary: "external input missing",
+			remaining: ["obtain the input"],
+		});
+		expect(() => submitReceipt(paths, {
+			commitmentId: blocked.id,
+			status: "progress",
+			summary: "late report",
+		})).toThrow(/already closed/);
+	});
+
+	test("tampering is rejected and inspection returns current Goal work", () => {
+		const paths = runtime();
+		createTask(paths, "Ship feature");
+		const work = claimTestWork(paths, { goalId: paths.runId, work: "inspect me" });
+		const file = paths.commitmentPath(work.id);
+		const value = JSON.parse(fs.readFileSync(file, "utf8"));
+		value.work = "tampered";
+		fs.writeFileSync(file, JSON.stringify(value));
+		expect(() => loadCommitment(paths, work.id)).toThrow(/content hash mismatch/);
+
+		fs.rmSync(paths.runDir, { recursive: true, force: true });
+		createTask(paths, "Ship feature");
+		createGoal(paths, { id: "child", objective: "Deliver child" });
+		const child = claimTestWork(paths, { goalId: "child", work: "child work" });
+		submitReceipt(paths, {
+			commitmentId: child.id,
+			status: "blocked",
+			summary: "needs input",
+			remaining: ["provide input"],
+		});
+		expect(inspectGoal(paths, "child")).toMatchObject({
+			goal: { goal_id: "child", status: "blocked", remaining: ["provide input"] },
+			commitments: [{ commitment: { id: child.id }, latest: { summary: "needs input" } }],
+		});
+		expect(taskState(paths).goals[0].status).toBe("blocked");
 	});
 });

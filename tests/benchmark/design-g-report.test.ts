@@ -10,22 +10,50 @@ import {
 import { buildAttemptMetrics } from "../../benchmark/lib/metrics";
 import { appendPredictionEntry } from "../../benchmark/lib/predictions";
 import { buildBenchmarkReport } from "../../benchmark/lib/report";
-import { HANDOFF_STATE_PROJECTION_SCHEMA_VERSION } from "../../runtime/lib/observability/handoff-state";
+import { COMMITMENT_STATE_PROJECTION_SCHEMA_VERSION } from "../../runtime/lib/observability/commitment-state";
+import type { RunFactsRecord } from "../../runtime/lib/observability/run-facts";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
 
-test("report exposes uniform observation metadata, verified declarations, round buckets, and summed prefix counts", () => {
+function runFact(overrides: Partial<RunFactsRecord> = {}): RunFactsRecord {
+	return {
+		schema_version: 3,
+		task_id: "task-a",
+		execution_id: "exec-root",
+		commitment_id: "c_root",
+		goal_id: "task-a",
+		execution_rounds_elapsed: 0,
+		context_utilization: { basis: "unknown" },
+		prompt_shape: {
+			system_prompt: { hash: "system-a", chars: 100 },
+			tool_schema: { hash: "tools-a", chars: 200, count: 5 },
+			worker_context: {
+				hash: "context-a",
+				chars: 300,
+				sections: [{ kind: "task", hash: "task-a", chars: 250 }],
+			},
+			message_prefix: { hash: "messages-a", chars: 400 },
+		},
+		prefix_transition_count: 0,
+		prefix_invalidation_count: 0,
+		system_prompt_changed: 0,
+		tool_schema_changed: 0,
+		worker_context_changed: 0,
+		message_prefix_invalidated: 0,
+		...overrides,
+	};
+}
+
+test("report exposes uniform observation metadata, actual delegation, round buckets, and summed prefix counts", () => {
 	const out = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-design-g-report-"));
 	dirs.push(out);
 	const observation = {
-		schema_version: OBSERVATION_SCHEMA_VERSION as 1,
+		schema_version: OBSERVATION_SCHEMA_VERSION as 3,
 		intervention_flags: {
-			delivery_obligations: true,
-			decomposition_record: true,
-			handoff_spawn: true,
+			work_commitment_claims: true,
 			run_facts: true,
-			midcourse_handoff_text: true,
+			collaborate_capabilities: true,
 		},
 		request_named_split: false,
 	};
@@ -39,7 +67,7 @@ test("report exposes uniform observation metadata, verified declarations, round 
 		codeflow_commit: "c".repeat(40),
 		model_config: "model-a",
 		concurrency: 1,
-		attempts_per_instance: 1,
+		attempts_per_instance: 2,
 		tool_network: "disabled",
 		model_provider_network: "disabled",
 		termination_budgets: {
@@ -54,60 +82,86 @@ test("report exposes uniform observation metadata, verified declarations, round 
 	appendPredictionEntry(out, { instance_id: "demo/demo", model_name_or_path: "model-a", model_patch: "" });
 
 	const state = {
-		schema_version: HANDOFF_STATE_PROJECTION_SCHEMA_VERSION as 2,
+		schema_version: COMMITMENT_STATE_PROJECTION_SCHEMA_VERSION as 1,
 		task_id: "task-a",
-		handoff_id: "h_root",
+		commitment_id: "c_root",
 		goal_id: "task-a",
-		parent_handoff_id: null,
+		parent_commitment_id: null,
 		worker_kind: "worker" as const,
 		status: "completed" as const,
 		receipt_id: "r_root",
 		runtime_failure_reasons: [],
 		unknown_runtime_failure_reasons: 0,
-		decomposition: "split" as const,
-		decomposition_mismatch: false,
 		has_direct_child: true,
-		obligation_regression: "met" as const,
-		obligation_reproduction: "exempt" as const,
-		obligation_consumers: "missing" as const,
 	};
 	const metrics = buildAttemptMetrics({
 		usageRecords: [],
 		failedModelAttempts: [],
 		toolCallRecords: [],
-		handoffStates: [state],
-		handoffTelemetryAvailable: true,
+		commitmentStates: [state],
+		commitmentTelemetryAvailable: true,
 		runFactsRecords: [
-			{
-				schema_version: 1,
-				task_id: "task-a",
-				handoff_id: "h_root",
-				goal_id: "task-a",
-				execution_rounds_elapsed: 0,
-				context_utilization: { basis: "unknown" },
-				prefix_transition_count: 0,
-				prefix_invalidation_count: 0,
-			},
-			{
-				schema_version: 1,
-				task_id: "task-a",
-				handoff_id: "h_root",
-				goal_id: "task-a",
+			runFact(),
+			runFact({
 				execution_rounds_elapsed: 1,
 				context_utilization: { value: 0.5, basis: "pi_estimate" },
+				prompt_shape: {
+					...runFact().prompt_shape,
+					message_prefix: { hash: "messages-b", chars: 500 },
+				},
 				prefix_transition_count: 1,
 				prefix_invalidation_count: 1,
-			},
+				message_prefix_invalidated: 1,
+			}),
 		],
 		wallSeconds: 10,
 		terminatedBy: null,
 	});
 	metrics.model_rounds_total = 45;
+	metrics.tool_calls_by_operation = {
+		source_discovery: 2,
+		execute: 1,
+		evidence_run: 2,
+		evidence_log: 1,
+		inspect: 1,
+		claim: 1,
+		report: 1,
+		delegate: 1,
+		wait: 1,
+	};
+	const interruptedState = {
+		...state,
+		commitment_id: "c_interrupted",
+		status: "interrupted" as const,
+		receipt_id: null,
+		runtime_failure_reasons: ["OUTPUT_TRUNCATED" as const],
+		has_direct_child: false,
+	};
+	const interruptedMetrics = buildAttemptMetrics({
+		usageRecords: [],
+		failedModelAttempts: [],
+		toolCallRecords: [],
+		commitmentStates: [interruptedState],
+		commitmentTelemetryAvailable: true,
+		runFactsRecords: [runFact({
+			execution_id: "exec-interrupted",
+			commitment_id: "c_interrupted",
+		})],
+		wallSeconds: 12,
+		terminatedBy: null,
+	});
+	interruptedMetrics.model_rounds_total = 56;
 	const attemptDir = path.join(out, "cases", "demo__demo", "attempts", "1");
 	fs.mkdirSync(path.join(attemptDir, "telemetry"), { recursive: true });
-	fs.writeFileSync(path.join(attemptDir, "telemetry", "handoffs.json"), JSON.stringify({
-		schema_version: HANDOFF_STATE_PROJECTION_SCHEMA_VERSION,
+	fs.writeFileSync(path.join(attemptDir, "telemetry", "commitments.json"), JSON.stringify({
+		schema_version: COMMITMENT_STATE_PROJECTION_SCHEMA_VERSION,
 		states: [state],
+	}));
+	const interruptedDir = path.join(out, "cases", "demo__demo", "attempts", "2");
+	fs.mkdirSync(path.join(interruptedDir, "telemetry"), { recursive: true });
+	fs.writeFileSync(path.join(interruptedDir, "telemetry", "commitments.json"), JSON.stringify({
+		schema_version: COMMITMENT_STATE_PROJECTION_SCHEMA_VERSION,
+		states: [interruptedState],
 	}));
 	fs.writeFileSync(path.join(out, "cases", "demo__demo", "case.json"), JSON.stringify({
 		schema_version: BENCHMARK_CASE_SCHEMA_VERSION,
@@ -122,6 +176,16 @@ test("report exposes uniform observation metadata, verified declarations, round 
 			ended_at: new Date(10_000).toISOString(),
 			metrics,
 			observation,
+		}, {
+			attempt: 2,
+			execution_status: "infra_error",
+			terminated_by: null,
+			evaluation_run_id: "eval-b",
+			verdict: "infra_error",
+			started_at: new Date(20_000).toISOString(),
+			ended_at: new Date(32_000).toISOString(),
+			metrics: interruptedMetrics,
+			observation,
 		}],
 		final_verdict: "resolved",
 	}, null, 2));
@@ -131,17 +195,33 @@ test("report exposes uniform observation metadata, verified declarations, round 
 		prefix_transition_count: 1,
 		prefix_invalidation_count: 1,
 		prefix_invalidation_rate: 1,
+		system_prompt_change_count: 0,
+		tool_schema_change_count: 0,
+		worker_context_change_count: 0,
+		message_prefix_invalidation_count: 1,
+		prompt_shape_metrics_available: true,
+		component_chars: {
+			system_prompt: [100],
+			tool_schema: [200],
+			worker_context: [300],
+			message_prefix_min: 400,
+			message_prefix_max: 500,
+		},
+		max_context_utilization: 0.5,
 	});
 	expect(report.split_economics).toMatchObject({
-		spontaneous_split_eligible: 1,
+		spontaneous_split_eligible: 2,
 		spontaneous_split_count: 1,
-		spontaneous_split_rate: 1,
-		decomposition_mismatch_rate: 0,
+		spontaneous_split_rate: 0.5,
 	});
-	expect(report.split_economics.verified_declarations.obligations.consumers).toMatchObject({ eligible: 1, missing: 1 });
 	expect(report.split_economics.rounds_buckets["40+"]).toEqual({ resolved: 1, unresolved: 0, resolved_rate: 1 });
+	expect(report.collaboration).toEqual({
+		source_discovery_operations: 2,
+		validation_operations: 4,
+		integration_operations: 5,
+	});
 	expect(report.comparison_keys).toMatchObject({
-		observation_schema_version: 1,
+		observation_schema_version: 3,
 		intervention_flags: observation.intervention_flags,
 	});
 });

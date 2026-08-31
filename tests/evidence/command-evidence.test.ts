@@ -2,14 +2,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { openHandoff, submitReceipt } from "../../runtime/lib/handoff";
+import { submitReceipt } from "../../runtime/lib/commitment";
+import { claimTestWork } from "../runtime/helpers";
 import { RunPaths } from "../../runtime/lib/paths";
 import { createTask } from "../../runtime/lib/tasks";
 
 const REPO = path.resolve(import.meta.dir, "../..");
 const CODE_AGENT = path.join(REPO, "runtime", "bin", "code-agent");
 const RUN_ID = "run-evidence-test";
-const HANDOFF_ID = "h00002-verify";
+let commitmentId = "";
 
 let project: string;
 let paths: RunPaths;
@@ -17,6 +18,7 @@ let env: Record<string, string>;
 const sideEffects: string[] = [];
 
 beforeEach(() => {
+	commitmentId = "c_test_evidence";
 	project = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-evidence-"));
 	Bun.spawnSync(["git", "init", "-q"], { cwd: project });
 	paths = new RunPaths(path.join(project, ".state", "code"), RUN_ID);
@@ -24,8 +26,9 @@ beforeEach(() => {
 		Object.entries({
 			...process.env,
 			CODEFLOW_RUN_ID: RUN_ID,
-			CODEFLOW_HANDOFF_ID: HANDOFF_ID,
+			CODEFLOW_COMMITMENT_ID: commitmentId,
 			CODEFLOW_RUNS_DIR: paths.code,
+			CODEFLOW_PROJECT_DIR: project,
 		}).filter((entry): entry is [string, string] => entry[1] !== undefined),
 	);
 });
@@ -47,7 +50,7 @@ function evidence(args: string[]) {
 
 function record(id: string): any {
 	return JSON.parse(
-		fs.readFileSync(path.join(paths.evidence, HANDOFF_ID, "commands", `${id}.json`), "utf8"),
+		fs.readFileSync(path.join(paths.evidence, commitmentId, "commands", `${id}.json`), "utf8"),
 	);
 }
 
@@ -79,7 +82,7 @@ describe("mechanical command evidence", () => {
 		]);
 		expect(result.exitCode).toBe(7);
 
-		const commandDir = path.join(paths.evidence, HANDOFF_ID, "commands");
+		const commandDir = path.join(paths.evidence, commitmentId, "commands");
 		const record = JSON.parse(fs.readFileSync(path.join(commandDir, "failing.json"), "utf8"));
 		expect(record.status).toBe("FAIL");
 		expect(record.exit_code).toBe(7);
@@ -98,11 +101,9 @@ describe("mechanical command evidence", () => {
 
 	test("aggregates command records into an externally referenceable evidence batch", () => {
 		createTask(paths, "Verify command behavior");
-		const verify = openHandoff(paths, {
+		const verify = claimTestWork(paths, {
 			goalId: RUN_ID,
-			digest: "run checks",
-			intent: "verify command behavior",
-			expectedOutcome: ["checks pass"],
+			work: "run checks",
 		});
 		expect(
 			evidence(["run", "--id", "unit", "--", "bash", "-c", "printf ok"]).exitCode,
@@ -115,10 +116,10 @@ describe("mechanical command evidence", () => {
 			entries: [{ id: "unit", status: "PASS", exit_code: 0 }],
 		});
 		expect(() => submitReceipt(paths, {
-			handoffId: verify.id,
+			commitmentId: verify.id,
 			status: "completed",
 			effects: [{ file: output }],
-			established: ["checks passed"],
+			summary: "checks passed",
 		})).not.toThrow();
 	});
 
@@ -131,7 +132,7 @@ describe("mechanical command evidence", () => {
 			"codeflow-command-that-does-not-exist",
 		]);
 		expect(result.exitCode).toBe(127);
-		const commandDir = path.join(paths.evidence, HANDOFF_ID, "commands");
+		const commandDir = path.join(paths.evidence, commitmentId, "commands");
 		const record = JSON.parse(fs.readFileSync(path.join(commandDir, "missing.json"), "utf8"));
 		expect(record).toMatchObject({
 			status: "FAIL",

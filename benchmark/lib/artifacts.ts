@@ -11,26 +11,24 @@ import type { BenchmarkBudgets, BudgetName, ConsumptionMetricName } from "./budg
 import type { AttemptMetrics } from "./metrics";
 import type { BenchmarkVerdict } from "./driver";
 
-export const BENCHMARK_MANIFEST_SCHEMA_VERSION = 5;
-export const BENCHMARK_CASE_SCHEMA_VERSION = 3;
-export const OBSERVATION_SCHEMA_VERSION = 1;
+export const BENCHMARK_MANIFEST_SCHEMA_VERSION = 7;
+export const BENCHMARK_CASE_SCHEMA_VERSION = 5;
+export const OBSERVATION_SCHEMA_VERSION = 3;
 
 export interface InterventionFlags {
-	delivery_obligations: boolean;
-	decomposition_record: boolean;
-	handoff_spawn: boolean;
+	work_commitment_claims: boolean;
 	run_facts: boolean;
-	midcourse_handoff_text: boolean;
+	collaborate_capabilities: boolean;
 }
 
 export interface ObservationConfig {
-	schema_version: 1;
+	schema_version: 3;
 	intervention_flags: InterventionFlags;
 	request_named_split: boolean;
 }
 
 export interface BenchmarkManifest {
-	schema_version: 5;
+	schema_version: 7;
 	benchmark_run_id: string;
 	created_at: string;
 	dataset: {
@@ -85,7 +83,7 @@ export interface CaseAttemptRecord {
 }
 
 export interface CaseFile {
-	schema_version: 3;
+	schema_version: 5;
 	instance_id: string;
 	attempts: CaseAttemptRecord[];
 	final_verdict: BenchmarkVerdict;

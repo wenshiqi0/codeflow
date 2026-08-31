@@ -21,13 +21,17 @@ describe("single current architecture", () => {
 	test("removed runtime subsystems and registries do not exist", () => {
 		for (const relative of [
 			"runtime/roles.json",
+			"runtime/skills",
+			"runtime/lib/admission.ts",
 			"runtime/lib/roles.ts",
 			"runtime/lib/facts.ts",
 			"runtime/lib/collaboration-index.ts",
 			"runtime/lib/workspace-state.ts",
 			"runtime/extensions/codeflow-task",
 			"runtime/quality/test-patch.ts",
-			"runtime/cli/handoff.ts",
+			"runtime/cli/commitment.ts",
+			"references/patterns.md",
+			"references/work-methods",
 		]) expect(fs.existsSync(path.join(root, relative))).toBe(false);
 	});
 
@@ -48,15 +52,20 @@ describe("single current architecture", () => {
 			"goal_lane",
 			"_ungrouped",
 			"_default",
+			"CODEFLOW_ADMISSION_JSON",
+			"coding_complexity",
+			"solo_estimate",
+			"outer_assessment",
 		]) expect(source).not.toContain(residue);
 	});
 
 	test("organization has no code-agent command bypass", () => {
 		const launcher = fs.readFileSync(path.join(root, "runtime/bin/code-agent"), "utf8");
-		expect(launcher).not.toContain("handoff open");
+		expect(launcher).not.toContain("commitment open");
 		expect(launcher).not.toContain("goal create");
-		expect(launcher).toContain("receipt submit");
-		expect(launcher).toContain("recall goal");
+		expect(launcher).not.toContain("receipt submit");
+		expect(launcher).not.toContain("recall goal");
+		expect(launcher).toContain("evidence run|batch|log");
 	});
 
 	test("a Worker cannot recursively start another Task", () => {

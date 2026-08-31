@@ -161,16 +161,16 @@ export {
 } from "./report";
 
 export {
-	HANDOFF_STATE_PROJECTION_SCHEMA_VERSION,
+	COMMITMENT_STATE_PROJECTION_SCHEMA_VERSION,
 	OBSERVABILITY_RUNTIME_FAILURE_REASONS,
-	HandoffObservabilityError,
-	type HandoffStateProjection,
-	type HandoffStateScan,
-	type HandoffStateTelemetryFile,
+	CommitmentObservabilityError,
+	type CommitmentStateProjection,
+	type CommitmentStateScan,
+	type CommitmentStateTelemetryFile,
 	type ObservabilityRuntimeFailureReason,
-	projectHandoffState,
-	scanHandoffStates,
-	readHandoffStateProjections,
-	type HandoffObservabilitySummary,
-	summarizeHandoffStates,
-} from "../../runtime/lib/observability/handoff-state";
+	projectCommitmentState,
+	scanCommitmentStates,
+	readCommitmentStateProjections,
+	type CommitmentObservabilitySummary,
+	summarizeCommitmentStates,
+} from "../../runtime/lib/observability/commitment-state";

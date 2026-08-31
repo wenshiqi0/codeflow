@@ -79,10 +79,10 @@ import { pilotAllowlist } from "./pilot";
 import type { BenchmarkWorkspaceProvisioner } from "./process";
 import { buildBenchmarkReport, type BenchmarkReport } from "./report";
 import {
-	HANDOFF_STATE_PROJECTION_SCHEMA_VERSION,
-	scanHandoffStates,
-	type HandoffStateProjection,
-} from "../../runtime/lib/observability/handoff-state";
+	COMMITMENT_STATE_PROJECTION_SCHEMA_VERSION,
+	scanCommitmentStates,
+	type CommitmentStateProjection,
+} from "../../runtime/lib/observability/commitment-state";
 import { scanRunFacts } from "../../runtime/lib/observability/run-facts";
 import {
 	BENCHMARK_CASE_SCHEMA_VERSION,
@@ -187,7 +187,7 @@ function toolCallRow(
 	base: {
 		task_id: string;
 		worker_kind: "worker" | "service";
-		handoff_id: string | null;
+		commitment_id: string | null;
 		goal_id: string | null;
 		provider: string;
 		model: string;
@@ -199,7 +199,7 @@ function toolCallRow(
 	operationKind?: ToolOperationKind,
 ): ToolCallRecord {
 	return {
-		schema_version: TOOL_CALL_SCHEMA_VERSION as 1,
+		schema_version: TOOL_CALL_SCHEMA_VERSION as 4,
 		kind: status === null ? "requested" : "result",
 		call_id,
 		tool,
@@ -208,7 +208,7 @@ function toolCallRow(
 		at,
 		task_id: base.task_id,
 		worker_kind: base.worker_kind,
-		handoff_id: base.handoff_id,
+		commitment_id: base.commitment_id,
 		goal_id: base.goal_id,
 		provider: base.provider,
 		model: base.model,
@@ -221,7 +221,7 @@ const failedRow = (failed: FailedModelAttempt): Record<string, unknown> =>
 /**
  * Ledger rows for a batch of calls: a requested row always; a terminal
  * result row when the call finished; "incomplete" gets only the requested
- * row. Rows carry id/name/status/timestamps plus Task/Goal/Handoff,
+ * row. Rows carry id/name/status/timestamps plus Task/Goal/Commitment,
  * provider/model of the emitting context (the round for round-attached
  * calls, the event for standalone ones) — never payloads.
  */
@@ -231,7 +231,7 @@ function appendToolCalls(
 	attribution: {
 		task_id: string;
 		worker_kind: "worker" | "service";
-		handoff_id: string | null;
+		commitment_id: string | null;
 		goal_id: string | null;
 		provider: string;
 		model: string;
@@ -280,7 +280,7 @@ async function runInstanceAttempt(
 	const workspaceDir = path.join(attemptDir, "workspace");
 	const attemptPredictionFile = path.join(attemptDir, "prediction.jsonl");
 	const codeflowRunsDir = path.join(attemptDir, "codeflow-runs");
-	const handoffTelemetryFile = path.join(attemptDir, "telemetry", "handoffs.json");
+	const commitmentTelemetryFile = path.join(attemptDir, "telemetry", "commitments.json");
 
 	const clock = context.clock;
 	const attemptRunId = newAttemptRunId();
@@ -374,7 +374,7 @@ async function runInstanceAttempt(
 					provider: round.provider,
 					model: round.model,
 					turn: round.turn ?? null,
-					handoff_id: round.handoff_id ?? null,
+					commitment_id: round.commitment_id ?? null,
 					goal_id: round.goal_id ?? null,
 					usage: round.usage,
 				};
@@ -384,7 +384,7 @@ async function runInstanceAttempt(
 				const attribution = {
 					task_id: attemptRunId,
 					worker_kind: round.worker_kind,
-					handoff_id: round.handoff_id ?? null,
+					commitment_id: round.commitment_id ?? null,
 					goal_id: round.goal_id ?? null,
 					// The round IS the emitting context for its attached calls.
 					provider: round.provider,
@@ -412,7 +412,7 @@ async function runInstanceAttempt(
 				appendToolCalls(toolFile, toolRecords, {
 					task_id: attemptRunId,
 					worker_kind: event.worker_kind,
-					handoff_id: event.handoff_id ?? null,
+					commitment_id: event.commitment_id ?? null,
 					goal_id: event.goal_id ?? null,
 					provider: event.provider,
 					model: event.model,
@@ -462,16 +462,16 @@ async function runInstanceAttempt(
 	// Runtime observability is collected after the driver closes its runs but
 	// before metrics are built. The benchmark report later reads this canonical
 	// artifact rather than reaching back into runtime state files.
-	let handoffStates: HandoffStateProjection[] = [];
+	let commitmentStates: CommitmentStateProjection[] = [];
 	let runFactsRecords = [] as ReturnType<typeof scanRunFacts>;
-	let handoffTelemetryAvailable = false;
+	let commitmentTelemetryAvailable = false;
 	if (fs.existsSync(codeflowRunsDir)) {
-		const scan = scanHandoffStates(codeflowRunsDir);
-		handoffStates = scan.states;
-		handoffTelemetryAvailable = true;
-		writeJsonAtomic(handoffTelemetryFile, {
-			schema_version: HANDOFF_STATE_PROJECTION_SCHEMA_VERSION,
-			states: handoffStates,
+		const scan = scanCommitmentStates(codeflowRunsDir);
+		commitmentStates = scan.states;
+		commitmentTelemetryAvailable = true;
+		writeJsonAtomic(commitmentTelemetryFile, {
+			schema_version: COMMITMENT_STATE_PROJECTION_SCHEMA_VERSION,
+			states: commitmentStates,
 		});
 		runFactsRecords = scanRunFacts(codeflowRunsDir);
 	}
@@ -520,8 +520,8 @@ async function runInstanceAttempt(
 		usageRecords,
 		failedModelAttempts: failedAttempts,
 		toolCallRecords: toolRecords,
-		handoffStates,
-		handoffTelemetryAvailable,
+		commitmentStates,
+		commitmentTelemetryAvailable,
 		runFactsRecords,
 		timeToFirstPatchSeconds,
 		wallStartedAtMs: startMs,
@@ -583,21 +583,19 @@ export async function runBenchmark(options: BenchmarkRunOptions): Promise<Benchm
 			: null;
 
 	const interventionFlags: InterventionFlags = {
-		delivery_obligations: true,
-		decomposition_record: true,
-		handoff_spawn: true,
+		work_commitment_claims: true,
 		run_facts: true,
-		midcourse_handoff_text: true,
+		collaborate_capabilities: true,
 		...options.interventionFlags,
 	};
 	const observation: ObservationConfig = {
-		schema_version: OBSERVATION_SCHEMA_VERSION as 1,
+		schema_version: OBSERVATION_SCHEMA_VERSION as 3,
 		intervention_flags: interventionFlags,
 		request_named_split: options.requestNamedSplit ?? false,
 	};
 
 	const manifest: BenchmarkManifest = {
-		schema_version: BENCHMARK_MANIFEST_SCHEMA_VERSION as 5,
+		schema_version: BENCHMARK_MANIFEST_SCHEMA_VERSION as 7,
 		benchmark_run_id: benchmarkRunId,
 		created_at: new Date(clock.now()).toISOString(),
 		dataset: {
@@ -680,7 +678,7 @@ export async function runBenchmark(options: BenchmarkRunOptions): Promise<Benchm
 					? "infra_error"
 					: "not_evaluated";
 		const caseFile: CaseFile = {
-			schema_version: BENCHMARK_CASE_SCHEMA_VERSION as 3,
+			schema_version: BENCHMARK_CASE_SCHEMA_VERSION as 5,
 			instance_id: selected[index].instance_id,
 			attempts: instanceOutcomes.map((outcome) => outcome.record),
 			final_verdict: finalVerdict as CaseFile["final_verdict"],

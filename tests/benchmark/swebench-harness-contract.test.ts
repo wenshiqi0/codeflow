@@ -145,6 +145,7 @@ function wrapperEnv(
 	delete env.CODEFLOW_BENCHMARK_EVAL_DATASET; // default-under-test must be the script's own
 	env.PATH = `${world.stubDir}:${env.PATH ?? ""}`;
 	env.CODEFLOW_BENCHMARK_HARNESS_CACHE = world.cacheDir;
+	env.CODEFLOW_BENCHMARK_HARNESS_PYTHON = path.join(world.stubDir, "python3");
 	env.PINNED_HARNESS_REAL_PYTHON3 = realPython3();
 	env.PINNED_HARNESS_LOGIC = path.join(FAKES, "pinned-harness-logic.py");
 	env.PINNED_HARNESS_CAPTURE = world.captureDir;
@@ -297,6 +298,38 @@ describe("official evaluator wrapper: dataset default (WRAP-1)", () => {
  * ------------------------------------------------------------------ */
 
 describe("official evaluator wrapper: pinned-commit CLI contract (WRAP-2)", () => {
+	test("WRAP-2a: an unavailable evaluator Python fails before the harness starts", () => {
+		const world = buildWorld();
+		const predictions = writePredictions(world, "pred-wrap2a.jsonl", {
+			instance_id: INSTANCE_ID,
+			model_name_or_path: MODEL_NAME,
+			model_patch: "diff --git a/fix.py b/fix.py\n",
+		});
+		const result = runWrapper(world, { predictions, runId: EVAL_RUN_ID, instance: INSTANCE_ID }, {
+			CODEFLOW_BENCHMARK_HARNESS_PYTHON: path.join(world.outDir, "missing-python3"),
+		});
+		expect(result.exitCode).toBe(127);
+		expect(result.stderr).toContain("evaluator Python is not executable");
+		expect(readInvocations(world)).toHaveLength(0);
+	});
+
+	test("WRAP-2b: a Python without the Docker SDK fails before the harness starts", () => {
+		const world = buildWorld();
+		const predictions = writePredictions(world, "pred-wrap2b.jsonl", {
+			instance_id: INSTANCE_ID,
+			model_name_or_path: MODEL_NAME,
+			model_patch: "diff --git a/fix.py b/fix.py\n",
+		});
+		const pythonWithoutDocker = path.join(world.outDir, "python-without-docker");
+		fs.writeFileSync(pythonWithoutDocker, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+		const result = runWrapper(world, { predictions, runId: EVAL_RUN_ID, instance: INSTANCE_ID }, {
+			CODEFLOW_BENCHMARK_HARNESS_PYTHON: pythonWithoutDocker,
+		});
+		expect(result.exitCode).toBe(127);
+		expect(result.stderr).toContain("cannot import the Docker SDK");
+		expect(readInvocations(world)).toHaveLength(0);
+	});
+
 	test("WRAP-2: the invocation is `python3 -m swebench.harness.run_evaluation` with only flags that commit accepts", () => {
 		const world = buildWorld();
 		const predictions = writePredictions(world, "pred-wrap2.jsonl", {
@@ -304,7 +337,8 @@ describe("official evaluator wrapper: pinned-commit CLI contract (WRAP-2)", () =
 			model_name_or_path: MODEL_NAME,
 			model_patch: "diff --git a/fix.py b/fix.py\n",
 		});
-		runWrapper(world, { predictions, runId: EVAL_RUN_ID, instance: INSTANCE_ID });
+		const relativePredictions = path.relative(REPO, predictions);
+		runWrapper(world, { predictions: relativePredictions, runId: EVAL_RUN_ID, instance: INSTANCE_ID });
 		const rows = readInvocations(world);
 		expect(rows).toHaveLength(1);
 		const row = rows[0];
@@ -331,7 +365,7 @@ describe("official evaluator wrapper: pinned-commit CLI contract (WRAP-2)", () =
 		// The attempt protocol fixed by the seam contract: one instance, one run.
 		expect(map.get("--instance_ids")).toEqual([INSTANCE_ID]);
 		expect(flag(map, "--split")).toBe("test");
-		expect(flag(map, "--predictions_path")).toBe(predictions);
+		expect(flag(map, "--predictions_path")).toBe(fs.realpathSync(predictions));
 		expect(Number.parseInt(flag(map, "--max_workers"), 10)).not.toBeNaN();
 		expect(Number.parseInt(flag(map, "--timeout"), 10)).not.toBeNaN();
 		// The pinned harness writes logs/run_evaluation relative to its CWD, so

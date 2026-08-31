@@ -2,7 +2,7 @@
  * Privacy-safe tool-call ledger (design §7).
  *
  * A ledger row may carry ONLY the call id, tool name, status, timestamp, and
- * Codeflow attribution fields — Task/Goal/Handoff, Worker kind, and model —
+ * Codeflow attribution fields — Task/Goal/Commitment, Worker kind, and model —
  * sourced from the context that EMITTED the call (the assistant response,
  * the same attribution the usage ledger records). Direct provider/model on
  * every row is what lets reports count tools by model without identity-based
@@ -19,7 +19,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-export const TOOL_CALL_SCHEMA_VERSION = 1;
+export const TOOL_CALL_SCHEMA_VERSION = 4;
 
 /** The only top-level keys a ledger row may carry. */
 export const TOOL_CALL_RECORD_FIELDS: readonly string[] = [
@@ -31,7 +31,7 @@ export const TOOL_CALL_RECORD_FIELDS: readonly string[] = [
 	"at",
 	"task_id",
 	"worker_kind",
-	"handoff_id",
+	"commitment_id",
 	"goal_id",
 	"provider",
 	"model",
@@ -41,20 +41,20 @@ export const TOOL_CALL_RECORD_FIELDS: readonly string[] = [
 export type ToolCallRecordKind = "requested" | "result";
 export type ToolCallTerminalStatus = "succeeded" | "failed" | "rejected";
 export type ToolOperationKind =
-	| "goal_create"
-	| "goal_dependencies"
-	| "handoff_create"
-	| "recall"
+	| "inspect"
+	| "claim"
+	| "report"
+	| "delegate"
+	| "wait"
 	| "evidence_log"
 	| "evidence_run"
-	| "explore"
+	| "source_discovery"
 	| "edit"
 	| "execute"
-	| "organization"
 	| "other";
 
 export interface ToolCallRecord {
-	schema_version: 1;
+	schema_version: 4;
 	/** "result" rows carry the terminal status. */
 	kind: ToolCallRecordKind;
 	/** Dedup/association key. */
@@ -67,7 +67,7 @@ export interface ToolCallRecord {
 	at: string;
 	task_id: string | null;
 	worker_kind: "worker" | "service";
-	handoff_id: string | null;
+	commitment_id: string | null;
 	goal_id: string | null;
 	/** Provider of the assistant response that emitted the call. */
 	provider: string;
@@ -79,18 +79,18 @@ export interface ToolCallRecord {
 
 const ALLOWED_KEYS = new Set<string>(TOOL_CALL_RECORD_FIELDS);
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set(["succeeded", "failed", "rejected"]);
-const NULLABLE_STRINGS = ["task_id", "handoff_id", "goal_id"] as const;
+const NULLABLE_STRINGS = ["task_id", "commitment_id", "goal_id"] as const;
 export const OPERATION_KINDS: readonly ToolOperationKind[] = [
-	"goal_create",
-	"goal_dependencies",
-	"handoff_create",
-	"recall",
+	"inspect",
+	"claim",
+	"report",
+	"delegate",
+	"wait",
 	"evidence_log",
 	"evidence_run",
-	"explore",
+	"source_discovery",
 	"edit",
 	"execute",
-	"organization",
 	"other",
 ] as const;
 const OPERATION_KIND_SET: ReadonlySet<string> = new Set(OPERATION_KINDS);

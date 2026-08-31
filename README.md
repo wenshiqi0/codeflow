@@ -1,157 +1,121 @@
 # Codeflow
 
-Codeflow 是基于 Pi 的 Goal-scoped 多 Worker 执行 Runtime。
+Codeflow 是基于 Pi 的 Goal-scoped 多 Worker 执行 Runtime。Root 负责组织与收口，
+Child Worker 负责自己声明并完成工作；系统不使用固定 planner、coder、tester 或
+reviewer 角色。
 
-它只持久化四类核心语义对象：
+> 协同对象、action、字段、状态与不变量由
+> [Codeflow Collaboration Semantics](docs/collaboration-semantics.md) 统一定义。
+> 该文档是规范性语义基线；README 只提供使用入口，不复制另一套协议。
+
+## 核心模型
+
+模型只需要理解：
 
 ```text
-Task -> Goal Graph -> Handoff -> Receipt
+Goal        稳定的结果边界
+Commitment  一个 Worker 自己声明的工作承诺
+Receipt     该 Commitment 的进展或结果
+Worker      执行并拥有 Commitment 的主体
 ```
 
-`Task` 本身就是 Goal Graph 的高维根 Goal，根级与未拆分工作统一使用
-`goal_id = task_id`。只有真正拆分出的结果作用域才创建 Child Goal；系统没有
-`_root`、`_default`、`_ungrouped` 或对应兼容层。
+Task 是 Runtime 容器并充当根 Goal，不是额外的工作协议。一个 Goal 可以包含多个
+Commitment，也可以在完成一个 Commitment 后再次委派给新的 Worker；只有结果或依赖
+边界实质变化时才创建新 Goal。
 
-所有执行 Agent 都是 Worker，不存在永久 planner、coder、tester、reviewer
-身份，也不预设 workflow。Root 仍是 Worker；它的特殊性只来自 Runtime 实际
-加载的 Goal、Handoff 和 Worker organization tools。
+所有 Worker 只看到一个 `collaborate` 工具。共同 action 是 `inspect`、`claim`、
+`report`；Root 额外拥有 `delegate` 与 `wait`。Root 的 Pi 工具面是
+`read,collaborate`，Child Worker 保留正常编辑和执行工具。Root 必须至少委派一名
+Worker 承担实质仓库工作。
 
-## 外层启用判定
+委派是异步的。Root 继续检查、组织或委派；只有下一项管理决策对 Worker 结果存在必须
+立即满足的强依赖时才使用 `wait`，并在 Worker Claim、提交进展 Receipt 或结束时返回。
+Child 在 Claim 前只能进行只读仓库检查；Runtime 会拦截编辑、写入和不能明确判定为
+只读的命令。Claim 不等待 Root 审批，但 Root 可检查其 Commitment 并异步调整组织。
 
-是否进入 Codeflow 由外层宿主判断，Runtime 内部不做任务分类。调用 skill 执行
-新 Task 时，外层提供以下 admission 输入；它不是 `codeflow exec` 的 CLI 参数，
-也不会写入 Task objective：
+`claim` 只表达 `work` 以及可选的 `done_when`、`constraints`。`report` 只表达
+`progress|completed|blocked`、`summary` 以及可选的 `effects`、`remaining`。
+revision、内容身份、执行归属、并发锁和观测分类均由 Runtime 管理。
 
-```yaml
-admission:
-  multi_agent: true | false
-  source: explicit_user | outer_assessment
-  time:
-    solo_estimate: <duration or range>
-    parallelizable: true | false
-    rationale: <brief evidence>
-  coding_complexity:
-    level: low | medium | high
-    rationale: <brief evidence>
-```
+## 提示词分层
 
-时间维度关注单 Worker 的预计关键路径，以及是否存在能抵消启动、同步和收敛成本的
-并行工作；编码复杂度关注独立模块、接口、不变量、未知项与验证面的数量和耦合。
-预计耗时较长但只能串行等待，或数量很多但机械重复的修改，本身不足以启用。
-用户明确指定 Codeflow 时 `source = explicit_user` 并尊重该选择；否则只有
-`multi_agent = true` 才启动 Codeflow，缺失或为 `false` 时由外层直接处理。
+- `references/manager.md`：只注入 Root，定义管理、委派、整合与收口方法；
+- `references/worker.md`：只注入执行 Worker，定义工程实施、验证与回执方法。
 
-这个输入只决定是否进入具备多 Worker 能力的 Runtime，不规定角色、阶段、Goal
-数量或拆分路径。进入后 Root Worker 仍根据实际发现自主组织，并在最终 Receipt
-声明 `decomposition: split | solo — <reason>`。
-
-## 协议
-
-- Goal 是可独立推进、依赖、调度和召回的结果作用域，不是步骤或角色。
-- Handoff 在一个 Goal 内开启有边界的 Work Commitment。
-- 一个 Handoff 可携带 append-only 的不可变 Receipt 链；Receipt 是增量语义
-  delta，不是 snapshot 或 checkpoint。`progress` Receipt 不关闭 Handoff 地
-  推进持久语义；只有 terminal Receipt（`completed`、`partial`、`blocked`、
-  `failed`、`superseded`）关闭 Handoff 并结束 root run。旧的 schema-v1
-  `receipt.json` 记录按单个 terminal Receipt 读取。
-- 后续 Receipt 可按稳定引用 resolve 或 supersede 同一 Goal 内的早前事实，
-  包括前序 Handoff 产生的语义；折叠后的 decisions、unresolved、blockers
-  不会累积过期值。
-- Effect 只通过 Git ref、文件路径、外部 ID、服务引用或最小语义描述引用现实状态。
-- Context、tool observation、推理和 session 都不是持久语义。
-- Runtime failure 只产生中断事件，不伪造 Receipt。
-
-每个 Root Receipt，以及状态为 `completed` 或 `partial` 的 Child Receipt，声明
-回归证据、问题复现和下游消费者三类交付义务；不适用时给出理由。义务声明与 Root
-的拆分声明由离线观察面分类，不改变 Receipt 状态，也不构成预设执行流程。
-
-默认 Worker context 是 pull-first：只注入 Task、精简后的 root/当前 Goal
-state、当前 Handoff、当前 Handoff 的折叠 Receipt 状态和 Receipt head 元数据，
-绝不注入完整 root/当前 Goal Handoff/Receipt 历史。显式 recall 支持 Goal、
-Handoff 或某个精确 Receipt。Goal 的 `semantic` 只返回最新相关 Handoff 的
-折叠 Receipt 状态与 head，不重放增量链；完整链只在 `full` 时返回；
-同 Goal 查询可使用 ambient 作用域，跨 Goal 查询必须显式。所有 Handoff/Receipt
-使用 canonical JSON 和 SHA-256 content identity，并按共享单调逻辑序保持
-append-only 前缀。
+Manager 默认使用 GLM-5.3，Worker 默认使用 MiMo v2.5 Pro；两者保持 high thinking，
+并通过提示词与工具能力区分工作层次。两份提示词不增加协议字段；目标仓库自己的
+`AGENTS.md` 由 context extension 动态注入。
 
 ## 命令
 
 ```bash
-codeflow exec [--worker-model <provider/model>] "<objective>"
+codeflow exec [--manager-model <provider/model>] [--worker-model <provider/model>] "<objective>"
 codeflow resume <task-id>
 codeflow ls
-codeflow sub <task-id> [--since <seq>]
+codeflow sub <task-id> [--since <seq>] [--kind <kind>,...] [--timeout 600]
 codeflow goals <task-id>
 codeflow usage <task-id>
 codeflow audit <task-id> [--force]
 codeflow stop <task-id>
 ```
 
-`codeflow` 面向人和外层 Harness。`code-agent` 只在 Worker 进程中暴露：
+外层观察者只传入用户的 issue 或需求，不附加复杂度分类、时间估计、Worker 数量或
+预设拓扑。Root 从仓库证据判断如何委派。`exec --manager-model` 只覆盖 Manager，
+`exec --worker-model` 只覆盖执行 Worker；两者都不修改配置或内部 service 模型。
+
+`code-agent` 只提供执行辅助命令：
 
 ```text
-receipt submit
-recall goal|handoff|receipt
 evidence run|batch|log
 check source
 ```
 
-Root 进程额外加载模型可见的 `goal_create`、`goal_dependencies`、
-`handoff_create`、`handoff_spawn`、`worker_spawn`、`worker_group`；所有 Worker
-都有 `receipt` 和 `recall`。`handoff_spawn` 将可选 Child Goal、Handoff 创建和
-Worker 启动合并为一次调用，并在首次持久化前整体校验，降低有价值拆分的固定成本。
-Runtime 关闭 Pi 的扩展自动发现，只加载各进程显式声明的扩展，因此 Child Worker
-不会继承 Root 的 organization tools。Child Worker 每次启动新的 Pi 进程且不传入
-既有 session id；完整 session 会保留为审计记录。
+## 持久化与恢复
 
-每次 provider 请求前，Runtime 在上下文尾部注入统一结构的 `run_facts`，暴露当前
-execution 已用轮次与 context utilization，并把隐私安全的数值观测追加到
-`run-observations.jsonl`。这些数据提供决策与实验观察信号，不是指令，也不进入
-Task/Goal/Handoff/Receipt 的持久语义。
+每个 Task 位于 `.codeflow/runs/code/<task-id>/`。核心数据是 `task.json`、`goals/`、
+`commitments/<id>/commitment.json`、对应的 `receipts/`、`events/` 与 `runner.json`。
+Commitment 和 Receipt 使用 canonical JSON、content identity 与共享单调顺序。
 
-## 恢复语义
+`progress` Receipt 保持 Commitment 开放；`completed` 和 `blocked` 关闭它。进程、
+provider、tool、超时、取消或输出截断产生 Runtime interruption event，不伪造
+Receipt。显式 `resume` 只在 attempt 已终止且 `runner_exited` 后继续原 Commitment，
+不会恢复旧 session、隐藏推理或 checkpoint。
 
-每次 attempt 必须先产生以下之一：
+默认 Worker context 是 pull-first：当前 Goal、Child 所需的根 Goal 摘要、同一 Goal
+下带 id 的历史 Commitment/Receipt 摘要、可选的当前 Commitment、简洁 Receipt 状态
+和临时 focus。超过 600 字符的注入文本只保留前后各 300 字符，持久记录保持完整；可用
+`inspect(commitment_id=...)` 或 `inspect(receipt_id=...)` 召回。该 context 在一次
+execution 内保持固定，避免历史增长改写 provider prefix。
 
-- `run_finished`：Root Handoff 已提交 terminal Receipt；
-- `run_interrupted`：Root Worker 因进程、provider、tool、取消或上下文故障退出，
-  且没有 terminal Receipt；已有持久进度的中断记录为 missing terminal
-  Receipt，而不是 DELEGATION_ARTIFACT_MISSING；
+Child Worker 的 context utilization 达到 80% 时，Runtime 会先写入 `blocked` Receipt
+（Claim 前则写 execution blocker），说明单个 Worker 无法安全完成并建议 Manager
+拆分剩余工作，然后程序化结束该 Worker。
 
-之后产生 `runner_exited`，该 Task 才允许显式 `resume`。中断恢复会重新执行原
-Handoff，并从 Task、Root/Goal H/R、Goal State 和当前外部状态重新 grounding；
-不会恢复旧 session、推理或 checkpoint。已由 Receipt 关闭的 Handoff 永不重开。
+## 观测与 Benchmark
+
+使用量、工具活动、prompt shape 和 Commitment lifecycle 都通过隐私安全的 Runtime
+记录观测。拓扑从真实父子 Commitment 推导；模型不写 `obligation.*`、decomposition
+声明或其他指标标签。官方 SWE-bench evaluator 决定 benchmark verdict，Receipt 不
+替代评测结果。详细契约见 [Benchmark contract](docs/benchmark-contract.md)。
 
 ## 目录
 
 ```text
-runtime/config.json                     Worker 与内部 service 模型配置
-runtime/lib/                            Task/Goal/Handoff/Receipt 与观测核心
-runtime/extensions/codeflow-context/    临时 working set 注入
-runtime/extensions/codeflow-protocol/   Receipt 与 Recall tools
-runtime/extensions/codeflow-organization/ Root organization tools
-references/worker.md                    所有 Worker 共用的执行先验
-references/output-compression.md        输出压缩 service 提示
-benchmark/                              SWE-bench driver 与报告
+docs/collaboration-semantics.md          规范性协同语义基线
+runtime/config.json                      Worker 与内部 service 模型配置
+runtime/lib/                             Goal/Commitment/Receipt 与观测核心
+runtime/extensions/codeflow-context/     临时 working set 注入
+runtime/extensions/codeflow-organization/ 单一 collaborate 工具
+references/manager.md                    Manager 管理方法
+references/worker.md                     Worker 工程方法
+benchmark/                               SWE-bench driver 与报告
 ```
-
-每个 Task 的运行数据位于 `.codeflow/runs/code/<task-id>/`：`task.json`、
-`goals/`、`handoffs/<id>/handoff.json` 加 `handoffs/<id>/receipts/` 的
-Receipt 链、`events/`、`usage.jsonl`、`run-observations.jsonl` 和
-`runner.json`。不存在用于恢复或传递语义的 facts ledger、conversation snapshot、
-collaboration index 或 mutable handoff state；观测 ledger 不能替代 Receipt。
 
 ## 配置与验证
 
-`runtime/config.json` 提供默认 executor 配置，区分通用 Worker 和内部
-`output_compression` service。`exec --worker-model <provider>/<model>` 可为本次 Task
-显式覆盖所有 Worker（Root 与 delegated Worker）使用的模型，不影响内部 service，
-也不修改配置文件。provider 定义来自 `runtime/models.json` 与可选的本机
-`runtime/providers.json`；密钥只从环境读取。`runtime/models.json` 中的模型可用
-`thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"`
-声明该模型的 Worker 默认思考强度；Codeflow 会将它显式传给 Pi。该字段只控制
-Worker，模型仍须使用 Pi 的 `reasoning`、`thinkingLevelMap` 和 `compat` 正确声明
-上游能力。
+`runtime/config.json` 分别配置 manager、worker 的模型和提示词，以及内部 service。
+provider 定义来自 `runtime/models.json` 和可选的本机 `runtime/providers.json`；密钥只
+从环境读取。模型可显式声明 `thinkingLevel`、`contextWindow` 和 `maxTokens`。
 
 ```bash
 bun install
@@ -162,8 +126,8 @@ bun test
 
 ## 安装
 
-仓库可安装为宿主 skill，也可直接使用 `runtime/bin/codeflow`。若要放入用户
-`PATH`，使用指向真实仓库入口的启动脚本，不要直接创建符号链接：
+仓库可作为宿主 skill 使用，也可直接运行 `runtime/bin/codeflow`。放入用户 `PATH` 时，
+使用指向真实仓库入口的启动脚本：
 
 ```bash
 mkdir -p "$HOME/.local/bin"

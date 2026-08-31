@@ -37,7 +37,7 @@ function readCompressionService(): CompressionService {
 	compressionService = {
 		provider: resolved.provider,
 		model: resolved.model,
-		systemPrompt: resolved.systemPrompt,
+		systemPrompt: resolved.systemPrompts.join("\n\n"),
 	};
 	return compressionService;
 }

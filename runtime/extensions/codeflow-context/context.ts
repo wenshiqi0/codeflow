@@ -1,8 +1,8 @@
-/** Assemble a fresh, pull-first, Goal-scoped working set for every Handoff. */
+/** Assemble a fresh, pull-first, Goal-scoped working set for every Worker. */
 
 import { canonicalJson, contentHash } from "../../lib/canonical";
-import { type HandoffRecord, loadReceiptChain } from "../../lib/handoff";
-import { loadGoal } from "../../lib/goals";
+import { commitmentHistory, type CommitmentRecord, loadReceiptChain } from "../../lib/commitment";
+import type { ContextSectionShape, WorkerContextShape } from "../../lib/observability/prompt-shape";
 import { RunPaths } from "../../lib/paths";
 import { goalState } from "../../lib/state";
 import { loadTask } from "../../lib/tasks";
@@ -16,79 +16,140 @@ export interface ContextSource {
 export interface BuiltContext {
 	xml: string;
 	sources: ContextSource[];
+	shape: WorkerContextShape;
+}
+
+export const CONTEXT_TEXT_LIMIT = 600;
+const CONTEXT_TEXT_EDGE = 300;
+const CONTEXT_ELLIPSIS = "…";
+
+/** Bound model-visible text without changing the durable record used for recall. */
+export function truncateContextText(value: string): string {
+	const characters = [...value];
+	if (characters.length <= CONTEXT_TEXT_LIMIT) return value;
+	return `${characters.slice(0, CONTEXT_TEXT_EDGE).join("")}${CONTEXT_ELLIPSIS}${characters.slice(-CONTEXT_TEXT_EDGE).join("")}`;
+}
+
+function boundedValue(value: unknown): unknown {
+	if (typeof value === "string") return truncateContextText(value);
+	if (Array.isArray(value)) return value.map(boundedValue);
+	if (value !== null && typeof value === "object") {
+		return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, boundedValue(item)]));
+	}
+	return value;
 }
 
 function escapeXml(value: string): string {
 	return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function source(kind: string, ref: string, value: unknown): ContextSource {
-	return { kind, ref, hash: contentHash(value) };
+function escapeXmlAttribute(value: string): string {
+	return escapeXml(value).replace(/"/g, "&quot;");
 }
 
-function section(name: string, value: unknown): string {
-	return `  <${name}>${escapeXml(canonicalJson(value))}</${name}>`;
+interface ContextEntry {
+	kind: string;
+	ref: string;
+	value: unknown;
+	format?: "json" | "text";
+	attributes?: Record<string, string>;
+}
+
+function renderSection(entry: ContextEntry): { xml: string; shape: ContextSectionShape } {
+	const value = boundedValue(entry.value);
+	const attributes = Object.entries(entry.attributes ?? {})
+		.map(([name, content]) => ` ${name}="${escapeXmlAttribute(content)}"`)
+		.join("");
+	const content = entry.format === "text" ? String(value) : canonicalJson(value);
+	const xml = `  <${entry.kind}${attributes}>${escapeXml(content)}</${entry.kind}>`;
+	return {
+		xml,
+		shape: { kind: entry.kind, hash: contentHash({ attributes: entry.attributes ?? {}, value }), chars: xml.length },
+	};
+}
+
+function currentGoalContext(state: ReturnType<typeof goalState>) {
+	const { commitment_refs: _commitments, receipt_refs: _receipts, summaries: _summaries, ...current } = state;
+	return current;
 }
 
 /**
- * Pull-first context: the Task, reduced root and current Goal state, the
- * current Handoff, its folded Receipt state, and Receipt head metadata.
- *
- * Full Handoff/Receipt history is never injected; it is available only
- * through the explicit `recall` tools.
+ * Pull-first context: reduced root and current Goal state, bounded summaries
+ * of prior Goal-scoped Commitments and Receipts, the current Commitment, and
+ * its folded Receipt state. Record ids recall full durable content through
+ * `collaborate inspect`.
  */
 export function buildWorkerContext(
 	paths: RunPaths,
-	current: HandoffRecord,
-	priors: { sharedRules?: string; projectRules?: string } = {},
+	goalId: string,
+	current: CommitmentRecord | null,
+	priors: {
+		projectRules?: string;
+		workFocus?: string;
+	} = {},
 ): BuiltContext {
 	const task = loadTask(paths);
-	const folded = loadReceiptChain(paths, current.id);
-	const head = folded.head;
-	const receiptHead = {
-		receipt_id: head?.id ?? null,
-		seq: head?.seq ?? null,
-		status: head?.status ?? null,
-		terminal: folded.terminal !== null,
-		receipt_count: folded.receipts.length,
-	};
-	const foldedState = {
-		facts: {
-			established: folded.established,
-			decisions: folded.decisions,
-			discovered: folded.discovered,
-			unresolved: folded.unresolved,
-			blockers: folded.blockers,
-		},
-		head: receiptHead,
-	};
 	const rootState = goalState(paths, task.id);
-	const currentGoalState = current.goal_id === task.id
+	const currentGoalState = goalId === task.id
 		? rootState
-		: goalState(paths, current.goal_id);
-	const sources = [
-		...(priors.sharedRules?.trim() ? [source("shared_rules", "runtime/AGENTS.md", priors.sharedRules)] : []),
-		...(priors.projectRules?.trim() ? [source("project_rules", "AGENTS.md", priors.projectRules)] : []),
-		source("task", "task.json", task),
-		source("root_goal_state", task.id, rootState),
-		...(current.goal_id === task.id ? [] : [source("current_goal_state", current.goal_id, currentGoalState)]),
-		source("current_handoff", current.id, current),
-		source("current_handoff_folded", current.id, foldedState),
+		: goalState(paths, goalId);
+	const folded = current ? loadReceiptChain(paths, current.id) : null;
+	const foldedState = folded ? {
+		summaries: folded.summaries,
+		effects: folded.effects,
+		remaining: folded.remaining,
+		head: {
+			receipt_id: folded.head?.id ?? null,
+			seq: folded.head?.seq ?? null,
+			status: folded.head?.status ?? null,
+			terminal: folded.terminal !== null,
+			receipt_count: folded.receipts.length,
+		},
+	} : null;
+	const bootstrap = current ? null : {
+		goal_id: goalId,
+		focus: priors.workFocus?.trim() || null,
+	};
+	const historyEntries: Array<ContextEntry & { seq: number }> = commitmentHistory(paths)
+		.filter((view) => view.commitment.goal_id === goalId && view.commitment.id !== current?.id)
+		.flatMap((view) => [
+			{
+				kind: "commit",
+				ref: view.commitment.id,
+				value: view.commitment.work,
+				format: "text" as const,
+				attributes: { id: view.commitment.id },
+				seq: view.commitment.seq,
+			},
+			...view.folded.receipts.map((receipt) => ({
+				kind: "receipt",
+				ref: receipt.id,
+				value: receipt.summary,
+				format: "text" as const,
+				attributes: { id: receipt.id },
+				seq: receipt.seq,
+			})),
+		])
+		.sort((left, right) => left.seq - right.seq || left.ref.localeCompare(right.ref));
+	const entries: ContextEntry[] = [
+		...(priors.projectRules?.trim() ? [{ kind: "project_rules", ref: "AGENTS.md", value: priors.projectRules, format: "text" as const }] : []),
+		...(goalId === task.id ? [] : [{ kind: "root_goal", ref: task.id, value: rootState }]),
+		{ kind: "goal", ref: goalId, value: currentGoalContext(currentGoalState) },
+		...historyEntries.map(({ seq: _, ...entry }) => entry),
+		...(bootstrap ? [{ kind: "worker_bootstrap", ref: goalId, value: bootstrap }] : []),
+		...(current ? [{ kind: "current_commitment", ref: current.id, value: current }] : []),
+		...(current && foldedState ? [{ kind: "current_commitment_folded", ref: current.id, value: foldedState }] : []),
 	];
-	const manifest = sources
-		.map((entry) => `    <source kind="${entry.kind}" ref="${escapeXml(entry.ref)}" hash="${entry.hash}" />`)
-		.join("\n");
-	const sections = [
-		...(priors.sharedRules?.trim() ? [section("shared_rules", priors.sharedRules)] : []),
-		...(priors.projectRules?.trim() ? [section("project_rules", priors.projectRules)] : []),
-		section("task", task),
-		section("root_goal_state", rootState),
-		...(current.goal_id === task.id ? [] : [section("current_goal_state", currentGoalState)]),
-		section("current_handoff", current),
-		section("current_handoff_folded", foldedState),
-	];
+	const sections = entries.map(renderSection);
+	const sources = entries.map((entry, index) => ({ kind: entry.kind, ref: entry.ref, hash: sections[index].shape.hash }));
+	const xml = `<codeflow_context version="7">\n${sections.map((entry) => entry.xml).join("\n")}\n</codeflow_context>`;
 	return {
-		xml: `<codeflow_context version="3">\n  <context_manifest>\n${manifest}\n  </context_manifest>\n${sections.join("\n")}\n</codeflow_context>`,
+		xml,
 		sources,
+		shape: {
+			hash: contentHash(xml),
+			chars: xml.length,
+			sections: sections.map((entry) => entry.shape),
+		},
 	};
 }

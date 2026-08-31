@@ -23,6 +23,6 @@ export function contentHash(value: unknown): string {
 	return createHash("sha256").update(canonicalJson(value), "utf8").digest("hex");
 }
 
-export function contentId(prefix: "h" | "r", value: unknown): string {
+export function contentId(prefix: "c" | "r", value: unknown): string {
 	return `${prefix}_${contentHash(value)}`;
 }

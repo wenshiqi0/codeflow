@@ -51,7 +51,7 @@ const CODEFLOW_BIN =
 const RUN_SCOPED_ENV_KEYS = [
 	"CODEFLOW_RUN_ID",
 	"CODEFLOW_RUNS_DIR",
-	"CODEFLOW_HANDOFF_ID",
+	"CODEFLOW_COMMITMENT_ID",
 	"CODEFLOW_GOAL_ID",
 ];
 
@@ -222,7 +222,7 @@ function streamLedgers(): number {
 					model: row.model,
 					turn: row.turn ?? null,
 					request_started_at: row.request_started_at ?? null,
-					handoff_id: row.handoff_id ?? null,
+					commitment_id: row.commitment_id ?? null,
 				goal_id: row.goal_id ?? null,
 				usage: row.usage,
 			},
@@ -244,7 +244,7 @@ function streamLedgers(): number {
 			// the call; never inferred from another identity field.
 			provider: row.provider,
 			model: row.model,
-			handoff_id: row.handoff_id ?? null,
+			commitment_id: row.commitment_id ?? null,
 			goal_id: row.goal_id ?? null,
 				calls: [
 					{
@@ -302,7 +302,7 @@ for (const row of pendingRequested.values()) {
 		worker_kind: row.worker_kind,
 		provider: row.provider,
 		model: row.model,
-		handoff_id: row.handoff_id ?? null,
+		commitment_id: row.commitment_id ?? null,
 		goal_id: row.goal_id ?? null,
 			calls: [
 				{

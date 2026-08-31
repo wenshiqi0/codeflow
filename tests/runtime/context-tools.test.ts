@@ -3,12 +3,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import organization from "../../runtime/extensions/codeflow-organization";
-import protocol from "../../runtime/extensions/codeflow-protocol";
 import { buildChildWorkerArgs, resolveLaunchWorker } from "../../runtime/extensions/codeflow-organization/worker-launcher";
-import { buildWorkerContext } from "../../runtime/extensions/codeflow-context/context";
-import { buildWorkerArgv, type ResolvedExecutor } from "../../runtime/lib/config";
+import { buildWorkerContext, truncateContextText } from "../../runtime/extensions/codeflow-context/context";
+import { buildWorkerArgv, loadRuntimeConfig, resolveAgent, type ResolvedExecutor } from "../../runtime/lib/config";
 import { createGoal } from "../../runtime/lib/goals";
-import { openHandoff, submitReceipt } from "../../runtime/lib/handoff";
+import { loadReceiptChain, submitReceipt } from "../../runtime/lib/commitment";
+import { claimTestWork } from "./helpers";
 import { RunPaths } from "../../runtime/lib/paths";
 import { createTask } from "../../runtime/lib/tasks";
 
@@ -22,44 +22,69 @@ function runtime(): RunPaths {
 }
 
 describe("pull-first Goal context", () => {
-	test("injects reduced state and folded current-Handoff state, never full history", () => {
+	test("injects bounded Goal history with ids before the current Commitment", () => {
 		const paths = runtime();
 		createTask(paths, "Build outcome");
-		const root = openHandoff(paths, { goalId: paths.runId, digest: "root scope", intent: "scope", expectedOutcome: ["known"] });
-		submitReceipt(paths, { handoffId: root.id, status: "completed", established: ["root established"] });
+		const root = claimTestWork(paths, { goalId: paths.runId, work: "root scope" });
+		submitReceipt(paths, { commitmentId: root.id, status: "completed", summary: "root established" });
 		createGoal(paths, { id: "child", objective: "Child outcome" });
-		const prior = openHandoff(paths, { goalId: "child", digest: "prior child", intent: "prior", expectedOutcome: ["prior done"] });
-		submitReceipt(paths, { handoffId: prior.id, status: "progress", established: ["child established"], unresolved: ["open question"] });
-		const current = openHandoff(paths, { goalId: "child", digest: "current child", intent: "continue", expectedOutcome: ["finished"] });
-		const built = buildWorkerContext(paths, current);
+		const prior = claimTestWork(paths, { goalId: "child", work: "prior child" });
+		submitReceipt(paths, { commitmentId: prior.id, status: "completed", summary: "child established" });
+		const current = claimTestWork(paths, { goalId: "child", work: "current child" });
+		const built = buildWorkerContext(paths, "child", current);
 		const kinds = built.sources.map((entry) => entry.kind);
-		expect(kinds).toEqual(["task", "root_goal_state", "current_goal_state", "current_handoff", "current_handoff_folded"]);
-		// Full history is never injected: prior Handoff digests and intents do
-		// not appear, while folded facts arrive via the reduced Goal states.
-		expect(built.xml).not.toContain("prior child");
+		expect(kinds).toEqual(["root_goal", "goal", "commit", "receipt", "current_commitment", "current_commitment_folded"]);
+		expect(built.xml).not.toContain("context_manifest");
+		expect(built.xml).not.toContain("\"runnable\"");
+		expect(built.shape.chars).toBe(built.xml.length);
+		expect(built.shape.sections.map((section) => section.kind)).toEqual(kinds);
+		expect(built.xml).toContain(`<commit id="${prior.id}">prior child</commit>`);
+		expect(built.xml).toContain(`<receipt id="${loadReceiptChain(paths, prior.id).head!.id}">child established</receipt>`);
 		expect(built.xml).not.toContain("root scope");
 		expect(built.xml).toContain("child established");
-		expect(built.xml).toContain("<current_handoff_folded>");
+		expect(built.xml.match(/child established/g)).toHaveLength(1);
+		expect(built.xml).toContain("<current_commitment_folded>");
+		expect(built.xml.indexOf(`<commit id="${prior.id}">`)).toBeLessThan(
+			built.xml.indexOf(`<receipt id="${loadReceiptChain(paths, prior.id).head!.id}">`),
+		);
 	});
 
-	test("a fresh Handoff carries an empty folded state and null head", () => {
+	test("truncates every long model-visible string to its first and last 300 characters", () => {
+		const paths = runtime();
+		const long = `${"a".repeat(350)}${"b".repeat(350)}`;
+		createTask(paths, long);
+		const prior = claimTestWork(paths, { goalId: paths.runId, work: long });
+		const receipt = submitReceipt(paths, { commitmentId: prior.id, status: "completed", summary: long });
+		const built = buildWorkerContext(paths, paths.runId, null, { projectRules: long, workFocus: long });
+		const bounded = `${"a".repeat(300)}…${"b".repeat(300)}`;
+		expect(truncateContextText(long)).toBe(bounded);
+		expect([...truncateContextText(long)]).toHaveLength(601);
+		expect(built.xml).not.toContain(long);
+		expect(built.xml).toContain(`<commit id="${prior.id}">${bounded}</commit>`);
+		expect(built.xml).toContain(`<receipt id="${receipt.id}">${bounded}</receipt>`);
+		expect(built.xml).toContain(`\"objective\":\"${bounded}\"`);
+		expect(built.xml).toContain(`<project_rules>${bounded}</project_rules>`);
+		expect(built.xml).toContain(`\"focus\":\"${bounded}\"`);
+	});
+
+	test("a fresh Commitment carries an empty folded state and null head", () => {
 		const paths = runtime();
 		createTask(paths, "Build outcome");
-		const current = openHandoff(paths, { goalId: paths.runId, digest: "root", intent: "scope", expectedOutcome: ["known"] });
-		const built = buildWorkerContext(paths, current);
+		const current = claimTestWork(paths, { goalId: paths.runId, work: "root" });
+		const built = buildWorkerContext(paths, paths.runId, current);
 		expect(built.xml).toContain("\"receipt_id\":null");
 		expect(built.xml).toContain("\"terminal\":false");
+		expect(built.xml.match(/Build outcome/g)).toHaveLength(1);
 	});
 });
 
 describe("capability is the loaded tool surface", () => {
-	test("protocol is universal and organization is a separate Root extension", () => {
-		const universal: string[] = [];
-		const rootOnly: string[] = [];
-		protocol({ registerTool(tool: { name: string }) { universal.push(tool.name); } } as never);
-		organization({ registerTool(tool: { name: string }) { rootOnly.push(tool.name); } } as never);
-		expect(universal.sort()).toEqual(["recall", "receipt"]);
-		expect(rootOnly.sort()).toEqual(["goal_create", "goal_dependencies", "handoff_create", "handoff_spawn", "worker_group", "worker_spawn"]);
+	test("one collaborate tool exposes process-scoped capabilities", () => {
+		const tools: string[] = [];
+		process.env.CODEFLOW_PROCESS_KIND = "worker";
+		organization({ registerTool(tool: { name: string }) { tools.push(tool.name); } } as never);
+		expect(tools).toEqual(["collaborate"]);
+		delete process.env.CODEFLOW_PROCESS_KIND;
 	});
 
 	test("every Worker launch is a fresh Pi context with extension discovery disabled", () => {
@@ -67,20 +92,34 @@ describe("capability is the loaded tool surface", () => {
 		const resolved: ResolvedExecutor = {
 			provider: "test-provider",
 			model: "test-model",
-			systemPrompt: "test system prompt",
-			promptPath: "/tmp/worker.md",
+			systemPrompts: ["shared system prompt", "scoped method knowledge"],
+			promptPaths: ["/tmp/worker.md", "/tmp/methods.md"],
 		};
-		const rootArgs = buildWorkerArgv(resolved, "root prompt", ["/runtime/extensions/root-only.ts"]);
+		const rootArgs = buildWorkerArgv(
+			resolved,
+			"root prompt",
+			["/runtime/extensions/root-only.ts"],
+			["read", "collaborate"],
+		);
 		const childArgs = buildChildWorkerArgs(resolved);
 		expect(rootArgs).toContain("--no-extensions");
 		expect(childArgs).toContain("--no-extensions");
+		const appended = (args: string[]) => args.flatMap((arg, index) =>
+			arg === "--append-system-prompt" ? [args[index + 1]] : []);
+		expect(appended(rootArgs)).toEqual(resolved.systemPrompts);
+		expect(appended(childArgs)).toEqual(resolved.systemPrompts);
+		expect(rootArgs).not.toContain("--system-prompt");
+		expect(childArgs).not.toContain("--system-prompt");
+		expect(rootArgs.slice(rootArgs.indexOf("--tools"), rootArgs.indexOf("--tools") + 2))
+			.toEqual(["--tools", "read,collaborate"]);
+		expect(childArgs).not.toContain("--tools");
 		expect(rootArgs).toContain("/runtime/extensions/root-only.ts");
 		const childExtensions = childArgs.flatMap((arg, index) =>
 			arg === "--extension" ? [path.basename(path.dirname(childArgs[index + 1]))] : [],
 		);
 		expect(childExtensions).toEqual([
 			"provider-profiles",
-			"codeflow-protocol",
+			"codeflow-organization",
 			"host-guard",
 			"codeflow-context",
 			"bash-compressor",
@@ -88,14 +127,52 @@ describe("capability is the loaded tool surface", () => {
 			"telemetry-ledger",
 			"agent-watchdog",
 		]);
-		expect(launcher).toContain("buildChildWorkerArgs(resolved)");
+		expect(launcher).toContain("buildChildWorkerArgs(resolved, input.resumeCommitmentId !== undefined)");
 		expect(launcher).not.toContain('"--no-session"');
 		expect(rootArgs).not.toContain("--no-session");
 		expect(childArgs).not.toContain("--no-session");
 		expect(launcher).not.toContain("--session-id");
 	});
 
-	test("delegated Workers inherit the run-scoped model override", () => {
+	test("Manager and Worker receive separate formal prompts", () => {
+		const config = path.resolve(import.meta.dir, "../../runtime/config.json");
+		const manager = resolveAgent(config, "manager");
+		const worker = resolveAgent(config, "worker");
+		expect(manager.promptPaths.map((prompt) => path.basename(prompt))).toEqual(["manager.md"]);
+		expect(worker.promptPaths.map((prompt) => path.basename(prompt))).toEqual(["worker.md"]);
+		expect({ provider: manager.provider, model: manager.model }).toEqual({
+			provider: "zhipuai-coding-plan",
+			model: "glm-5.3",
+		});
+		expect({ provider: worker.provider, model: worker.model }).toEqual({
+			provider: "zhipuai-coding-plan",
+			model: "glm-5.3-flash",
+		});
+		expect(manager.thinkingLevel).toBe("high");
+		expect(worker.thinkingLevel).toBe("high");
+		expect(manager.systemPrompts.join("\n")).toContain("# Manager");
+		expect(manager.systemPrompts.join("\n")).not.toContain("Test-driven development");
+		expect(worker.systemPrompts.join("\n")).toContain("Test-driven development");
+		expect(worker.systemPrompts.join("\n")).not.toContain("cross-Goal integration");
+	});
+
+	test("the retired shared agent shape is rejected instead of treated as compatibility input", () => {
+		const temp = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-config-"));
+		dirs.push(temp);
+		const config = path.join(temp, "config.json");
+		fs.writeFileSync(config, JSON.stringify({
+			agent: {
+				model: "provider/model",
+				prompts: { manager: "references/manager.md", worker: "references/worker.md" },
+			},
+			services: {
+				output_compression: { model: "provider/model", prompt: "references/output-compression.md" },
+			},
+		}));
+		expect(() => loadRuntimeConfig(config)).toThrow("runtime config contains unknown keys");
+	});
+
+	test("spawned Workers inherit the run-scoped model override", () => {
 		const resolved = resolveLaunchWorker("explicit-provider/explicit-model");
 		expect({ provider: resolved.provider, model: resolved.model }).toEqual({
 			provider: "explicit-provider",
@@ -103,15 +180,12 @@ describe("capability is the loaded tool surface", () => {
 		});
 	});
 
-	test("the configured GLM Worker carries its models.json thinking level into Pi", () => {
-		const resolved = resolveLaunchWorker("zhipuai-coding-plan/glm-5.3");
-		const args = buildChildWorkerArgs(resolved);
-		expect(resolved.thinkingLevel).toBe("high");
-		expect(args.slice(args.indexOf("--thinking"), args.indexOf("--thinking") + 2)).toEqual(["--thinking", "high"]);
-	});
-
-	test("the configured MiMo Worker uses its highest supported thinking level", () => {
-		const resolved = resolveLaunchWorker("mimo/mimo-v2.5-pro");
+	test("the default GLM Flash Worker uses its highest supported thinking level", () => {
+		const resolved = resolveLaunchWorker();
+		expect({ provider: resolved.provider, model: resolved.model }).toEqual({
+			provider: "zhipuai-coding-plan",
+			model: "glm-5.3-flash",
+		});
 		const args = buildChildWorkerArgs(resolved);
 		expect(resolved.thinkingLevel).toBe("high");
 		expect(args.slice(args.indexOf("--thinking"), args.indexOf("--thinking") + 2)).toEqual(["--thinking", "high"]);

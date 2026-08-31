@@ -13,6 +13,31 @@
         {
           "id": "glm-5.3",
           "name": "GLM-5.3",
+          "contextWindow": 204800,
+          "maxTokens": 65536,
+          "reasoning": true,
+          "thinkingLevel": "high",
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "high",
+            "medium": "high",
+            "high": "high",
+            "max": "max"
+          },
+          "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": true,
+            "maxTokensField": "max_tokens",
+            "thinkingFormat": "zai",
+            "zaiToolStream": true
+          }
+        },
+        {
+          "id": "glm-5.3-flash",
+          "name": "GLM-5.3 Flash",
+          "contextWindow": 204800,
+          "maxTokens": 65536,
           "reasoning": true,
           "thinkingLevel": "high",
           "thinkingLevelMap": {
