@@ -84,9 +84,9 @@ export function operationKind(tool: string, input: unknown): ToolCallRecord["ope
 	if (tool !== "bash") return "other";
 
 	const command = commandText(input);
-	if (/^code-agent\s+evidence\s+log(?:\s|$)/.test(command)) return "evidence_log";
-	if (/^code-agent\s+evidence\s+run(?:\s|$)/.test(command)) return "evidence_run";
-	if (/^code-agent\s+check\s+source(?:\s|$)/.test(command)) return "execute";
+	if (/^codeteam\s+evidence\s+log(?:\s|$)/.test(command)) return "evidence_log";
+	if (/^codeteam\s+evidence\s+run(?:\s|$)/.test(command)) return "evidence_run";
+	if (/^codeteam\s+check\s+source(?:\s|$)/.test(command)) return "execute";
 	if (/(^|\s)(?:pytest|py\.test|bun|npm|pnpm|yarn|go|cargo|make)(?:\s|$)/.test(command)) {
 		return "execute";
 	}

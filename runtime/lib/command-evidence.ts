@@ -277,7 +277,7 @@ export async function runCommandEvidence(
 		};
 		writeJsonAtomic(recordPath, deduped);
 		fs.unlinkSync(claimPath);
-		console.error(`code-agent evidence: deduped ${id} from ${original.id}`);
+		console.error(`codeteam evidence: deduped ${id} from ${original.id}`);
 		return deduped.exit_code;
 	}
 
@@ -424,7 +424,7 @@ export async function runCommandEvidence(
 	};
 	writeJsonAtomic(recordPath, entry);
 	fs.unlinkSync(claimPath);
-	console.error(`code-agent evidence: recorded ${id} at ${recordPath}`);
+	console.error(`codeteam evidence: recorded ${id} at ${recordPath}`);
 	return exitCode;
 }
 

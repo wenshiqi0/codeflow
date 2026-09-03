@@ -14,10 +14,10 @@ const MAX_LOG_BOUND = 65_536;
 
 function usage(): string {
 	return (
-		"usage: code-agent evidence run --id <id> [--timeout-ms <ms>] -- <command> [args...]\n" +
-		"       code-agent evidence run --id <id> [--no-dedupe] [--timeout-ms <ms>] -- <command> [args...]\n" +
-		"       code-agent evidence batch --output <file>\n" +
-		"       code-agent evidence log <id> [--head N] [--tail N] [--grep <pattern>]\n" +
+		"usage: codeteam evidence run --id <id> [--timeout-ms <ms>] -- <command> [args...]\n" +
+		"       codeteam evidence run --id <id> [--no-dedupe] [--timeout-ms <ms>] -- <command> [args...]\n" +
+		"       codeteam evidence batch --output <file>\n" +
+		"       codeteam evidence log <id> [--head N] [--tail N] [--grep <pattern>]\n" +
 		"\n" +
 		"--timeout-ms overrides CODEFLOW_EVIDENCE_TIMEOUT_MS; 0 disables the guard.\n" +
 		"A timed-out command is killed with its whole process tree and recorded\n" +
@@ -177,7 +177,7 @@ export async function main(argv: string[]): Promise<number> {
 		throw new EvidenceError(usage());
 	} catch (error) {
 		if (error instanceof EvidenceError) {
-			console.error(`code-agent evidence: error: ${error.message}`);
+			console.error(`codeteam evidence: error: ${error.message}`);
 			return 1;
 		}
 		throw error;

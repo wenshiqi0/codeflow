@@ -4,7 +4,7 @@
  *
  * Everything here is about a whole Task, never about one Work Commitment.
  * Commitment closure, Recall, and mechanical evidence stay on the Worker-facing
- * `code-agent` surface.
+ * `codeteam` surface.
  *
  * Output is one JSON object per line on stdout and diagnostics on stderr, so a
  * follower can read incrementally without waiting for a document to close.

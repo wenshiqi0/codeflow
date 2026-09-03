@@ -59,13 +59,28 @@ describe("single current architecture", () => {
 		]) expect(source).not.toContain(residue);
 	});
 
-	test("organization has no code-agent command bypass", () => {
-		const launcher = fs.readFileSync(path.join(root, "runtime/bin/code-agent"), "utf8");
+	test("the internal codeteam command has no organization bypass", () => {
+		const runtimeBin = path.join(root, "runtime", "bin");
+		const launcherPath = path.join(runtimeBin, "codeteam");
+		const launcher = fs.readFileSync(launcherPath, "utf8");
+		const retiredLauncher = path.join(root, "runtime", "bin", ["code", "agent"].join("-"));
+		expect(fs.existsSync(retiredLauncher)).toBe(false);
+		expect(fs.statSync(launcherPath).mode & 0o111).not.toBe(0);
 		expect(launcher).not.toContain("commitment open");
 		expect(launcher).not.toContain("goal create");
 		expect(launcher).not.toContain("receipt submit");
 		expect(launcher).not.toContain("recall goal");
 		expect(launcher).toContain("evidence run|batch|log");
+		const help = Bun.spawnSync(["codeteam", "--help"], {
+			cwd: root,
+			env: {
+				...process.env,
+				CODEFLOW_RUN_ID: "task-codeteam-test",
+				PATH: `${runtimeBin}:${process.env.PATH ?? ""}`,
+			},
+		});
+		expect(help.exitCode).toBe(0);
+		expect(help.stdout.toString()).toContain("usage: codeteam <command>");
 	});
 
 	test("a Worker cannot recursively start another Task", () => {

@@ -8,7 +8,7 @@ import { RunPaths } from "../../runtime/lib/paths";
 import { createTask } from "../../runtime/lib/tasks";
 
 const REPO = path.resolve(import.meta.dir, "../..");
-const CODE_AGENT = path.join(REPO, "runtime", "bin", "code-agent");
+const CODETEAM = path.join(REPO, "runtime", "bin", "codeteam");
 const RUN_ID = "run-evidence-test";
 let commitmentId = "";
 
@@ -41,7 +41,7 @@ afterEach(() => {
 });
 
 function evidence(args: string[]) {
-	return Bun.spawnSync(["bash", CODE_AGENT, "evidence", ...args], {
+	return Bun.spawnSync(["bash", CODETEAM, "evidence", ...args], {
 		cwd: project,
 		env,
 		timeout: 10_000,
@@ -306,7 +306,7 @@ describe("bounded evidence log retrieval", () => {
 		const result = evidence(["log", "does-not-exist"]);
 		expect(result.exitCode).toBe(1);
 		expect(result.stderr.toString().trim()).toBe(
-			"code-agent evidence: error: evidence log not found: does-not-exist",
+			"codeteam evidence: error: evidence log not found: does-not-exist",
 		);
 	});
 });

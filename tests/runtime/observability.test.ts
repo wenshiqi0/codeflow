@@ -119,5 +119,7 @@ test("collaborate actions preserve privacy-safe organization telemetry categorie
 	expect(operationKind("read", { path: "runtime/lib/state.ts" })).toBe("source_discovery");
 	expect(operationKind("bash", { command: "rg -n collaborate runtime" })).toBe("source_discovery");
 	expect(operationKind("bash", { command: "bun test tests/runtime" })).toBe("execute");
-	expect(operationKind("bash", { command: "code-agent check source" })).toBe("execute");
+	expect(operationKind("bash", { command: "codeteam evidence run --id unit -- true" })).toBe("evidence_run");
+	expect(operationKind("bash", { command: "codeteam evidence log unit" })).toBe("evidence_log");
+	expect(operationKind("bash", { command: "codeteam check source" })).toBe("execute");
 });

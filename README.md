@@ -89,7 +89,7 @@ Receipt，因此适合作为便宜、快速且不污染生产协同语义的分�
 预设拓扑。Root 从仓库证据判断如何委派。`exec --manager-model` 只覆盖 Manager，
 `exec --worker-model` 只覆盖执行 Worker；两者都不修改配置或内部 service 模型。
 
-`code-agent` 只提供执行辅助命令：
+`codeteam` 只提供执行辅助命令：
 
 ```text
 evidence run|batch|log

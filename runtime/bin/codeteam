@@ -6,7 +6,7 @@ CLI_DIR="$RUNTIME_DIR/cli"
 LIB_DIR="$RUNTIME_DIR/lib"
 
 if [[ -z "${CODEFLOW_RUN_ID:-}" ]]; then
-  echo "code-agent: error: CODEFLOW_RUN_ID is not set" >&2
+  echo "codeteam: error: CODEFLOW_RUN_ID is not set" >&2
   exit 1
 fi
 
@@ -18,7 +18,7 @@ export PATH="$RUNTIME_DIR/bin:$PATH"
 
 usage() {
   cat <<'EOF'
-usage: code-agent <command> [options]
+usage: codeteam <command> [options]
 
   evidence run|batch|log
   check source [paths...]
@@ -32,7 +32,7 @@ case "${1:-}" in
     ;;
   check)
     if [[ "${2:-}" != "source" ]]; then
-      echo "code-agent: error: check requires source" >&2
+      echo "codeteam: error: check requires source" >&2
       exit 1
     fi
     shift 2

@@ -8,7 +8,7 @@
 #
 # This binary speaks exec/resume/ls/sub/goals/usage/audit/stop and nothing else.
 # Worker semantic actions live only in the model-visible `collaborate` tool;
-# `code-agent`, which is not on a user PATH, contains evidence and source-check
+# `codeteam`, which is not on a user PATH, contains evidence and source-check
 # helpers only. There is no passthrough default: an unknown verb fails here
 # instead of quietly reaching a model.
 #
