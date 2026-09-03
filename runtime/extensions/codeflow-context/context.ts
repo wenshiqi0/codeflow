@@ -73,6 +73,52 @@ function currentGoalContext(state: ReturnType<typeof goalState>) {
 	return current;
 }
 
+function buildContext(entries: ContextEntry[]): BuiltContext {
+	const sections = entries.map(renderSection);
+	const sources = entries.map((entry, index) => ({ kind: entry.kind, ref: entry.ref, hash: sections[index].shape.hash }));
+	const xml = `<codeflow_context version="7">\n${sections.map((entry) => entry.xml).join("\n")}\n</codeflow_context>`;
+	return {
+		xml,
+		sources,
+		shape: {
+			hash: contentHash(xml),
+			chars: xml.length,
+			sections: sections.map((entry) => entry.shape),
+		},
+	};
+}
+
+/**
+ * Render exactly the context produced for a fresh Root without requiring a
+ * durable Codeflow run. Benchmark harnesses use this pure projection so their
+ * model-visible bootstrap cannot drift from production.
+ */
+export function buildFreshRootContext(
+	goalId: string,
+	objective: string,
+	priors: { projectRules?: string } = {},
+): BuiltContext {
+	const rootState = {
+		goal_id: goalId,
+		objective,
+		dependencies: [],
+		status: "pending" as const,
+		commitment_refs: [],
+		receipt_refs: [],
+		summaries: [],
+		effects: [],
+		remaining: [],
+	};
+	const bootstrap = { goal_id: goalId, focus: null };
+	return buildContext([
+		...(priors.projectRules?.trim()
+			? [{ kind: "project_rules", ref: "AGENTS.md", value: priors.projectRules, format: "text" as const }]
+			: []),
+		{ kind: "goal", ref: goalId, value: currentGoalContext(rootState) },
+		{ kind: "worker_bootstrap", ref: goalId, value: bootstrap },
+	]);
+}
+
 /**
  * Pull-first context: reduced root and current Goal state, bounded summaries
  * of prior Goal-scoped Commitments and Receipts, the current Commitment, and
@@ -140,16 +186,5 @@ export function buildWorkerContext(
 		...(current ? [{ kind: "current_commitment", ref: current.id, value: current }] : []),
 		...(current && foldedState ? [{ kind: "current_commitment_folded", ref: current.id, value: foldedState }] : []),
 	];
-	const sections = entries.map(renderSection);
-	const sources = entries.map((entry, index) => ({ kind: entry.kind, ref: entry.ref, hash: sections[index].shape.hash }));
-	const xml = `<codeflow_context version="7">\n${sections.map((entry) => entry.xml).join("\n")}\n</codeflow_context>`;
-	return {
-		xml,
-		sources,
-		shape: {
-			hash: contentHash(xml),
-			chars: xml.length,
-			sections: sections.map((entry) => entry.shape),
-		},
-	};
+	return buildContext(entries);
 }

@@ -59,6 +59,32 @@ codeflow audit <task-id> [--force]
 codeflow stop <task-id>
 ```
 
+若只想测量 Manager 面对一个 Issue 时的首次分工，可使用独立的 `codemark` 命令：
+
+```bash
+codemark [--manager-model <provider/model>] [--out <dir>] [--timeout 300] "<issue>"
+printf '%s\n' "<issue>" | codemark --out .codemark/runs/example
+```
+
+Codemark 向模型提供与生产 Root 相同的 `manager.md`、Goal context 和启动指令，不在模型
+可见的 prompt、context 或 tool schema 中主动标记测量身份；host 侧把 `delegate` 解释为
+提议记录，绝不启动 Worker。第一次 `wait` 即结束测量。默认产物目录为
+`$CODEFLOW_HOME/codemark/runs/<run-id>`（未设置时
+`~/.codeflow/codemark/runs/<run-id>`），不会写入被测仓库；`--out` 指定的则是本次 run
+尚不存在的精确目录。Manager 运行期间，`request.json` 与可变 `frontier.json` 只存在于
+仓库外、随机命名且权限为 `0700` 的 staging；`read` 保留生产 schema 和实现，但只允许
+canonical target 位于被测仓库内，并拒绝 staging、`/proc`、`/dev/fd` 等进程状态路径。
+host 汇总 usage 并确定终态后，才把包含
+`request.json`、`usage.json` 和不可变 `initial-organization.json` 的完整目录一次原子
+发布。因此公开 artifact 始终同时包含有序的初始委派前沿和精确 usage 汇总；
+`usage.json` 则保留逐回合明细。`delegate_count` 统计全部初始委派意图；
+`initial_worker_count` 只统计依赖已满足、在生产环境会立即启动的 Worker，依赖未满足的
+意图单列为 `waiting_on_dependencies_count`。即使 Manager 未 claim 或以零 delegate
+进入首次 `wait`，测量也会成功保存为 `first_wait`，并在 `assessment.policy_violations`
+中标出协议偏差，避免把“不主动分工”误当成运行失败。模型正文、隐藏推理和工具
+transcript 不会持久化。Codemark 不是 Codeflow Task，也不会生成 canonical Commitment 或
+Receipt，因此适合作为便宜、快速且不污染生产协同语义的分工基线。
+
 外层观察者只传入用户的 issue 或需求，不附加复杂度分类、时间估计、Worker 数量或
 预设拓扑。Root 从仓库证据判断如何委派。`exec --manager-model` 只覆盖 Manager，
 `exec --worker-model` 只覆盖执行 Worker；两者都不修改配置或内部 service 模型。
@@ -126,11 +152,13 @@ bun test
 
 ## 安装
 
-仓库可作为宿主 skill 使用，也可直接运行 `runtime/bin/codeflow`。放入用户 `PATH` 时，
-使用指向真实仓库入口的启动脚本：
+仓库可作为宿主 skill 使用，也可直接运行 `runtime/bin/codeflow` 与
+`runtime/bin/codemark`。放入用户 `PATH` 时，使用指向真实仓库入口的启动脚本：
 
 ```bash
 mkdir -p "$HOME/.local/bin"
 printf '#!/bin/sh\nexec "%s/runtime/bin/codeflow" "$@"\n' "$PWD" > "$HOME/.local/bin/codeflow"
 chmod 755 "$HOME/.local/bin/codeflow"
+printf '#!/bin/sh\nexec "%s/runtime/bin/codemark" "$@"\n' "$PWD" > "$HOME/.local/bin/codemark"
+chmod 755 "$HOME/.local/bin/codemark"
 ```

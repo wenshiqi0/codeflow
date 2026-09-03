@@ -1,4 +1,5 @@
 .codeflow/
+.codemark/
 /target/
 node_modules/
 runtime/sessions/

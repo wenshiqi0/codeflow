@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Run one Manager-only initial-organization measurement.
+set -euo pipefail
+
+RUNTIME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PACKAGE_ROOT="$(cd "$RUNTIME_DIR/.." && pwd)"
+CODEMARK_CLI="$PACKAGE_ROOT/codemark/cli/run.ts"
+CODEFLOW_HOME="${CODEFLOW_HOME:-$HOME/.codeflow}"
+
+usage() {
+  cat <<'EOF'
+usage: codemark [options] ["<issue>"]
+
+Run the configured Codeflow Manager until its first wait, recording only its
+initial organization frontier. No Worker is started.
+
+  --manager-model <provider/model>  override the configured Manager model
+  --out <dir>                       exact output directory for this run
+  --timeout <seconds>               wall-clock limit (default: 300)
+  --help                            show this help
+  --version                         show the Codemark version
+
+When no issue argument is supplied, codemark reads the issue from stdin.
+The default output is $CODEFLOW_HOME/codemark/runs/<run-id>.
+EOF
+}
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  --version)
+    echo "codemark 0.1.0"
+    exit 0
+    ;;
+esac
+
+# The Manager inspects the repository root. Artifacts default to CODEFLOW_HOME;
+# a relative explicit --out is still resolved from this project boundary.
+if PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  cd "$PROJECT_ROOT"
+fi
+
+export PATH="$RUNTIME_DIR/bin:$PATH"
+
+# Match Codeflow's optional global credential loading. Snapshot every exported
+# variable on a private descriptor so caller-provided values, including
+# provider-specific apiKeyEnv names from runtime/config.json, retain precedence
+# over the convenience file without carrying the snapshot into the Manager.
+exec 9< <(export -p)
+if [[ -f "$CODEFLOW_HOME/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$CODEFLOW_HOME/.env"
+  set +a
+fi
+# shellcheck disable=SC1091
+source /dev/fd/9
+exec 9<&-
+
+exec bun "$CODEMARK_CLI" "$@"
