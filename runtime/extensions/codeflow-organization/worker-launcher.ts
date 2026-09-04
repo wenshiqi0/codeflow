@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	commitmentForExecution,
+	commitmentHistory,
 	commitmentView,
 	loadCommitment,
 	loadReceiptChain,
@@ -300,7 +301,7 @@ export interface WorkerReceiptUpdate {
 	goal_id: string;
 	commitment_id: string;
 	receipt_id: string;
-	status: "progress";
+	status: "progress" | "completed" | "blocked";
 }
 
 export interface WorkerClaimUpdate {
@@ -310,20 +311,33 @@ export interface WorkerClaimUpdate {
 	status: "running";
 }
 
-export type WorkerWaitResult =
+export type WorkerFeedback =
 	| WorkerExecution
 	| WorkerClaimUpdate
-	| WorkerReceiptUpdate
-	| { status: "idle" };
+	| WorkerReceiptUpdate;
 
-const liveExecutions = new Map<string, Promise<WorkerExecution>>();
-const settledExecutions = new Map<string, WorkerExecution>();
-const observedClaims = new Set<string>();
-const observedProgressSeq = new Map<string, number>();
-const PROGRESS_POLL_MS = 250;
+interface TrackedExecution {
+	paths: RunPaths;
+	resumeCommitmentId?: string;
+	observedRecords: Set<string>;
+	abortController: AbortController;
+	removeAbortListener: () => void;
+	result?: WorkerExecution;
+}
+
+const trackedExecutions = new Map<string, TrackedExecution>();
 
 export function hasLiveWorkers(): boolean {
-	return liveExecutions.size > 0;
+	return [...trackedExecutions.values()].some((execution) => execution.result === undefined);
+}
+
+/** Cancel all live Children, including those launched during an earlier Root turn. */
+export function cancelWorkers(): void {
+	for (const execution of trackedExecutions.values()) {
+		if (execution.result !== undefined) continue;
+		execution.removeAbortListener();
+		execution.abortController.abort();
+	}
 }
 
 /** Start a Worker without blocking the Root's collaboration loop. */
@@ -334,117 +348,89 @@ export function delegateWorker(
 	dependencies: WorkerLauncherDependencies = {},
 ): WorkerLaunch {
 	const executionId = dependencies.executionId ?? `exec_${randomBytes(12).toString("hex")}`;
-	const running = spawnWorker(input, signal, cwd, { ...dependencies, executionId }).catch(() => {
-		const paths = currentPaths();
+	if (trackedExecutions.has(executionId)) throw new Error(`Worker execution is already tracked: ${executionId}`);
+	const paths = currentPaths();
+	const abortController = new AbortController();
+	const abort = () => abortController.abort();
+	const tracked: TrackedExecution = {
+		paths,
+		resumeCommitmentId: input.resumeCommitmentId,
+		observedRecords: new Set(),
+		abortController,
+		removeAbortListener: () => signal?.removeEventListener("abort", abort),
+	};
+	// A resumed execution receives its existing history in the startup context.
+	// Only records appended during this execution are new feedback.
+	if (input.resumeCommitmentId) {
+		tracked.observedRecords.add(input.resumeCommitmentId);
+		for (const receipt of loadReceiptChain(paths, input.resumeCommitmentId).receipts) {
+			tracked.observedRecords.add(receipt.id);
+		}
+	}
+	if (signal?.aborted) abort();
+	else signal?.addEventListener("abort", abort, { once: true });
+	const running = spawnWorker(input, abortController.signal, cwd, { ...dependencies, executionId }).catch(() => {
 		recordExecutionFailure(paths, executionId, input.goalId, ["WORKER_LAUNCH_FAILURE"], "Worker launcher failed before execution");
 		return interrupted(executionId, input.goalId, ["WORKER_LAUNCH_FAILURE"]);
 	});
-	liveExecutions.set(executionId, running);
-	if (input.resumeCommitmentId) observedClaims.add(executionId);
-	else observedClaims.delete(executionId);
-	observedProgressSeq.set(executionId, 0);
+	trackedExecutions.set(executionId, tracked);
 	void running.then((execution) => {
-		liveExecutions.delete(executionId);
-		settledExecutions.set(executionId, execution);
+		tracked.removeAbortListener();
+		tracked.result = execution;
 	});
 	return { execution_id: executionId, goal_id: input.goalId, status: "running" };
 }
 
-function nextWorkerUpdate(executionId: string): WorkerClaimUpdate | WorkerReceiptUpdate | null {
-	const commitment = commitmentForExecution(currentPaths(), executionId);
-	if (!commitment) return null;
-	if (!observedClaims.has(executionId)) {
-		observedClaims.add(executionId);
-		return {
-			execution_id: executionId,
-			goal_id: commitment.goal_id,
-			commitment_id: commitment.id,
-			status: "running",
-		};
-	}
-	const after = observedProgressSeq.get(executionId) ?? 0;
-	const receipt = loadReceiptChain(currentPaths(), commitment.id).receipts.find(
-		(candidate) => candidate.status === "progress" && candidate.seq > after,
-	);
-	if (!receipt) return null;
-	observedProgressSeq.set(executionId, receipt.seq);
-	return {
-		execution_id: executionId,
-		goal_id: commitment.goal_id,
-		commitment_id: commitment.id,
-		receipt_id: receipt.id,
-		status: "progress",
-	};
-}
-
-function consumeExecution(execution: WorkerExecution): WorkerExecution {
-	settledExecutions.delete(execution.execution_id);
-	observedClaims.delete(execution.execution_id);
-	observedProgressSeq.delete(execution.execution_id);
-	return execution;
-}
-
-function waitForNamedUpdate(
-	executionId: string,
-	running: Promise<WorkerExecution>,
-): Promise<WorkerExecution | WorkerClaimUpdate | WorkerReceiptUpdate> {
-	const current = nextWorkerUpdate(executionId);
-	if (current) return Promise.resolve(current);
-	return new Promise((resolve) => {
-		let finished = false;
-		const finish = (update: WorkerExecution | WorkerClaimUpdate | WorkerReceiptUpdate) => {
-			if (finished) return;
-			finished = true;
-			clearInterval(poller);
-			resolve(update);
-		};
-		const poller = setInterval(() => {
-			const update = nextWorkerUpdate(executionId);
-			if (update) finish(update);
-		}, PROGRESS_POLL_MS);
-		void running.then(finish);
-	});
-}
-
-function waitForAnyUpdate(): Promise<WorkerExecution | WorkerClaimUpdate | WorkerReceiptUpdate> {
-	for (const executionId of liveExecutions.keys()) {
-		const current = nextWorkerUpdate(executionId);
-		if (current) return Promise.resolve(current);
-	}
-	return new Promise((resolve) => {
-		let finished = false;
-		const finish = (update: WorkerExecution | WorkerClaimUpdate | WorkerReceiptUpdate) => {
-			if (finished) return;
-			finished = true;
-			clearInterval(poller);
-			resolve(update);
-		};
-		const poller = setInterval(() => {
-			for (const executionId of liveExecutions.keys()) {
-				const update = nextWorkerUpdate(executionId);
-				if (update) {
-					finish(update);
-					return;
-				}
+/** Take every new durable record and execution result without waiting for a Worker. */
+export function takeWorkerUpdates(): WorkerFeedback[] {
+	const records: { seq: number; id: string; owner: TrackedExecution; update: WorkerFeedback }[] = [];
+	const endings: [string, WorkerExecution][] = [];
+	const histories = new Map<string, ReturnType<typeof commitmentHistory>>();
+	for (const [executionId, tracked] of trackedExecutions) {
+		let history = histories.get(tracked.paths.runDir);
+		if (!history) {
+			history = commitmentHistory(tracked.paths);
+			histories.set(tracked.paths.runDir, history);
+		}
+		for (const { commitment, folded } of history) {
+			if (commitment.worker_execution_id !== executionId && commitment.id !== tracked.resumeCommitmentId) continue;
+			if (!tracked.observedRecords.has(commitment.id)) {
+				records.push({
+					seq: commitment.seq,
+					id: commitment.id,
+					owner: tracked,
+					update: {
+						execution_id: executionId,
+						goal_id: commitment.goal_id,
+						commitment_id: commitment.id,
+						status: "running",
+					},
+				});
 			}
-		}, PROGRESS_POLL_MS);
-		for (const running of liveExecutions.values()) void running.then(finish);
-	});
-}
-
-/** Yield until one named Worker, or any live Worker, claims, reports progress, or settles. */
-export async function waitForWorker(executionId?: string): Promise<WorkerWaitResult> {
-	if (executionId) {
-		const settled = settledExecutions.get(executionId);
-		if (settled) return consumeExecution(settled);
-		const running = liveExecutions.get(executionId);
-		if (!running) throw new Error(`unknown Worker execution: ${executionId}`);
-		const update = await waitForNamedUpdate(executionId, running);
-		return "exit_code" in update ? consumeExecution(update) : update;
+			for (const receipt of folded.receipts) {
+				if (tracked.observedRecords.has(receipt.id)) continue;
+				records.push({
+					seq: receipt.seq,
+					id: receipt.id,
+					owner: tracked,
+					update: {
+						execution_id: executionId,
+						goal_id: receipt.goal_id,
+						commitment_id: commitment.id,
+						receipt_id: receipt.id,
+						status: receipt.status,
+					},
+				});
+			}
+		}
+		if (tracked.result) endings.push([executionId, tracked.result]);
 	}
-	const settled = settledExecutions.entries().next().value as [string, WorkerExecution] | undefined;
-	if (settled) return consumeExecution(settled[1]);
-	if (liveExecutions.size === 0) return { status: "idle" };
-	const update = await waitForAnyUpdate();
-	return "exit_code" in update ? consumeExecution(update) : update;
+	// Read the complete batch before advancing any cursors. A transient read error
+	// cannot consume part of a batch that the caller never received.
+	records.sort((left, right) => left.seq - right.seq || left.id.localeCompare(right.id));
+	for (const record of records) record.owner.observedRecords.add(record.id);
+	// A fast Worker may settle between polls. Flush all of its Claims and Receipts
+	// before its exit result, and retire its tracking only after collecting both.
+	for (const [executionId] of endings) trackedExecutions.delete(executionId);
+	return [...records.map((record) => record.update), ...endings.map(([, execution]) => execution)];
 }

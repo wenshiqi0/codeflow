@@ -18,7 +18,8 @@ The normative collaboration contract is
 - Commitment is one Worker's self-authored work promise.
 - Receipt reports progress, completion, or a blocker.
 - All Workers have `inspect`, `claim`, and `report`; Root additionally has
-  `delegate` and `wait`.
+  `delegate`. Child feedback is delivered asynchronously; no Agent blocks on
+  another Agent. An idle Root response may end without closing the Task.
 - Root remains read-only and delegates substantive repository work to at least
   one Child Worker.
 

@@ -90,7 +90,11 @@ if (JSON.stringify(injected.message?.details) !== JSON.stringify({
 
 const imported = await import(organizationPath);
 let tool: any;
-imported.default({ registerTool(candidate: unknown) { tool = candidate; } });
+const handlers: Record<string, (...args: any[]) => unknown> = {};
+imported.default({
+	registerTool(candidate: unknown) { tool = candidate; },
+	on(event: string, handler: (...args: any[]) => unknown) { handlers[event] = handler; },
+});
 if (!tool) fail("organization extension did not register collaborate");
 
 let aborts = 0;
@@ -103,7 +107,7 @@ const ctx = {
 const execute = (action: Record<string, unknown>) =>
 	tool.execute("fake-call", { action }, undefined, undefined, ctx);
 
-const mode = process.env.CODEMARK_FAKE_PI_MODE ?? "first-wait";
+const mode = process.env.CODEMARK_FAKE_PI_MODE ?? "first-turn-end";
 let root: { execution_id: string; status: string } | null = null;
 if (mode !== "zero-workers") {
 	await execute({
@@ -145,7 +149,7 @@ if (mode !== "zero-workers") {
 }
 
 let usageEmitted = false;
-function emitUsage(stopReason: "stop" | "length" = "stop"): void {
+function emitUsage(stopReason: "stop" | "length" | "error" | "aborted" = "stop"): void {
 	if (usageEmitted) return;
 	usageEmitted = true;
 	console.log(JSON.stringify({
@@ -170,13 +174,9 @@ function emitUsage(stopReason: "stop" | "length" = "stop"): void {
 	}));
 }
 
-async function firstWait(): Promise<void> {
-	const result = await execute({
-		name: "wait",
-		...(root ? { execution_id: root.execution_id } : {}),
-	});
-	if (result.terminate !== true) fail("first wait did not return terminate:true");
-	if (aborts !== 1 || shutdowns !== 1) fail("first wait did not request Manager shutdown exactly once");
+async function firstTurnEnd(stopReason: "stop" | "length" | "error" | "aborted" = "stop"): Promise<void> {
+	await handlers.agent_end?.({ messages: [{ role: "assistant", stopReason, content: [] }] }, ctx);
+	if (aborts !== 0 || shutdowns !== 0) fail("natural turn end must not abort or force shutdown");
 }
 
 function keepAlive(): Promise<never> {
@@ -193,16 +193,16 @@ async function waitForReady(stream: ReadableStream<Uint8Array>): Promise<void> {
 	}
 }
 
-function exitAfterLateWait(): void {
+function exitAfterLateTurnEnd(): void {
 	let closing = false;
 	process.on("SIGTERM", () => {
 		if (closing) return;
 		closing = true;
 		void (async () => {
-			// Keep cutoff-before-wait fixtures outside the explicitly wait-wins
+			// Keep cutoff-before-turn-end fixtures outside the explicitly turn-end-wins
 			// same-millisecond tie used for cross-process ISO timestamps.
 			await Bun.sleep(10);
-			await firstWait();
+			await firstTurnEnd();
 			emitUsage();
 			process.exit(0);
 		})();
@@ -256,27 +256,28 @@ if (mode === "manager-exit-drain-signal") {
 	emitUsage();
 } else if (mode === "manager-exit") {
 	emitUsage();
-} else if (mode === "length") {
-	emitUsage("length");
-} else if (mode === "wait-after-timeout") {
-	exitAfterLateWait();
+} else if (mode === "length" || mode === "error" || mode === "aborted") {
+	emitUsage(mode);
+	await firstTurnEnd(mode);
+} else if (mode === "turn-end-after-timeout") {
+	exitAfterLateTurnEnd();
 	await keepAlive();
-} else if (mode === "wait-after-interrupt") {
-	exitAfterLateWait();
+} else if (mode === "turn-end-after-interrupt") {
+	exitAfterLateTurnEnd();
 	setTimeout(() => process.kill(process.ppid, "SIGINT"), 50);
 	await keepAlive();
-} else if (mode === "wait-before-timeout") {
-	await firstWait();
+} else if (mode === "turn-end-before-timeout") {
+	await firstTurnEnd();
 	emitUsage();
 	process.on("SIGTERM", () => process.exit(0));
 	await keepAlive();
-} else if (mode === "wait-before-interrupt") {
-	await firstWait();
+} else if (mode === "turn-end-before-interrupt") {
+	await firstTurnEnd();
 	emitUsage();
 	process.on("SIGTERM", () => process.exit(0));
 	setTimeout(() => process.kill(process.ppid, "SIGINT"), 50);
 	await keepAlive();
 } else {
-	await firstWait();
+	await firstTurnEnd();
 	emitUsage();
 }

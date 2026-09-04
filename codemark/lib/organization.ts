@@ -19,7 +19,7 @@ const GOAL_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 export type OrganizationStatus = "running" | "completed" | "incomplete" | "failed" | "interrupted";
 export type OrganizationTermination =
-	| "first_wait"
+	| "first_turn_end"
 	| "manager_exit"
 	| "timeout"
 	| "output_truncated"
@@ -114,13 +114,6 @@ export interface CodemarkDelegation {
 	recorded_at: string;
 }
 
-export interface CodemarkWait {
-	execution_id: string | null;
-	schema_valid: boolean;
-	invalid_collaborate_calls: number;
-	recorded_at: string;
-}
-
 export interface CodemarkMetrics {
 	delegate_count: number;
 	initial_worker_count: number;
@@ -133,10 +126,7 @@ export interface CodemarkMetrics {
 
 export type CodemarkPolicyViolation =
 	| "manager_claim_missing"
-	| "delegation_missing"
-	| "wait_schema_invalid"
-	| "collaborate_schema_invalid"
-	| "wait_target_unknown";
+	| "delegation_missing";
 
 export interface CodemarkAssessment {
 	organization_valid: boolean;
@@ -190,7 +180,6 @@ export interface InitialOrganization {
 	preclaim_report: CodemarkPreclaimReport | null;
 	goals: CodemarkGoal[];
 	delegations: CodemarkDelegation[];
-	wait: CodemarkWait | null;
 	metrics: CodemarkMetrics;
 	assessment: CodemarkAssessment | null;
 	usage: CodemarkUsage | null;
@@ -248,10 +237,6 @@ export type CodemarkAction =
 		};
 		focus: string;
 		resume_commitment_id?: string;
-	}
-	| {
-		name: "wait";
-		execution_id?: string;
 	};
 
 export interface OrganizationTransition {
@@ -259,14 +244,9 @@ export interface OrganizationTransition {
 	result: unknown;
 }
 
-export interface TransitionOrganizationOptions {
-	waitSchemaValid?: boolean;
-	invalidCollaborateCalls?: number;
-}
-
 export interface FinalizeOrganizationInput {
-	termination: Exclude<OrganizationTermination, "first_wait">;
-	status?: Exclude<OrganizationStatus, "running" | "completed">;
+	termination: OrganizationTermination;
+	status?: Exclude<OrganizationStatus, "running">;
 	diagnostic?: string;
 	now?: string;
 	force?: boolean;
@@ -398,16 +378,6 @@ function assessOrganization(organization: InitialOrganization): CodemarkAssessme
 	const policyViolations: CodemarkPolicyViolation[] = [];
 	if (organization.manager_claim === null) policyViolations.push("manager_claim_missing");
 	if (organization.delegations.length === 0) policyViolations.push("delegation_missing");
-	if (organization.wait?.schema_valid === false) policyViolations.push("wait_schema_invalid");
-	if ((organization.wait?.invalid_collaborate_calls ?? 0) > 0) {
-		policyViolations.push("collaborate_schema_invalid");
-	}
-	if (
-		organization.wait?.execution_id
-		&& !organization.delegations.some(
-			(delegation) => delegation.execution_id === organization.wait?.execution_id,
-		)
-	) policyViolations.push("wait_target_unknown");
 	return {
 		organization_valid: policyViolations.length === 0,
 		policy_violations: policyViolations,
@@ -492,6 +462,7 @@ function metrics(organization: Pick<InitialOrganization, "root_goal" | "goals" |
 }
 
 function defaultFinalStatus(termination: FinalizeOrganizationInput["termination"]): FinalizeOrganizationInput["status"] {
+	if (termination === "first_turn_end") return "completed";
 	if (termination === "provider_failure") return "failed";
 	if (termination === "interrupted") return "interrupted";
 	return "incomplete";
@@ -644,7 +615,6 @@ export function createInitialOrganization(
 		preclaim_report: null,
 		goals: [],
 		delegations: [],
-		wait: null,
 		metrics: {
 			delegate_count: 0,
 			initial_worker_count: 0,
@@ -722,7 +692,6 @@ export function transitionOrganization(
 	current: InitialOrganization,
 	action: CodemarkAction,
 	now = new Date().toISOString(),
-	options: TransitionOrganizationOptions = {},
 ): OrganizationTransition {
 	assertArtifact(current);
 	assertAcyclic(current);
@@ -930,32 +899,8 @@ export function transitionOrganization(
 				},
 			};
 		}
-		case "wait": {
-			requireRunning(organization, action.name);
-			const executionId = action.execution_id === undefined
-				? null
-				: nonEmpty(action.execution_id, "execution_id");
-			organization.wait = {
-				execution_id: executionId,
-				schema_valid: options.waitSchemaValid ?? true,
-				invalid_collaborate_calls: options.invalidCollaborateCalls ?? 0,
-				recorded_at: now,
-			};
-			organization.status = "completed";
-			organization.termination = "first_wait";
-			organization.assessment = assessOrganization(organization);
-			organization.timestamps.updated_at = now;
-			organization.timestamps.completed_at = now;
-			return {
-				organization,
-				result: {
-					status: "completed",
-					termination: "first_wait",
-					execution_id: executionId,
-					delegation_count: organization.delegations.length,
-				},
-			};
-		}
+		default:
+			throw new CodemarkOrganizationError("unknown collaborate action");
 	}
 }
 
@@ -963,9 +908,8 @@ export function applyOrganizationAction(
 	runDir: string,
 	action: CodemarkAction,
 	now?: string,
-	options?: TransitionOrganizationOptions,
 ): OrganizationTransition {
-	const transition = transitionOrganization(readInitialOrganization(runDir), action, now, options);
+	const transition = transitionOrganization(readInitialOrganization(runDir), action, now);
 	writeInitialOrganization(runDir, transition.organization);
 	return transition;
 }

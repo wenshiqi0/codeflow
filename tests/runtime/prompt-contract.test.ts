@@ -41,16 +41,16 @@ describe("Manager and Worker prompt contracts", () => {
 		expect(agents).toContain("../references/worker.md");
 	});
 
-	test("Root tool metadata locks the five actions without hidden prompt fragments", () => {
+	test("Root tool metadata locks four nonblocking actions without hidden prompt fragments", () => {
 		let tool: any;
 		process.env.CODEFLOW_PROCESS_KIND = "root";
-		organization({ registerTool(value: unknown) { tool = value; } } as never);
+		organization({ on() {}, registerTool(value: unknown) { tool = value; } } as never);
 		delete process.env.CODEFLOW_PROCESS_KIND;
 		expect(tool.name).toBe("collaborate");
 		expect(tool.promptSnippet).toBeUndefined();
 		expect(tool.promptGuidelines).toBeUndefined();
 		expect(tool.parameters.properties.action.anyOf.map((entry: any) => entry.properties.name.const))
-			.toEqual(["inspect", "claim", "report", "delegate", "wait"]);
+			.toEqual(["inspect", "claim", "report", "delegate"]);
 		expect(JSON.stringify(tool.parameters)).not.toMatch(/get_goal|get_commitment|get_receipt|claim_work|append_receipt|report_issue|spawn_worker/);
 	});
 
@@ -68,16 +68,17 @@ describe("Manager and Worker prompt contracts", () => {
 		expect(manager).toContain("instead of packing it with implementation steps or");
 		expect(manager).toContain("Worker feedback may change the organization");
 		expect(manager).toContain("Delegation is asynchronous");
-		expect(manager).toContain("instead of immediately waiting on it");
-		expect(manager).toContain("`wait` is not an idle fallback");
-		expect(manager).toMatch(/strong dependency on a Worker result/);
-		expect(manager).toMatch(/cannot proceed without that\s+result/);
+		expect(manager).toContain("Runtime delivers updates from every");
+		expect(manager).toContain("end the current response normally");
+		expect(manager).toContain("ending a response does not complete the Task");
+		expect(manager).toContain("Do not poll or block on a Child");
+		expect(manager).not.toContain("`wait`");
 		expect(manager).toContain("A Child Claim is early asynchronous feedback, not an approval gate");
 		expect(manager).toContain("inspect its Commitment");
 		expect(manager).toContain("prematurely treats a material technical assumption as");
 		expect(manager).toContain("delegate an independent cross-check");
 		expect(manager).toContain("Inspection alone does not adjust coverage");
-		expect(manager).toMatch(/After finding a narrow\s+boundary, do not repeat `wait` or close the Task/);
+		expect(manager).toMatch(/After finding a narrow\s+boundary, do not close the Task/);
 		expect(manager).toMatch(/Do not rewrite the Child's\s+Commitment/);
 		expect(manager).not.toContain("no useful coordination action remains");
 		expect(manager).not.toContain("Test-driven development");

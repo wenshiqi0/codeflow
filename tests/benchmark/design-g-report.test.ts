@@ -127,7 +127,6 @@ test("report exposes uniform observation metadata, actual delegation, round buck
 		claim: 1,
 		report: 1,
 		delegate: 1,
-		wait: 1,
 	};
 	const interruptedState = {
 		...state,
@@ -218,7 +217,7 @@ test("report exposes uniform observation metadata, actual delegation, round buck
 	expect(report.collaboration).toEqual({
 		source_discovery_operations: 2,
 		validation_operations: 4,
-		integration_operations: 5,
+		integration_operations: 4,
 	});
 	expect(report.comparison_keys).toMatchObject({
 		observation_schema_version: 3,

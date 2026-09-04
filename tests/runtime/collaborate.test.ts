@@ -10,7 +10,7 @@ import {
 	buildChildEnvironment,
 	delegateWorker,
 	spawnWorker,
-	waitForWorker,
+	takeWorkerUpdates,
 } from "../../runtime/extensions/codeflow-organization/worker-launcher";
 import { commitmentHistory, loadReceiptChain, submitReceipt } from "../../runtime/lib/commitment";
 import { createGoal } from "../../runtime/lib/goals";
@@ -48,7 +48,7 @@ function runtime(kind: "root" | "worker" = "worker") {
 	delete process.env.CODEFLOW_COMMITMENT_ID;
 	delete process.env.CODEFLOW_PARENT_COMMITMENT_ID;
 	let tool: any;
-	organization({ registerTool(value: unknown) { tool = value; } } as never);
+	organization({ on() {}, registerTool(value: unknown) { tool = value; } } as never);
 	return { paths, root, tool };
 }
 
@@ -66,7 +66,8 @@ describe("minimal collaborate protocol", () => {
 	test("Root and Worker receive one tool with depth-scoped actions", () => {
 		const root = runtime("root");
 		const rootActions = root.tool.parameters.properties.action.anyOf.map((entry: any) => entry.properties.name.const);
-		expect(rootActions).toEqual(["inspect", "claim", "report", "delegate", "wait"]);
+		expect(rootActions).toEqual(["inspect", "claim", "report", "delegate"]);
+		expect(Value.Check(root.tool.parameters, { action: { name: "wait" } })).toBe(false);
 
 		const worker = runtime("worker");
 		const workerActions = worker.tool.parameters.properties.action.anyOf.map((entry: any) => entry.properties.name.const);
@@ -275,7 +276,7 @@ describe("minimal collaborate protocol", () => {
 		expect(commitmentHistory(paths)).toEqual([]);
 	});
 
-	test("delegate returns immediately and wait observes the eventual Worker result", async () => {
+	test("delegate returns immediately and feedback includes the eventual Worker result", async () => {
 		const { paths, root } = runtime("root");
 		const launch = delegateWorker({
 			goalId: paths.runId,
@@ -305,14 +306,15 @@ describe("minimal collaborate protocol", () => {
 			}) as never,
 		});
 		expect(launch).toEqual({ execution_id: "exec-async", goal_id: paths.runId, status: "running" });
-		expect(await waitForWorker("exec-async")).toMatchObject({
+		await Bun.sleep(20);
+		expect(takeWorkerUpdates().find((update) => "exit_code" in update)).toMatchObject({
 			execution_id: "exec-async",
 			status: "interrupted",
 			runtime_failure_reasons: ["COMMITMENT_CLAIM_MISSING"],
 		});
 	});
 
-	test("wait yields on Claim and progress before a Worker terminates", async () => {
+	test("feedback collection returns Claim and progress without waiting for a Worker", async () => {
 		const { paths, root } = runtime("root");
 		const parent = claimTestWork(paths, {
 			goalId: paths.runId,
@@ -362,13 +364,14 @@ describe("minimal collaborate protocol", () => {
 			summary: "implementation ready for feedback",
 			remaining: ["finish verification"],
 		});
-		expect(await waitForWorker("exec-progress")).toEqual({
+		const updates = takeWorkerUpdates();
+		expect(updates[0]).toMatchObject({
 			execution_id: "exec-progress",
 			goal_id: paths.runId,
 			commitment_id: commitment.id,
 			status: "running",
 		});
-		expect(await waitForWorker("exec-progress")).toEqual({
+		expect(updates[1]).toMatchObject({
 			execution_id: "exec-progress",
 			goal_id: paths.runId,
 			commitment_id: commitment.id,
@@ -383,7 +386,8 @@ describe("minimal collaborate protocol", () => {
 		});
 		child!.exitCode = 0;
 		child!.emit("close", 0);
-		expect(await waitForWorker("exec-progress")).toMatchObject({
+		await Bun.sleep(0);
+		expect(takeWorkerUpdates().find((update) => "exit_code" in update)).toMatchObject({
 			execution_id: "exec-progress",
 			receipt_id: terminal.id,
 			status: "completed",

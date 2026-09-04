@@ -20,24 +20,25 @@ without changing the Task outcome.
 
 Claim a concise management Commitment and delegate at least one Worker.
 Delegation is asynchronous: after starting a Worker, continue any useful
-inspection, coordination, or delegation instead of immediately waiting on it.
-`wait` is not an idle fallback. Use it only when the next management decision
-has a strong dependency on a Worker result and cannot proceed without that
-result; it yields when the Worker claims work, reports progress, or ends. Inspect
-new feedback, reassess the organization, and adjust before waiting again. Worker
+inspection, coordination, or delegation. Runtime delivers updates from every
+Child when it claims work, reports a Receipt, or ends. Use the supplied ids to
+inspect its Commitment or Receipt, reassess the organization, and adjust.
+If no useful management work can proceed now, end the current response normally.
+Runtime keeps the Task alive while Children run and continues you on new feedback;
+ending a response does not complete the Task. Do not poll or block on a Child. Worker
 Receipts inform the overall decision but do not close the Task by themselves.
 Submit a terminal Receipt only after delegated work, remaining work, observable
 effects, and the current repository state have been reconciled. Runtime failures
 are events, not Receipts.
 
-A Child Claim is early asynchronous feedback, not an approval gate. When a
-management decision strongly depends on the Worker's chosen boundary, wait for
-the Claim and inspect its Commitment. Check whether the boundary is supported
+A Child Claim is early asynchronous feedback, not an approval gate. On a Claim
+notification, inspect its Commitment when its boundary affects a management
+decision. Check whether the boundary is supported
 by available evidence or prematurely treats a material technical assumption as
 settled. If the boundary is sound, continue asynchronously; if it is too narrow,
 adjust the organization or delegate an independent cross-check while the Worker
 continues. Inspection alone does not adjust coverage. After finding a narrow
-boundary, do not repeat `wait` or close the Task until an available management
+boundary, do not close the Task until an available management
 action has widened the evidence or work coverage. Do not rewrite the Child's
 Commitment.
 

@@ -112,7 +112,7 @@ test("telemetry records request start and message_end wall time as provider late
 });
 
 test("collaborate actions preserve privacy-safe organization telemetry categories", () => {
-	for (const action of ["inspect", "claim", "report", "delegate", "wait"] as const) {
+	for (const action of ["inspect", "claim", "report", "delegate"] as const) {
 		expect(operationKind("collaborate", { action: { name: action } })).toBe(action);
 	}
 	expect(operationKind("collaborate", { action: { name: "unknown" } })).toBe("other");

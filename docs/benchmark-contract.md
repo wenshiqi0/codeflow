@@ -51,7 +51,8 @@ alternate-schema dimensions.
 Tool operations separate `source_discovery` from validation and integration.
 Source discovery covers bounded reads and repository searches. Validation is
 the sum of direct execution, evidence runs, evidence reads, and source checks.
-Integration covers `inspect`, `claim`, `report`, `delegate`, and `wait`.
+Integration covers `inspect`, `claim`, `report`, and `delegate`.
+Worker feedback is delivered asynchronously by Runtime, not through a blocking tool.
 The report does not infer a redundant-discovery rate from these unlike
 activities.
 

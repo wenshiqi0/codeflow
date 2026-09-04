@@ -6,7 +6,6 @@ import { Value } from "typebox/value";
 import codemarkOrganization, {
 	codemarkReadBoundaryViolation,
 	codemarkCollaborateParameters,
-	prepareCodemarkArguments,
 } from "../../codemark/extensions/organization";
 import { createInitialOrganization, readInitialOrganization } from "../../codemark/lib/organization";
 import codeflowOrganization from "../../runtime/extensions/codeflow-organization";
@@ -98,23 +97,6 @@ describe("Codemark collaborate extension", () => {
 		expect(allowedInput.path).toBe(fs.realpathSync(`${repository}/README.md`));
 	});
 
-	test("uses Pi-equivalent TypeBox conversion before classifying calls", () => {
-		const raw = {
-			action: { name: "claim", work: 123, done_when: "frontier frozen" },
-		};
-		expect(prepareCodemarkArguments(raw)).toEqual({
-			action: { name: "claim", work: "123", done_when: ["frontier frozen"] },
-		});
-		expect(raw).toEqual({
-			action: { name: "claim", work: 123, done_when: "frontier frozen" },
-		});
-		expect(prepareCodemarkArguments({
-			action: { name: "wait", execution_id: null },
-		})).toEqual({
-			action: { name: "wait", execution_id: "null" },
-		});
-	});
-
 	test("keeps the complete production Manager tool metadata surface", () => {
 		process.env.CODEFLOW_PROCESS_KIND = "root";
 		const productionTool = registeredTool(codeflowOrganization);
@@ -130,7 +112,6 @@ describe("Codemark collaborate extension", () => {
 			"claim",
 			"report",
 			"delegate",
-			"wait",
 		]);
 		for (const candidate of codemark) {
 			const name = candidate.properties.name.const;
@@ -148,213 +129,89 @@ describe("Codemark collaborate extension", () => {
 		})).toBe(true);
 	});
 
-	test("terminates an entire same-response claim, delegate, and wait batch", async () => {
-		const runDir = makeTmpDir("codemark-extension-batch-");
-		createInitialOrganization(runDir, {
-			runId: "codemark-extension-batch",
-			issue: "Inspect this issue",
-			repository: "/workspace/repository",
-		});
-		process.env.CODEMARK_RUN_ID = "codemark-extension-batch";
+	test("records all proposals until natural agent_end without aborting or terminating tools", async () => {
+		const runDir = makeTmpDir("codemark-extension-turn-");
+		createInitialOrganization(runDir, { runId: "codemark-turn", issue: "Inspect", repository: "/workspace/repository" });
 		process.env.CODEMARK_RUN_DIR = runDir;
 		const handlers: Record<string, (...args: any[]) => unknown> = {};
 		const tool = registeredTool(codemarkOrganization, handlers);
-		const ctx = { cwd: "/workspace/repository", abort() {}, shutdown() {} };
-		handlers.message_end?.({
-			message: {
-				role: "assistant",
-				content: [
-					{ type: "toolCall", id: "read-before", name: "read", arguments: { path: "README.md" } },
-					{ type: "toolCall", id: "claim", name: "collaborate", arguments: { action: { name: "claim", work: "organize the task" } } },
-					{ type: "toolCall", id: "delegate", name: "collaborate", arguments: { action: { name: "delegate", goal_id: "codemark-extension-batch", focus: "inspect" } } },
-					{ type: "toolCall", id: "wait", name: "collaborate", arguments: { action: { name: "wait" } } },
-					{ type: "toolCall", id: "delegate-after", name: "collaborate", arguments: { action: { name: "delegate" } } },
-					{ type: "toolCall", id: "wait-after", name: "collaborate", arguments: { action: { name: "wait" } } },
-				],
-			},
-		});
-		expect(handlers.tool_call?.({ toolCallId: "read-before", toolName: "read" })).toEqual({
-			block: true,
-			reason: "tool call superseded by the terminal wait in this batch",
-			terminate: true,
-		});
-		for (const toolCallId of ["delegate-after", "wait-after"]) {
-			expect(handlers.tool_call?.({ toolCallId, toolName: "collaborate" })).toEqual({
-				block: true,
-				reason: "tool call superseded by the terminal wait in this batch",
-				terminate: true,
-			});
+		let aborts = 0;
+		let shutdowns = 0;
+		const ctx = { cwd: "/workspace/repository", abort() { aborts++; }, shutdown() { shutdowns++; } };
+		const claim = await tool.execute("claim", { action: { name: "claim", work: "organize work" } }, undefined, undefined, ctx);
+		for (const id of ["developer", "tester"]) {
+			const delegated = await tool.execute(id, { action: { name: "delegate", goal_id: "codemark-turn", focus: id } }, undefined, undefined, ctx);
+			expect(delegated.terminate).toBeUndefined();
 		}
-
-		const claimResult = await tool.execute("claim", {
-			action: { name: "claim", work: "organize the task" },
-		}, undefined, undefined, ctx);
-		const delegateResult = await tool.execute("delegate", {
-			action: {
-				name: "delegate",
-				goal_id: "codemark-extension-batch",
-				focus: "inspect the implementation",
-			},
-		}, undefined, undefined, ctx);
-		const waitResult = await tool.execute("wait", {
-			action: { name: "wait", execution_id: body(delegateResult).execution_id },
-		}, undefined, undefined, ctx);
-
-		expect([claimResult.terminate, delegateResult.terminate, waitResult.terminate]).toEqual([
-			true,
-			true,
-			true,
-		]);
+		expect(claim.terminate).toBeUndefined();
+		expect(readInitialOrganization(runDir).status).toBe("running");
+		expect(handlers.message_end).toBeUndefined();
+		expect(handlers.turn_end).toBeUndefined();
+		handlers.agent_end?.({ messages: [
+			{ role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall" }] },
+			{ role: "toolResult", content: [] },
+			{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Initial work organized." }] },
+		] }, ctx);
+		expect(readInitialOrganization(runDir)).toMatchObject({
+			status: "completed", termination: "first_turn_end",
+			metrics: { delegate_count: 2, initial_worker_count: 2 },
+			assessment: { organization_valid: true, policy_violations: [] },
+		});
+		const frozen = fs.readFileSync(path.join(runDir, "frontier.json"), "utf8");
+		handlers.agent_end?.({ messages: [{ role: "assistant", stopReason: "stop", content: [] }] }, ctx);
+		expect(fs.readFileSync(path.join(runDir, "frontier.json"), "utf8")).toBe(frozen);
+		await expect(tool.execute("late-delegate", { action: { name: "delegate", goal_id: "codemark-turn", focus: "late" } }, undefined, undefined, ctx)).rejects.toThrow(/unavailable after Codemark terminated/);
+		expect([aborts, shutdowns]).toEqual([0, 0]);
+		expect("wait" in readInitialOrganization(runDir)).toBe(false);
 	});
 
-	test("an earlier collaborate error cannot prevent a later wait from terminating the batch", async () => {
-		const runDir = makeTmpDir("codemark-extension-error-wait-");
-		createInitialOrganization(runDir, {
-			runId: "codemark-extension-error-wait",
-			issue: "Inspect this issue",
-			repository: "/workspace/repository",
-		});
-		process.env.CODEMARK_RUN_ID = "codemark-extension-error-wait";
+	test("zero-Worker natural turn end is measured successfully with policy violations", () => {
+		const runDir = makeTmpDir("codemark-extension-zero-");
+		createInitialOrganization(runDir, { runId: "codemark-zero", issue: "Inspect", repository: "/workspace/repository" });
 		process.env.CODEMARK_RUN_DIR = runDir;
 		const handlers: Record<string, (...args: any[]) => unknown> = {};
-		const tool = registeredTool(codemarkOrganization, handlers);
-		const ctx = { cwd: "/workspace/repository", abort() {}, shutdown() {} };
-		await tool.execute("initial-claim", {
-			action: { name: "claim", work: "organize the task" },
-		}, undefined, undefined, ctx);
-		handlers.message_end?.({
-			message: {
-				role: "assistant",
-				content: [
-					{ type: "toolCall", id: "duplicate-claim", name: "collaborate", arguments: { action: { name: "claim", work: "duplicate" } } },
-					{ type: "toolCall", id: "wait", name: "collaborate", arguments: { action: { name: "wait" } } },
-				],
-			},
-		});
-
-		const duplicateClaim = await tool.execute("duplicate-claim", {
-			action: { name: "claim", work: "duplicate" },
-		}, undefined, undefined, ctx);
-		const wait = await tool.execute("wait", {
-			action: { name: "wait" },
-		}, undefined, undefined, ctx);
-
-		expect(body(duplicateClaim)).toMatchObject({ error: expect.any(String) });
-		expect([duplicateClaim.terminate, wait.terminate]).toEqual([true, true]);
+		registeredTool(codemarkOrganization, handlers);
+		handlers.agent_end?.({ messages: [{ role: "assistant", stopReason: "stop", content: [] }] }, { cwd: "/workspace/repository" });
 		expect(readInitialOrganization(runDir)).toMatchObject({
-			status: "completed",
-			termination: "first_wait",
+			status: "completed", termination: "first_turn_end",
+			assessment: { organization_valid: false, policy_violations: ["manager_claim_missing", "delegation_missing"] },
 		});
 	});
 
-	test("a zero-Worker first wait completes the measurement and records policy violations", async () => {
-		const runDir = makeTmpDir("codemark-extension-invalid-wait-");
-		createInitialOrganization(runDir, {
-			runId: "codemark-extension-invalid-wait",
-			issue: "Inspect this issue",
-			repository: "/workspace/repository",
+	for (const messages of [
+		[],
+		[{ role: "user", content: "issue" }],
+		[{ role: "assistant", stopReason: "error", content: [] }],
+		[{ role: "assistant", stopReason: "length", content: [] }],
+		[{ role: "assistant", stopReason: "aborted", content: [] }],
+		[{ role: "assistant", stopReason: "stop", errorMessage: "provider failed", content: [] }],
+		[{ role: "assistant", stopReason: "stop", content: [{ type: "toolCall" }] }],
+		[{ role: "assistant", stopReason: "length", content: [] }, { role: "assistant", stopReason: "stop", content: [] }],
+	]) {
+		test(`does not mark abnormal agent_end as successful: ${JSON.stringify(messages)}`, () => {
+			const runDir = makeTmpDir("codemark-extension-abnormal-");
+			createInitialOrganization(runDir, { runId: "codemark-abnormal", issue: "Inspect", repository: "/workspace/repository" });
+			process.env.CODEMARK_RUN_DIR = runDir;
+			const handlers: Record<string, (...args: any[]) => unknown> = {};
+			registeredTool(codemarkOrganization, handlers);
+			handlers.agent_end?.({ messages }, { cwd: "/workspace/repository" });
+			expect(readInitialOrganization(runDir)).toMatchObject({ status: "running", termination: null });
+			if (messages.some((message) => ["error", "aborted", "length"].includes(message.stopReason ?? "") || "errorMessage" in message)) {
+				handlers.agent_end?.({ messages: [{ role: "assistant", stopReason: "stop", content: [] }] }, { cwd: "/workspace/repository" });
+				expect(readInitialOrganization(runDir)).toMatchObject({ status: "running", termination: null });
+			}
 		});
+	}
+
+	test("deleted actions are rejected without a compatibility path", async () => {
+		const runDir = makeTmpDir("codemark-extension-removed-");
+		createInitialOrganization(runDir, { runId: "codemark-removed", issue: "Inspect", repository: "/workspace/repository" });
 		process.env.CODEMARK_RUN_DIR = runDir;
 		const tool = registeredTool(codemarkOrganization);
-		let aborts = 0;
-		let shutdowns = 0;
-		const result = await tool.execute("wait", {
-			action: { name: "wait" },
-		}, undefined, undefined, {
-			cwd: "/workspace/repository",
-			abort() { aborts += 1; },
-			shutdown() { shutdowns += 1; },
-		});
-
-		expect(body(result)).toMatchObject({ status: "completed", termination: "first_wait" });
-		expect(result.terminate).toBe(true);
-		expect(aborts).toBe(1);
-		expect(shutdowns).toBe(1);
-		expect(readInitialOrganization(runDir)).toMatchObject({
-			status: "completed",
-			termination: "first_wait",
-			manager_claim: null,
-			delegations: [],
-			metrics: { delegate_count: 0, initial_worker_count: 0 },
-			assessment: {
-				organization_valid: false,
-				policy_violations: ["manager_claim_missing", "delegation_missing"],
-			},
-		});
-	});
-
-	test("persists proposals and aborts the Manager only after the first wait", async () => {
-		const runDir = makeTmpDir("codemark-extension-");
-		createInitialOrganization(runDir, {
-			runId: "codemark-extension-run",
-			issue: "Inspect this issue",
-			repository: "/workspace/repository",
-			createdAt: "2026-09-04T00:00:00.000Z",
-		});
-		process.env.CODEMARK_RUN_ID = "codemark-extension-run";
-		process.env.CODEMARK_RUN_DIR = runDir;
-		delete process.env.CODEFLOW_COMMITMENT_ID;
-		const tool = registeredTool(codemarkOrganization);
-		let aborts = 0;
-		let shutdowns = 0;
-		const ctx = {
-			cwd: "/workspace/repository",
-			abort() { aborts += 1; },
-			shutdown() { shutdowns += 1; },
-		};
-		const execute = (action: Record<string, unknown>) =>
-			tool.execute("call", { action }, undefined, undefined, ctx);
-
-		const claimed = body(await execute({ name: "claim", work: "record the initial frontier" }));
-		expect(claimed.commitment_id).toMatch(/^c_[0-9a-f]{64}$/);
-		expect(process.env.CODEFLOW_COMMITMENT_ID).toBeUndefined();
-		expect(aborts).toBe(0);
-		expect(shutdowns).toBe(0);
-
-		const delegated = body(await execute({
-			name: "delegate",
-			goal_id: "codemark-extension-run",
-			focus: "inspect the issue",
-		}));
-		expect(delegated).toMatchObject({ goal_id: "codemark-extension-run", status: "running" });
-		expect(delegated.execution_id).toMatch(/^exec_[0-9a-f]{24}$/);
-		const producer = body(await execute({
-			name: "delegate",
-			new_goal: { goal_id: "producer", objective: "produce a prerequisite" },
-			focus: "produce the prerequisite",
-		}));
-		expect(producer.status).toBe("running");
-		expect(producer.execution_id).toMatch(/^exec_[0-9a-f]{24}$/);
-		const waiting = body(await execute({
-			name: "delegate",
-			new_goal: {
-				goal_id: "consumer",
-				objective: "consume the prerequisite",
-				dependencies: ["producer"],
-			},
-			focus: "wait for the prerequisite",
-		}));
-		expect(waiting).toEqual({ goal_id: "consumer", status: "waiting", execution_id: null });
-		expect(aborts).toBe(0);
-		expect(shutdowns).toBe(0);
-
-		const waitResult = await execute({ name: "wait", execution_id: delegated.execution_id });
-		const waited = body(waitResult);
-		expect(waited).toMatchObject({ status: "completed", termination: "first_wait" });
-		expect(waitResult.terminate).toBe(true);
-		expect(aborts).toBe(1);
-		expect(shutdowns).toBe(1);
-		expect(readInitialOrganization(runDir)).toMatchObject({
-			status: "completed",
-			termination: "first_wait",
-			metrics: {
-				delegate_count: 3,
-				initial_worker_count: 2,
-				additional_initial_workers: 1,
-				ready_now_worker_count: 2,
-				waiting_on_dependencies_count: 1,
-			},
-		});
+		const params = { action: { name: "wait" } };
+		expect(Value.Check(codemarkCollaborateParameters, params)).toBe(false);
+		await expect(tool.execute("removed", params, undefined, undefined, { cwd: "/workspace/repository" })).rejects.toThrow(/unknown collaborate action/);
+		expect(readInitialOrganization(runDir).status).toBe("running");
 	});
 
 	test("terminal report still fails without creating canonical protocol objects", async () => {

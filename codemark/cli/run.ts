@@ -106,7 +106,7 @@ export function usage(): string {
 	return [
 		"usage: codemark [options] [\"<issue>\"]",
 		"",
-		"Run the configured Codeflow Manager until its first wait, recording only its",
+		"Run the configured Codeflow Manager until its first natural turn end, recording only its",
 		"initial organization frontier. No Worker is started.",
 		"",
 		"  --manager-model <provider/model>  override the configured Manager model",
@@ -368,12 +368,16 @@ function observeLine(line: string, runId: string, observation: ManagerObservatio
 	try {
 		const event = JSON.parse(line) as Record<string, any>;
 		if (event.type !== "message_end" || event.message?.role !== "assistant") return;
-		observation.stopReason = typeof event.message.stopReason === "string"
-			? event.message.stopReason
-			: observation.stopReason;
-		observation.errorMessage = typeof event.message.errorMessage === "string"
-			? event.message.errorMessage
-			: observation.errorMessage;
+		// A later automatic continuation must not turn an interrupted or truncated
+		// measurement into a successful natural completion.
+		if (!["error", "aborted", "length"].includes(observation.stopReason ?? "")) {
+			observation.stopReason = typeof event.message.stopReason === "string"
+				? event.message.stopReason
+				: observation.stopReason;
+		}
+		if (typeof event.message.errorMessage === "string" && event.message.errorMessage) {
+			observation.errorMessage ??= event.message.errorMessage;
+		}
 		const record = usageRecord(event.message, runId, observation.usageRecords.length + 1);
 		if (record) observation.usageRecords.push(record);
 	} catch {
@@ -506,17 +510,16 @@ function providerFailure(code: number, observation: ManagerObservation): boolean
 	return code !== 0 || observation.stopReason === "error" || Boolean(observation.errorMessage);
 }
 
-export function firstWaitWins(
+export function firstTurnEndWins(
 	termination: string | null,
-	waitRecordedAt: string | null,
+	turnEndedAt: string | null,
 	cutoffAtMs: number | null,
 ): boolean {
-	if (termination !== "first_wait" || waitRecordedAt === null) return false;
-	if (cutoffAtMs === null) return true;
-	const waitAtMs = Date.parse(waitRecordedAt);
-	// Cross-process ISO timestamps have millisecond precision. A durable wait at
+	if (termination !== "first_turn_end" || turnEndedAt === null) return false;
+	const turnEndedAtMs = Date.parse(turnEndedAt);
+	// Cross-process ISO timestamps have millisecond precision. A durable turn end at
 	// the same observable millisecond as the cutoff wins the defined tie.
-	return Number.isFinite(waitAtMs) && waitAtMs <= cutoffAtMs;
+	return Number.isFinite(turnEndedAtMs) && (cutoffAtMs === null || turnEndedAtMs <= cutoffAtMs);
 }
 
 export async function run(argv: string[], options: RunOptions = {}): Promise<number> {
@@ -677,12 +680,12 @@ export async function run(argv: string[], options: RunOptions = {}): Promise<num
 	writeJsonAtomic(path.join(runDir, "usage.json"), usageReport);
 	const current = readInitialOrganization(runDir);
 	const cutoff = cutoffState.current;
-	const firstWaitWon = firstWaitWins(
+	const firstTurnEndWon = firstTurnEndWins(
 		current.termination,
-		current.wait?.recorded_at ?? null,
+		current.timestamps.completed_at,
 		cutoff?.atMs ?? null,
 	);
-	if (!firstWaitWon) {
+	if (!firstTurnEndWon) {
 		if (cutoff?.kind === "timeout") {
 			finalizeOrganization(runDir, {
 				termination: "timeout",
@@ -695,15 +698,17 @@ export async function run(argv: string[], options: RunOptions = {}): Promise<num
 				diagnostic: `codemark received an interrupt signal at ${cutoff.at}`,
 				force: true,
 			});
+		} else if (observation.stopReason === "aborted") {
+			finalizeOrganization(runDir, { termination: "interrupted", diagnostic: "Manager turn was aborted before its first natural turn end" });
 		} else if (observation.stopReason === "length") {
 			finalizeOrganization(runDir, {
 				termination: "output_truncated",
-				diagnostic: "Manager output reached the provider length limit before its first wait",
+				diagnostic: "Manager output reached the provider length limit before its first natural turn end",
 			});
 		} else if (providerFailure(code, observation)) {
 			finalizeOrganization(runDir, { termination: "provider_failure", diagnostic: "Manager provider or process failed" });
 		} else {
-			finalizeOrganization(runDir, { termination: "manager_exit", diagnostic: "Manager exited before its first wait" });
+			finalizeOrganization(runDir, { termination: "manager_exit", diagnostic: "Manager exited before its first natural turn end" });
 		}
 	}
 	attachOrganizationUsage(runDir, usageReport.total);
@@ -714,7 +719,7 @@ export async function run(argv: string[], options: RunOptions = {}): Promise<num
 		process.off("SIGINT", onSigint);
 		process.off("SIGTERM", onSigterm);
 	}
-	const success = artifact.status === "completed" && artifact.termination === "first_wait";
+	const success = artifact.status === "completed" && artifact.termination === "first_turn_end";
 	if (!success) {
 		const detail = (observation.errorMessage ?? observation.stderrTail).trim().slice(-DIAGNOSTIC_LIMIT);
 		console.error(`codemark: error: measurement ended with ${artifact.termination}${detail ? `\n${detail}` : ""}`);

@@ -13,10 +13,11 @@ import { createGoal } from "../../lib/goals";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
 import { inspectCommitment, inspectGoal, inspectReceipt } from "../../lib/inspection";
 import { goalState } from "../../lib/state";
-import { delegateWorker, hasLiveWorkers, waitForWorker } from "./worker-launcher";
+import { cancelWorkers, delegateWorker, hasLiveWorkers, takeWorkerUpdates } from "./worker-launcher";
+import { registerWorkerFeedback } from "./feedback";
 
 const COMMON_ACTIONS = ["inspect", "claim", "report"] as const;
-const ROOT_ACTIONS = ["delegate", "wait"] as const;
+const ROOT_ACTIONS = ["delegate"] as const;
 type CollaborateAction = (typeof COMMON_ACTIONS)[number] | (typeof ROOT_ACTIONS)[number];
 
 function currentRun(): RunPaths {
@@ -102,13 +103,6 @@ const ACTION_SCHEMAS = {
 		additionalProperties: false,
 		description: "Root only: start a Worker. Set exactly one of goal_id (reuse) or new_goal (create).",
 	}),
-	wait: Type.Object({
-		name: Type.Literal("wait"),
-		execution_id: Type.Optional(Type.String({ minLength: 1 })),
-	}, {
-		additionalProperties: false,
-		description: "Root only: when the next management decision cannot proceed without a Worker result, yield until one named Worker (or any Worker) claims work, reports progress, or ends.",
-	}),
 } as const;
 
 function parameters(root: boolean) {
@@ -120,11 +114,13 @@ function parameters(root: boolean) {
 
 export default function (pi: ExtensionAPI) {
 	const root = process.env.CODEFLOW_PROCESS_KIND === "root";
+	// Pass the same launcher instance: Pi loads separate extensions in isolated caches.
+	if (root) registerWorkerFeedback(pi, { cancelWorkers, hasLiveWorkers, takeWorkerUpdates });
 	pi.registerTool({
 		name: "collaborate",
 		label: "Collaborate",
 		description: root
-			? "Coordinate Goal-scoped work. Use inspect, claim, report, delegate, or wait. Root alone can create Goals and delegate Workers."
+			? "Coordinate Goal-scoped work. Use inspect, claim, report, or delegate. Root alone can create Goals and delegate Workers."
 			: "Coordinate Goal-scoped work. Use inspect, claim, or report.",
 		parameters: parameters(root),
 		async execute(_id, rawParams, signal, _update, ctx) {
@@ -228,10 +224,6 @@ export default function (pi: ExtensionAPI) {
 						parentCommitmentId: parentId,
 						resumeCommitmentId: params.resume_commitment_id as string | undefined,
 					}, signal, ctx.cwd);
-					return result(execution, execution);
-				}
-				case "wait": {
-					const execution = await waitForWorker(params.execution_id as string | undefined);
 					return result(execution, execution);
 				}
 			}

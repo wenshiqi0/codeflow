@@ -68,7 +68,7 @@ describe("Codemark process boundary", () => {
 		expect(summary).toMatchObject({
 			run_id: request.run_id,
 			status: "completed",
-			termination: "first_wait",
+			termination: "first_turn_end",
 			artifact: path.join(outDir, "initial-organization.json"),
 			metrics: {
 				delegate_count: 3,
@@ -87,7 +87,7 @@ describe("Codemark process boundary", () => {
 		expect(artifact).toMatchObject({
 			run_id: request.run_id,
 			status: "completed",
-			termination: "first_wait",
+			termination: "first_turn_end",
 			metrics: {
 				delegate_count: 3,
 				initial_worker_count: 2,
@@ -153,7 +153,7 @@ describe("Codemark process boundary", () => {
 		]);
 	});
 
-	test("the real Pi loop stops after one offline Manager response and persists no session", () => {
+	test("the real Pi loop allows tool feedback before its first natural turn end and persists no session", () => {
 		const repository = makeTmpDir("codemark-real-pi-repository-");
 		const outDir = path.join(makeTmpDir("codemark-real-pi-output-"), "run");
 		const sessions = path.join(REPO, "runtime", "sessions");
@@ -173,14 +173,36 @@ describe("Codemark process boundary", () => {
 		const artifact = readJson(path.join(outDir, "initial-organization.json"));
 		expect(artifact).toMatchObject({
 			status: "completed",
-			termination: "first_wait",
+			termination: "first_turn_end",
 			metrics: { delegate_count: 1, initial_worker_count: 1 },
-			usage: { calls: 1 },
+			usage: { calls: 2 },
 		});
 		expect(artifact.usage.total_tokens).toBeGreaterThan(0);
 		expect(filesBelow(sessions)).toEqual(sessionsBefore);
 		expect(fs.existsSync(path.join(repository, ".codeflow"))).toBe(false);
 	});
+
+	for (const scenario of [
+		{ mode: "zero-workers", workers: 0, calls: 1, violations: ["manager_claim_missing", "delegation_missing"] },
+		{ mode: "multi-step", workers: 2, calls: 3, violations: [] },
+	]) {
+		test(`real offline Pi freezes the natural initial organization: ${scenario.mode}`, () => {
+			const repository = makeTmpDir("codemark-real-frontier-repository-");
+			const outDir = path.join(makeTmpDir("codemark-real-frontier-output-"), "run");
+			const result = runCodemark(["--manager-model", "codemark-offline/manager", "--out", outDir, "--timeout", "10", "Organize this issue"], {
+				cwd: repository,
+				env: fakeEnvironment({ CODEFLOW_PI_CLI: REAL_PI, CODEMARK_OFFLINE_SCENARIO: scenario.mode }),
+				timeoutMs: 15_000,
+			});
+			expect(result.exitCode).toBe(0);
+			expect(readJson(path.join(outDir, "initial-organization.json"))).toMatchObject({
+				status: "completed", termination: "first_turn_end",
+				metrics: { delegate_count: scenario.workers, initial_worker_count: scenario.workers },
+				assessment: { organization_valid: scenario.violations.length === 0, policy_violations: scenario.violations },
+				usage: { calls: scenario.calls },
+			});
+		});
+	}
 
 	test("the real Pi Manager cannot observe private harness state through read or project output", () => {
 		const repository = makeTmpDir("codemark-identity-repository-");
@@ -213,10 +235,10 @@ describe("Codemark process boundary", () => {
 		const artifact = readJson(summary.artifact);
 		expect(artifact).toMatchObject({
 			status: "completed",
-			termination: "first_wait",
+			termination: "first_turn_end",
 			manager_claim: { work: "identity boundary passed" },
 			metrics: { delegate_count: 1, initial_worker_count: 1 },
-			usage: { calls: 2 },
+			usage: { calls: 3 },
 		});
 		expect(fs.readdirSync(outDir).sort()).toEqual([
 			"initial-organization.json",
@@ -226,39 +248,7 @@ describe("Codemark process boundary", () => {
 		expect(fs.existsSync(path.join(repository, ".codemark"))).toBe(false);
 	});
 
-	test("an invalid-schema first wait cannot trigger a second Manager response", () => {
-		const repository = makeTmpDir("codemark-invalid-first-wait-repository-");
-		const outDir = path.join(makeTmpDir("codemark-invalid-first-wait-output-"), "run");
-		const result = runCodemark([
-			"--manager-model", "codemark-offline/manager",
-			"--out", outDir,
-			"--timeout", "10",
-			"Freeze even a malformed first wait",
-		], {
-			cwd: repository,
-			env: fakeEnvironment({
-				CODEFLOW_PI_CLI: REAL_PI,
-				CODEMARK_OFFLINE_SCENARIO: "invalid-first-wait",
-			}),
-			timeoutMs: 15_000,
-		});
-
-		expect(result.exitCode).toBe(0);
-		const artifact = readJson(path.join(outDir, "initial-organization.json"));
-		expect(artifact).toMatchObject({
-			status: "completed",
-			termination: "first_wait",
-			metrics: { delegate_count: 1, initial_worker_count: 1 },
-			assessment: {
-				organization_valid: false,
-				policy_violations: ["wait_schema_invalid", "collaborate_schema_invalid"],
-			},
-			usage: { calls: 1 },
-		});
-		expect(fs.existsSync(path.join(repository, ".codeflow"))).toBe(false);
-	});
-
-	test("the real Pi loop preserves coercible pre-wait calls", () => {
+	test("the real Pi loop preserves coercible tool calls", () => {
 		const repository = makeTmpDir("codemark-coercible-repository-");
 		const outDir = path.join(makeTmpDir("codemark-coercible-output-"), "run");
 		const result = runCodemark([
@@ -279,46 +269,16 @@ describe("Codemark process boundary", () => {
 		const artifact = readJson(path.join(outDir, "initial-organization.json"));
 		expect(artifact).toMatchObject({
 			status: "completed",
-			termination: "first_wait",
+			termination: "first_turn_end",
 			manager_claim: { work: "123", done_when: ["frontier frozen"] },
 			metrics: { delegate_count: 1, initial_worker_count: 1 },
 			assessment: { organization_valid: true, policy_violations: [] },
-			usage: { calls: 1 },
+			usage: { calls: 2 },
 		});
 		expect(artifact.delegations[0].focus).toBe("456");
 	});
 
-	test("a whitespace wait still freezes the real Pi loop as an assessed measurement", () => {
-		const repository = makeTmpDir("codemark-whitespace-wait-repository-");
-		const outDir = path.join(makeTmpDir("codemark-whitespace-wait-output-"), "run");
-		const result = runCodemark([
-			"--manager-model", "codemark-offline/manager",
-			"--out", outDir,
-			"--timeout", "10",
-			"Freeze a semantically invalid wait",
-		], {
-			cwd: repository,
-			env: fakeEnvironment({
-				CODEFLOW_PI_CLI: REAL_PI,
-				CODEMARK_OFFLINE_SCENARIO: "whitespace-wait",
-			}),
-			timeoutMs: 15_000,
-		});
-
-		expect(result.exitCode).toBe(0);
-		expect(readJson(path.join(outDir, "initial-organization.json"))).toMatchObject({
-			status: "completed",
-			termination: "first_wait",
-			wait: { execution_id: null, schema_valid: false },
-			assessment: {
-				organization_valid: false,
-				policy_violations: ["wait_schema_invalid"],
-			},
-			usage: { calls: 1 },
-		});
-	});
-
-	test("a zero-Worker first wait is a successful measurement instead of a runtime failure", () => {
+	test("a zero-Worker first natural turn end is a successful measurement instead of a runtime failure", () => {
 		const repository = makeTmpDir("codemark-zero-workers-repository-");
 		const outDir = path.join(makeTmpDir("codemark-zero-workers-output-"), "run");
 		const result = runCodemark([
@@ -334,7 +294,7 @@ describe("Codemark process boundary", () => {
 		const artifact = readJson(path.join(outDir, "initial-organization.json"));
 		expect(artifact).toMatchObject({
 			status: "completed",
-			termination: "first_wait",
+			termination: "first_turn_end",
 			metrics: { delegate_count: 0, initial_worker_count: 0 },
 			assessment: {
 				organization_valid: false,
@@ -344,12 +304,12 @@ describe("Codemark process boundary", () => {
 		});
 		expect(JSON.parse(result.stdout.trim())).toMatchObject({
 			status: "completed",
-			termination: "first_wait",
+			termination: "first_turn_end",
 			metrics: { initial_worker_count: 0 },
 		});
 	});
 
-	test("a clean Manager exit before wait is an incomplete measurement", () => {
+	test("a clean Manager exit before natural turn end is an incomplete measurement", () => {
 		const repository = makeTmpDir("codemark-exit-repository-");
 		const outDir = path.join(makeTmpDir("codemark-exit-output-"), "run");
 		const result = runCodemark([
@@ -463,14 +423,14 @@ describe("Codemark process boundary", () => {
 		expect(result.stderr).not.toContain("fake-pi:");
 		expect(readJson(path.join(outDir, "initial-organization.json"))).toMatchObject({
 			status: "completed",
-			termination: "first_wait",
+			termination: "first_turn_end",
 		});
 	});
 
 	test("provider length stop is reported as output_truncated", () => {
 		const repository = makeTmpDir("codemark-length-repository-");
 		const outDir = path.join(makeTmpDir("codemark-length-output-"), "run");
-		const result = runCodemark(["--out", outDir, "Issue truncated before wait"], {
+		const result = runCodemark(["--out", outDir, "Issue truncated before natural turn end"], {
 			cwd: repository,
 			env: fakeEnvironment({ CODEMARK_FAKE_PI_MODE: "length" }),
 			timeoutMs: 15_000,
@@ -481,7 +441,7 @@ describe("Codemark process boundary", () => {
 		expect(artifact).toMatchObject({
 			status: "incomplete",
 			termination: "output_truncated",
-			diagnostic: "Manager output reached the provider length limit before its first wait",
+			diagnostic: "Manager output reached the provider length limit before its first natural turn end",
 			metrics: { delegate_count: 3, initial_worker_count: 2 },
 		});
 		const summary = JSON.parse(result.stdout.trim());
@@ -489,10 +449,48 @@ describe("Codemark process boundary", () => {
 	});
 
 	for (const scenario of [
-		{ mode: "wait-before-timeout", expected: "first_wait", status: "completed", exitCode: 0, timeout: 1 },
-		{ mode: "wait-after-timeout", expected: "timeout", status: "incomplete", exitCode: 1, timeout: 1 },
-		{ mode: "wait-before-interrupt", expected: "first_wait", status: "completed", exitCode: 0, timeout: 10 },
-		{ mode: "wait-after-interrupt", expected: "interrupted", status: "interrupted", exitCode: 1, timeout: 10 },
+		{ mode: "error", termination: "provider_failure", status: "failed" },
+		{ mode: "aborted", termination: "interrupted", status: "interrupted" },
+	]) {
+		test(`abnormal agent_end is not completion: ${scenario.mode}`, () => {
+			const repository = makeTmpDir("codemark-abnormal-repository-");
+			const outDir = path.join(makeTmpDir("codemark-abnormal-output-"), "run");
+			const result = runCodemark(["--out", outDir, "Handle abnormal Manager output"], {
+				cwd: repository, env: fakeEnvironment({ CODEMARK_FAKE_PI_MODE: scenario.mode }),
+			});
+			expect(result.exitCode).toBe(1);
+			expect(readJson(path.join(outDir, "initial-organization.json"))).toMatchObject({
+				status: scenario.status, termination: scenario.termination, usage: { calls: 1 },
+			});
+		});
+	}
+
+	for (const scenario of [
+		{ mode: "provider-error", termination: "provider_failure", status: "failed" },
+		{ mode: "length", termination: "output_truncated", status: "incomplete" },
+		{ mode: "length-with-tools", termination: "output_truncated", status: "incomplete" },
+		{ mode: "aborted", termination: "interrupted", status: "interrupted" },
+	]) {
+		test(`real offline Pi abnormal end: ${scenario.mode}`, () => {
+			const repository = makeTmpDir("codemark-real-abnormal-repository-");
+			const outDir = path.join(makeTmpDir("codemark-real-abnormal-output-"), "run");
+			const result = runCodemark(["--manager-model", "codemark-offline/manager", "--out", outDir, "--timeout", "10", "Handle abnormal Manager output"], {
+				cwd: repository,
+				env: fakeEnvironment({ CODEFLOW_PI_CLI: REAL_PI, CODEMARK_OFFLINE_SCENARIO: scenario.mode }),
+				timeoutMs: 15_000,
+			});
+			expect(result.exitCode).toBe(1);
+			expect(readJson(path.join(outDir, "initial-organization.json"))).toMatchObject({
+				status: scenario.status, termination: scenario.termination, metrics: { delegate_count: 1 },
+			});
+		});
+	}
+
+	for (const scenario of [
+		{ mode: "turn-end-before-timeout", expected: "first_turn_end", status: "completed", exitCode: 0, timeout: 1 },
+		{ mode: "turn-end-after-timeout", expected: "timeout", status: "incomplete", exitCode: 1, timeout: 1 },
+		{ mode: "turn-end-before-interrupt", expected: "first_turn_end", status: "completed", exitCode: 0, timeout: 10 },
+		{ mode: "turn-end-after-interrupt", expected: "interrupted", status: "interrupted", exitCode: 1, timeout: 10 },
 	] as const) {
 		test(`the earlier cutoff wins for ${scenario.mode}`, () => {
 			const repository = makeTmpDir(`codemark-${scenario.mode}-repository-`);
@@ -513,9 +511,6 @@ describe("Codemark process boundary", () => {
 				termination: scenario.expected,
 				metrics: { delegate_count: 3, initial_worker_count: 2 },
 			});
-			if (scenario.mode.startsWith("wait-after")) {
-				expect(artifact.wait).not.toBeNull();
-			}
 			const summary = JSON.parse(result.stdout.trim());
 			expect(summary.metrics).toEqual(artifact.metrics);
 		});

@@ -48,7 +48,7 @@ function claim(runDir: string) {
 }
 
 describe("Codemark initial organization", () => {
-	test("records claim, multiple delegates, and completes on the first wait", () => {
+	test("records claim, multiple delegates, and completes on the first natural turn end", () => {
 		const { runDir } = createRun();
 		const claimed = claim(runDir);
 		expect(claimed.result).toMatchObject({ goal_id: "codemark-test-run" });
@@ -82,31 +82,16 @@ describe("Codemark initial organization", () => {
 		expect(childExecutionId).toMatch(/^exec_[0-9a-f]{24}$/);
 		expect(childExecutionId).not.toBe(rootExecutionId);
 
-		const waited = applyOrganizationAction(runDir, {
-			name: "wait",
-			execution_id: childExecutionId,
-		}, T4);
-		expect(waited.result).toEqual({
-			status: "completed",
-			termination: "first_wait",
-			execution_id: childExecutionId,
-			delegation_count: 2,
-		});
+		finalizeOrganization(runDir, { termination: "first_turn_end", now: T4 });
 
 		const artifact = readInitialOrganization(runDir);
 		expect(artifact).toMatchObject({
 			status: "completed",
-			termination: "first_wait",
+			termination: "first_turn_end",
 			assessment: { organization_valid: true, policy_violations: [] },
 			manager_claim: {
 				planning_claim_id: (claimed.result as { commitment_id: string }).commitment_id,
 				work: "Inspect the Issue and define the initial organization frontier",
-			},
-			wait: {
-				execution_id: childExecutionId,
-				schema_valid: true,
-				invalid_collaborate_calls: 0,
-				recorded_at: T4,
 			},
 			metrics: {
 				delegate_count: 2,
@@ -152,47 +137,20 @@ describe("Codemark initial organization", () => {
 			name: "delegate",
 			goal_id: "codemark-test-run",
 			focus: "must not extend a frozen initial frontier",
-		}, "2026-09-04T00:00:05.000Z")).toThrow(/unavailable after Codemark terminated with first_wait/i);
+		}, "2026-09-04T00:00:05.000Z")).toThrow(/unavailable after Codemark terminated with first_turn_end/i);
 	});
 
-	test("captures a first wait with zero Workers as a completed but invalid organization", () => {
-		const { organization } = createRun();
-		expect(() => transitionOrganization(organization, {
-			name: "delegate",
-			goal_id: organization.run_id,
-			focus: "premature delegation",
-		}, T1)).toThrow(/claim.*first/i);
-		const unclaimed = transitionOrganization(organization, { name: "wait" }, T1);
-		expect(unclaimed.organization).toMatchObject({
-			status: "completed",
-			termination: "first_wait",
+	test("captures zero Workers as a completed but invalid organization", () => {
+		const unclaimed = createRun();
+		expect(finalizeOrganization(unclaimed.runDir, { termination: "first_turn_end", now: T1 })).toMatchObject({
+			status: "completed", termination: "first_turn_end",
 			metrics: { initial_worker_count: 0, delegate_count: 0 },
-			assessment: {
-				organization_valid: false,
-				policy_violations: ["manager_claim_missing", "delegation_missing"],
-			},
+			assessment: { organization_valid: false, policy_violations: ["manager_claim_missing", "delegation_missing"] },
 		});
-
-		const claimed = transitionOrganization(organization, {
-			name: "claim",
-			work: "plan the work",
-		}, T1).organization;
-		const undelegated = transitionOrganization(claimed, { name: "wait" }, T2);
-		expect(undelegated.organization.assessment).toEqual({
-			organization_valid: false,
-			policy_violations: ["delegation_missing"],
-		});
-		const unknownTarget = transitionOrganization(claimed, {
-			name: "wait",
-			execution_id: "exec_000000000000000000000000",
-		}, T2);
-		expect(unknownTarget.organization).toMatchObject({
-			status: "completed",
-			metrics: { initial_worker_count: 0 },
-			assessment: {
-				organization_valid: false,
-				policy_violations: ["delegation_missing", "wait_target_unknown"],
-			},
+		const claimed = createRun();
+		claim(claimed.runDir);
+		expect(finalizeOrganization(claimed.runDir, { termination: "first_turn_end", now: T2 }).assessment).toEqual({
+			organization_valid: false, policy_violations: ["delegation_missing"],
 		});
 	});
 
@@ -424,7 +382,7 @@ describe("Codemark initial organization", () => {
 			goal_id: "codemark-test-run",
 			focus: "inspect the failure",
 		}, T2);
-		applyOrganizationAction(runDir, { name: "wait" }, T3);
+		finalizeOrganization(runDir, { termination: "first_turn_end", now: T3 });
 
 		const usage = {
 			calls: 3,
@@ -446,7 +404,7 @@ describe("Codemark initial organization", () => {
 		expect(attached.usage).toEqual(usage);
 		expect(attached).toMatchObject({
 			status: "completed",
-			termination: "first_wait",
+			termination: "first_turn_end",
 			metrics: { delegate_count: 1, initial_worker_count: 1 },
 		});
 		expect(readInitialOrganization(runDir).usage).toEqual(usage);
@@ -478,7 +436,7 @@ describe("Codemark initial organization", () => {
 		}, T3)).toThrow(/unknown commitment: c_live/i);
 	});
 
-	test("finalizes non-wait exits with explicit incomplete or failed states", () => {
+	test("finalizes abnormal exits with explicit incomplete or failed states", () => {
 		for (const [termination, status] of [
 			["manager_exit", "incomplete"],
 			["timeout", "incomplete"],
@@ -507,28 +465,28 @@ describe("Codemark initial organization", () => {
 			goal_id: "codemark-test-run",
 			focus: "record one proposal",
 		}, T2);
-		applyOrganizationAction(runDir, { name: "wait" }, T3);
+		finalizeOrganization(runDir, { termination: "first_turn_end", now: T3 });
 		const unchanged = finalizeOrganization(runDir, {
 			termination: "manager_exit",
-			diagnostic: "must not overwrite first_wait",
+			diagnostic: "must not overwrite first_turn_end",
 			now: T4,
 		});
 		expect(unchanged).toMatchObject({
 			status: "completed",
-			termination: "first_wait",
+			termination: "first_turn_end",
 			diagnostic: null,
 			timestamps: { completed_at: T3 },
 		});
 		const forced = finalizeOrganization(runDir, {
 			termination: "timeout",
-			diagnostic: "wait landed after the timeout cutoff",
+			diagnostic: "turn end landed after the timeout cutoff",
 			now: T4,
 			force: true,
 		});
 		expect(forced).toMatchObject({
 			status: "incomplete",
 			termination: "timeout",
-			diagnostic: "wait landed after the timeout cutoff",
+			diagnostic: "turn end landed after the timeout cutoff",
 			timestamps: { completed_at: T4 },
 		});
 	});
@@ -541,7 +499,7 @@ describe("Codemark initial organization", () => {
 
 		finalizeOrganization(runDir, {
 			termination: "manager_exit",
-			diagnostic: "Manager exited before wait",
+			diagnostic: "Manager exited before natural turn end",
 			now: T2,
 		});
 		expect(fs.existsSync(publicArtifact)).toBe(false);

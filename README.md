@@ -24,12 +24,15 @@ Commitment，也可以在完成一个 Commitment 后再次委派给新的 Worker
 边界实质变化时才创建新 Goal。
 
 所有 Worker 只看到一个 `collaborate` 工具。共同 action 是 `inspect`、`claim`、
-`report`；Root 额外拥有 `delegate` 与 `wait`。Root 的 Pi 工具面是
+`report`；Root 额外拥有 `delegate`。Root 的 Pi 工具面是
 `read,collaborate`，Child Worker 保留正常编辑和执行工具。Root 必须至少委派一名
 Worker 承担实质仓库工作。
 
-委派是异步的。Root 继续检查、组织或委派；只有下一项管理决策对 Worker 结果存在必须
-立即满足的强依赖时才使用 `wait`，并在 Worker Claim、提交进展 Receipt 或结束时返回。
+委派和反馈都是异步的，不提供 Agent 间阻塞等待工具。Root 继续检查、组织或委派；
+任一 Worker Claim、提交 Receipt 或结束时，Runtime 追加通知，Root 可用 `inspect`
+读取完整反馈。暂时没有可推进的工作时，Root 自然结束当前轮次；Runtime 在 Child
+运行期间保持任务存活，新反馈再触发 Root，没有新事件就不空转调用模型。
+轮次结束不等于 Task 完成；任务收口仍需要 terminal Receipt。
 Child 在 Claim 前只能进行只读仓库检查；Runtime 会拦截编辑、写入和不能明确判定为
 只读的命令。Claim 不等待 Root 审批，但 Root 可检查其 Commitment 并异步调整组织。
 
@@ -68,7 +71,7 @@ printf '%s\n' "<issue>" | codemark --out .codemark/runs/example
 
 Codemark 向模型提供与生产 Root 相同的 `manager.md`、Goal context 和启动指令，不在模型
 可见的 prompt、context 或 tool schema 中主动标记测量身份；host 侧把 `delegate` 解释为
-提议记录，绝不启动 Worker。第一次 `wait` 即结束测量。默认产物目录为
+提议记录，绝不启动 Worker。Manager 首次正常自然结束轮次即结束测量。默认产物目录为
 `$CODEFLOW_HOME/codemark/runs/<run-id>`（未设置时
 `~/.codeflow/codemark/runs/<run-id>`），不会写入被测仓库；`--out` 指定的则是本次 run
 尚不存在的精确目录。Manager 运行期间，`request.json` 与可变 `frontier.json` 只存在于
@@ -80,7 +83,7 @@ host 汇总 usage 并确定终态后，才把包含
 `usage.json` 则保留逐回合明细。`delegate_count` 统计全部初始委派意图；
 `initial_worker_count` 只统计依赖已满足、在生产环境会立即启动的 Worker，依赖未满足的
 意图单列为 `waiting_on_dependencies_count`。即使 Manager 未 claim 或以零 delegate
-进入首次 `wait`，测量也会成功保存为 `first_wait`，并在 `assessment.policy_violations`
+结束首轮，测量也会成功保存为 `first_turn_end`，并在 `assessment.policy_violations`
 中标出协议偏差，避免把“不主动分工”误当成运行失败。模型正文、隐藏推理和工具
 transcript 不会持久化。Codemark 不是 Codeflow Task，也不会生成 canonical Commitment 或
 Receipt，因此适合作为便宜、快速且不污染生产协同语义的分工基线。

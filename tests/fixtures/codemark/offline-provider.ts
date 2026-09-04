@@ -27,6 +27,9 @@ provider.setResponses([
 	() => {
 		const runId = process.env.CODEMARK_RUN_ID;
 		if (!runId) throw new Error("offline provider requires CODEMARK_RUN_ID");
+		if (process.env.CODEMARK_OFFLINE_SCENARIO === "zero-workers") {
+			return fauxAssistantMessage([{ type: "text", text: "No delegation proposed." }]);
+		}
 		if (process.env.CODEMARK_OFFLINE_SCENARIO === "identity-probe") {
 			const runDir = process.env.CODEMARK_RUN_DIR;
 			if (!runDir) throw new Error("identity probe requires private run state");
@@ -51,39 +54,6 @@ provider.setResponses([
 				fauxToolCall("collaborate", {
 					action: { name: "delegate", goal_id: runId, focus: 456 },
 				}, { id: "offline-coercible-delegate" }),
-				fauxToolCall("collaborate", {
-					action: { name: "wait" },
-				}, { id: "offline-coercible-wait" }),
-			]);
-		}
-		if (process.env.CODEMARK_OFFLINE_SCENARIO === "whitespace-wait") {
-			return fauxAssistantMessage([
-				fauxToolCall("collaborate", {
-					action: { name: "claim", work: "organize the initial work" },
-				}, { id: "offline-whitespace-claim" }),
-				fauxToolCall("collaborate", {
-					action: { name: "delegate", goal_id: runId, focus: "inspect the issue boundary" },
-				}, { id: "offline-whitespace-delegate" }),
-				fauxToolCall("collaborate", {
-					action: { name: "wait", execution_id: "   " },
-				}, { id: "offline-whitespace-wait" }),
-			]);
-		}
-		if (process.env.CODEMARK_OFFLINE_SCENARIO === "invalid-first-wait") {
-			return fauxAssistantMessage([
-				fauxToolCall("definitely-unknown", {}, { id: "offline-unknown-before-wait" }),
-				fauxToolCall("collaborate", {
-					action: { name: "claim" },
-				}, { id: "offline-invalid-before-wait" }),
-				fauxToolCall("collaborate", {
-					action: { name: "claim", work: "organize the initial work" },
-				}, { id: "offline-invalid-claim" }),
-				fauxToolCall("collaborate", {
-					action: { name: "delegate", goal_id: runId, focus: "inspect the issue boundary" },
-				}, { id: "offline-invalid-delegate" }),
-				fauxToolCall("collaborate", {
-					action: { name: "wait", unexpected: true },
-				}, { id: "offline-invalid-first-wait" }),
 			]);
 		}
 		return fauxAssistantMessage([
@@ -94,20 +64,25 @@ provider.setResponses([
 				action: { name: "delegate", goal_id: runId, focus: "inspect the issue boundary" },
 			}, { id: "offline-delegate" }),
 			fauxToolCall("read", { path: "README.md" }, { id: "offline-read" }),
-			fauxToolCall("collaborate", {
-				action: { name: "wait" },
-			}, { id: "offline-wait" }),
-			fauxToolCall("collaborate", {
-				action: { name: "delegate", goal_id: runId, focus: "must be ignored after wait" },
-			}, { id: "offline-delegate-after-wait" }),
-			fauxToolCall("collaborate", {
-				action: { name: "wait", unexpected: true },
-			}, { id: "offline-second-wait" }),
 		]);
 	},
 	(context) => {
 		if (process.env.CODEMARK_OFFLINE_SCENARIO !== "identity-probe") {
-			throw new Error("unexpected second Manager call");
+			const scenario = process.env.CODEMARK_OFFLINE_SCENARIO;
+			if (scenario === "provider-error") throw new Error("offline provider failure");
+			if (scenario === "multi-step") return fauxAssistantMessage([
+				fauxToolCall("collaborate", {
+					action: { name: "delegate", goal_id: process.env.CODEMARK_RUN_ID, focus: "independent verification after inspecting initial tool feedback" },
+				}),
+			]);
+			if (scenario === "length") return fauxAssistantMessage([], { stopReason: "length" });
+			if (scenario === "length-with-tools") return fauxAssistantMessage([
+				fauxToolCall("collaborate", {
+					action: { name: "delegate", goal_id: process.env.CODEMARK_RUN_ID, focus: "truncated proposal must not execute" },
+				}),
+			], { stopReason: "length" });
+			if (scenario === "aborted") return fauxAssistantMessage([], { stopReason: "aborted" });
+			return fauxAssistantMessage([{ type: "text", text: "Initial organization is ready." }]);
 		}
 		const runId = process.env.CODEMARK_RUN_ID;
 		const codeflowHome = process.env.CODEFLOW_HOME;
@@ -142,11 +117,10 @@ provider.setResponses([
 			fauxToolCall("collaborate", {
 				action: { name: "delegate", goal_id: runId, focus: "inspect the repository boundary" },
 			}, { id: "offline-identity-delegate" }),
-			fauxToolCall("collaborate", {
-				action: { name: "wait" },
-			}, { id: "offline-identity-wait" }),
 		]);
 	},
+	() => fauxAssistantMessage([{ type: "text", text: "Initial organization is ready." }]),
+	() => { throw new Error("unexpected Manager continuation after natural turn end"); },
 ]);
 
 export default function (pi: ExtensionAPI): void {

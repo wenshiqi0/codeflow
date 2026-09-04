@@ -45,7 +45,6 @@ export type ToolOperationKind =
 	| "claim"
 	| "report"
 	| "delegate"
-	| "wait"
 	| "evidence_log"
 	| "evidence_run"
 	| "source_discovery"
@@ -85,7 +84,6 @@ export const OPERATION_KINDS: readonly ToolOperationKind[] = [
 	"claim",
 	"report",
 	"delegate",
-	"wait",
 	"evidence_log",
 	"evidence_run",
 	"source_discovery",

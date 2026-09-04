@@ -540,6 +540,15 @@ export function commitmentHistory(paths: RunPaths): CommitmentView[] {
 	return fs
 		.readdirSync(paths.commitments, { withFileTypes: true })
 		.filter((entry) => entry.isDirectory())
+		.filter((entry) => {
+			// Atomic publication creates the directory before commitment.json is
+			// renamed into place. Unpublished directories are not Commitments yet.
+			try { fs.statSync(paths.commitmentPath(entry.name)); return true; }
+			catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+				throw error;
+			}
+		})
 		.map((entry) => commitmentView(paths, loadCommitment(paths, entry.name)))
 		.sort((left, right) => left.commitment.seq - right.commitment.seq || left.commitment.id.localeCompare(right.commitment.id));
 }

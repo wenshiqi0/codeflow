@@ -7,7 +7,7 @@ import {
 	VERSION,
 	buildManagerInput,
 	buildUsageReport,
-	firstWaitWins,
+	firstTurnEndWins,
 	parseArguments,
 	resolveOutputDir,
 } from "../../codemark/cli/run";
@@ -136,18 +136,21 @@ describe("standalone codemark wrapper", () => {
 });
 
 describe("Codemark Manager input and usage", () => {
-	test("uses a deterministic durable-wait tie rule at the cutoff boundary", () => {
+	test("uses a deterministic durable-turn-end tie rule at the cutoff boundary", () => {
 		const at = Date.parse("2026-09-04T00:00:00.123Z");
-		expect(firstWaitWins("first_wait", "2026-09-04T00:00:00.123Z", at)).toBe(true);
-		expect(firstWaitWins("first_wait", "2026-09-04T00:00:00.124Z", at)).toBe(false);
-		expect(firstWaitWins("manager_exit", "2026-09-04T00:00:00.122Z", at)).toBe(false);
-		expect(firstWaitWins("first_wait", null, null)).toBe(false);
+		expect(firstTurnEndWins("first_turn_end", "2026-09-04T00:00:00.123Z", at)).toBe(true);
+		expect(firstTurnEndWins("first_turn_end", "2026-09-04T00:00:00.124Z", at)).toBe(false);
+		expect(firstTurnEndWins("manager_exit", "2026-09-04T00:00:00.122Z", at)).toBe(false);
+		expect(firstTurnEndWins("first_turn_end", null, null)).toBe(false);
+		expect(firstTurnEndWins("first_turn_end", "not-a-timestamp", at)).toBe(false);
+		expect(firstTurnEndWins("first_turn_end", "not-a-timestamp", null)).toBe(false);
+		expect(firstTurnEndWins("first_turn_end", "2026-09-04T00:00:00.122Z", null)).toBe(true);
 	});
 
 	test("uses exactly the production fresh-Root instruction", () => {
 		const input = buildManagerInput();
 		expect(input).toBe("Inspect the Task and organize the work needed to close it.");
-		expect(input).not.toMatch(/codeflow_context|first wait|does not start|initial organization|measurement/i);
+		expect(input).not.toMatch(/codeflow_context|first natural turn end|does not start|initial organization|measurement/i);
 	});
 
 	test("aggregates exact usage by response model and in total", () => {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { hasDurableProgress, loadReceiptChain, submitReceipt } from "../../runtime/lib/commitment";
+import { commitmentHistory, hasDurableProgress, loadReceiptChain, submitReceipt } from "../../runtime/lib/commitment";
 import { RunPaths } from "../../runtime/lib/paths";
 import { inspectCommitment, inspectGoal } from "../../runtime/lib/inspection";
 import { goalState } from "../../runtime/lib/state";
@@ -22,6 +22,19 @@ function runtime(): RunPaths {
 }
 
 describe("concise Receipt chain", () => {
+	test("history ignores unpublished Claim directories but still rejects corrupt published records", () => {
+		const paths = runtime();
+		const commitment = claimTestWork(paths, { goalId: paths.runId, work: "publish a Claim atomically" });
+		const target = paths.commitmentPath(commitment.id);
+		const staging = path.join(paths.commitmentDir(commitment.id), ".commitment.json.in-flight.tmp");
+		fs.renameSync(target, staging);
+		expect(commitmentHistory(paths)).toEqual([]);
+		fs.renameSync(staging, target);
+		expect(commitmentHistory(paths).map((view) => view.commitment.id)).toEqual([commitment.id]);
+		fs.writeFileSync(target, "{corrupt");
+		expect(() => commitmentHistory(paths)).toThrow();
+	});
+
 	test("progress appends and a terminal outcome closes the Commitment", () => {
 		const paths = runtime();
 		const commitment = claimTestWork(paths, { goalId: paths.runId, work: "repair behavior" });

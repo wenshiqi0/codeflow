@@ -60,10 +60,10 @@ constraints  可选；真实存在的约束
 Child 在 Claim 成功前只能做只读仓库检查；任何编辑、写入或无法明确证明为只读的命令
 都由 Runtime 拦截。Claim 建立后 Worker 可立即继续，不等待 Root 审批；同时
 `commitment_claimed` 使 Root 能异步看到该 Commitment，并在管理决策依赖其工作边界时
-通过 `wait`、`inspect` 判断是否调整组织。Root 应判断 Child 的工作边界是否有证据支持，
+接收 Runtime 的非阻塞通知，再通过 `inspect` 判断是否调整组织。Root 应判断 Child 的工作边界是否有证据支持，
 以及是否因未验证的技术判断而过早收窄；必要时调整组织或另行委派交叉验证，而不是替
 Child 修改 Commitment。单独 `inspect` 不构成覆盖范围的调整；Root 一旦判断边界过窄，
-必须先通过现有管理能力扩大证据或工作覆盖，才能再次 `wait` 或提交 terminal Receipt。
+必须先通过现有管理能力扩大证据或工作覆盖，才能提交 terminal Receipt。
 
 Goal、focus 和已有报告不是不可质疑的命令。Worker 应在现实证据冲突时简洁反馈异议，
 并通过独立观察、交叉检查和反证尝试形成高置信共识；重复或服从本身不构成共识。
@@ -108,7 +108,7 @@ issue 分类。
 
 ```text
 所有 Worker: inspect, claim, report
-仅 Root:    delegate, wait
+仅 Root:    delegate
 ```
 
 - `inspect` 查看当前或指定 Goal，或使用 `commitment_id` / `receipt_id` 召回一个
@@ -118,17 +118,20 @@ issue 分类。
 - `report` 汇报进展、完成或阻塞；Claim 前只允许 `blocked`。
 - `delegate` 使用扁平 `goal_id` 再次委派已有 Goal，或使用 `new_goal` 提供
   `goal_id`、`objective` 和可选依赖来创建 Child Goal；两者必须且只能出现一个。
-- `wait` 只在下一项管理决策对 Worker 结果存在必须立即满足的强依赖、没有该结果就
-  无法继续时使用，直到指定 Worker（或任一 Worker）创建 Commitment、提交新的
-  `progress` Receipt 或结束；返回 Commitment/Receipt id 后由 Root 使用 `inspect`
-  读取完整反馈。它不是空闲动作，也不是把一次委派重新变成同步子调用的默认步骤。
+
+协同工具不提供阻塞等待 action。任一 Child 创建 Commitment、提交 Receipt 或执行结束时，
+Runtime 将已有 Commitment/Receipt id 或执行结果通知 Root；Root 通过 `inspect`
+读取完整反馈。通知是 Runtime 对既有对象和事件的投影，不是新的持久协议对象。
+不能用另一种名称的等待工具、忙轮询或同步子调用恢复被移除的阻塞路径。
 
 只有 Root 能创建 Goal 或启动 Worker。Root 必须先拥有开放的 Commitment，并且至少有
 一个 Child Commitment、所有已委派 Worker 与 Child Commitment 都结束后，才能提交
 terminal Receipt。`delegate` 启动 Worker 后立即
-返回 execution id；Root 应继续检查状态、组织可独立推进的工作或继续委派。只有下一
-项管理决策必须先取得某个 Worker 结果时才使用 `wait`；收到进展后应先重新判断和调整，
-不得连续等待而让单个 Child 的完整生命周期阻塞协同循环。
+返回 execution id；Root 应继续检查状态、组织可独立推进的工作或继续委派。暂时没有
+可推进的管理工作时，自然结束当前模型轮次即可；轮次结束不是 Task 完成。Runtime 在
+Child 仍执行时保持任务存活，有新反馈时触发 Root 继续处理；没有新反馈不空转调用模型。
+Root 正在运行时，新反馈排入后续安全的消息边界，不等待指定 Child，也不取消其他 Worker。
+收到反馈后重新判断和调整组织。只有 terminal Receipt 才能建立语义上的任务结束。
 
 ## 6. Context 与恢复
 
@@ -141,7 +144,12 @@ terminal Receipt。`delegate` 启动 Worker 后立即
 
 Context 是一次 Worker execution 启动时的确定性快照。Commitment 与 Receipt 按共享
 单调序号排列，执行期间新增记录不得改写已发送的 context prefix；需要最新状态时使用
-`inspect`。不存在 `state/semantic/full` recall 档位。
+`inspect`。新增的 Child 反馈以独立消息追加，不能重写已有 context prefix；Runtime
+负责避免重复投递和退出竞态，不要求模型维护通知游标。不存在 `state/semantic/full` recall 档位。
+
+Codemark 保持与正式 Root 相同的四项工具能力，但不启动 Child。测量在 Manager 首次
+正常自然结束轮次时冻结初始组织（`first_turn_end`），而非引入替代等待 action。
+provider 失败、截断、用户中断或超时不构成正常测量完成；零委派等组织缺陷单独评估。
 
 Child Worker 的 Pi context utilization 达到 80% 时，Runtime 必须在发起下一次 provider
 请求前停止执行。已有开放 Commitment 时写入 `blocked` Receipt，说明工作量超过单个
@@ -159,7 +167,7 @@ checkpoint。恢复同一 Commitment 不等于 Root 重写 Worker 的承诺。
 2. Goal 是一对多、可再次委派的稳定结果边界。
 3. Commitment 由执行它的 Worker 自己声明。
 4. Root 独占 Goal 创建与 Worker 委派能力。
-5. 工具 action 固定为三项 common 加两项 Root-only。
+5. 工具 action 固定为三项 common 加一项 Root-only，Agent 之间没有阻塞等待工具。
 6. Claim 和 Receipt 字段不得演化成计划书、工作日志或观测标签。
 7. Runtime failure 不得伪造 Receipt。
 8. 观测指标从真实状态推导，不要求模型声明。

@@ -581,7 +581,7 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 	const sourceDiscoveryOperations = byOperation.source_discovery ?? 0;
 	const validationOperations = ["execute", "evidence_run", "evidence_log"]
 		.reduce((sum, kind) => sum + (byOperation[kind] ?? 0), 0);
-	const integrationOperations = ["inspect", "claim", "report", "delegate", "wait"]
+	const integrationOperations = ["inspect", "claim", "report", "delegate"]
 		.reduce((sum, kind) => sum + (byOperation[kind] ?? 0), 0);
 	const breakdownInput: LedgerBreakdownInput = {
 		byGoal: {},
