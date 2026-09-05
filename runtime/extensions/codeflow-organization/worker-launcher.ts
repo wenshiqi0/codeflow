@@ -60,8 +60,8 @@ export function buildChildWorkerArgs(resolved: ResolvedExecutor, resuming = fals
 	return buildAgentArgv(
 		resolved,
 		resuming
-			? "Re-ground the current Work Commitment from durable state, continue it, and close it with a terminal Receipt."
-			: "Inspect the injected Goal and current state. Claim bounded work, then report progress, completion, or what blocks it.",
+			? "Re-ground the current Work Commitment from durable state and continue it. Implement, verify, and organize; delegate bounded independent work when it can improve speed or quality. Reconcile delegated work before closing with a terminal Receipt."
+			: "Inspect enough of the injected Goal and current state to claim bounded work. Implement, verify, and organize; delegate bounded independent work when it can improve speed or quality. Report progress, completion, or what blocks it.",
 		agentExtensions(RUNTIME_DIR),
 		AGENT_TOOL_ALLOWLIST,
 	).slice(1);

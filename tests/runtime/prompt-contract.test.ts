@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import organization from "../../runtime/extensions/codeflow-organization";
+import { buildChildWorkerArgs, resolveLaunchWorker } from "../../runtime/extensions/codeflow-organization/worker-launcher";
 import { buildWorkerContext } from "../../runtime/extensions/codeflow-context/context";
 import { RunPaths } from "../../runtime/lib/paths";
 import { createTask } from "../../runtime/lib/tasks";
@@ -78,6 +79,38 @@ describe("Unified Agent prompt contracts", () => {
 		expect(agent).toMatch(/A Goal may be\s+delegated again/);
 		expect(agent).toMatch(/Choose independent checks when the risk or unresolved uncertainty justifies them/);
 		expect(agent).toMatch(/do not poll or assume the failed delegation was queued/);
+	});
+
+	test("investigation can be claimed before the answer is known and delegated by uncertainty boundary", () => {
+		const agent = fs.readFileSync(path.join(root, "references/agent.md"), "utf8");
+		expect(agent).toMatch(/Inspect enough to identify a sound work boundary/);
+		expect(agent).toMatch(/need not solve the issue before claiming investigation or coordination work/);
+		expect(agent).toMatch(/When useful, delegate independent discovery after claiming/);
+		expect(agent).toMatch(/Reassess parallel opportunities when new evidence or questions arise/);
+		expect(agent).toMatch(/investigating another explanation, looking for counterexamples, or checking\s+different consumers/);
+		expect(agent).toMatch(/do not wait until you have already done that work yourself/);
+	});
+
+	test("handoffs carry usable evidence without pretending to inherit the parent conversation", () => {
+		const agent = fs.readFileSync(path.join(root, "references/agent.md"), "utf8");
+		expect(agent).toMatch(/Children do not inherit your conversation/);
+		expect(agent).toMatch(/question or deliverable, relevant paths or record ids, and any shared-write boundary/);
+		expect(agent).toMatch(/Use inspect to recall full Goals, Commitments, or Receipts when\s+the injected summaries are insufficient/);
+	});
+
+	test("fresh and resumed Children are prompted to organize work with the same delegate guidance", () => {
+		const resolved = resolveLaunchWorker();
+		for (const resuming of [false, true]) {
+			const args = buildChildWorkerArgs(resolved, resuming);
+			const launchPrompt = args[args.indexOf("-p") + 1];
+			expect(launchPrompt).toContain("Implement, verify, and organize");
+			expect(launchPrompt).toContain("delegate bounded independent work when it can improve speed or quality");
+		}
+		const tools: any[] = [];
+		organization({ on() {}, registerTool(value: unknown) { tools.push(value); } } as never);
+		const delegate = tools[0].parameters.properties.action.anyOf.find((entry: any) => entry.properties.name.const === "delegate");
+		expect(delegate.description).toContain("Reassess parallel opportunities as independent questions or change boundaries emerge");
+		expect(delegate.description).toContain("requires an open Commitment");
 	});
 
 	test("every Parent reconciles descendants while leaves may finish and idle responses yield", () => {

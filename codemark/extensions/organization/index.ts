@@ -74,7 +74,7 @@ export const CODEMARK_ACTION_SCHEMAS = {
 		resume_commitment_id: Type.Optional(Type.String({ minLength: 1 })),
 	}, {
 		additionalProperties: false,
-		description: "Start a child Agent asynchronously for bounded independent work. Set exactly one of goal_id (reuse) or new_goal (create).",
+		description: "Start a child Agent asynchronously for bounded independent work; requires an open Commitment. Reassess parallel opportunities as independent questions or change boundaries emerge, and delegate when it can improve speed or quality. Set exactly one of goal_id (reuse) or new_goal (create).",
 	}),
 } as const;
 

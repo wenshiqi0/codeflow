@@ -47,6 +47,9 @@ Goal 与 Agent **不是一对一**：
 工作，在已有 Child 结束后根据需要重新委派。
 简单、明确的工作可以由一个 Agent 完成，不要求最少 Child 数量或固定开发/测试角色。
 独立验证依据风险和未解决的不确定性安排，不以人数或头衔代替证据。
+独立边界不限于文件或功能，也可以是另一种解释、反例或不同消费者的验证问题。
+初步检查及后续新证据出现时，应重新判断可并行推进的工作；判断委派有价值后及时委派，
+不应先自行完成该工作再交给 Child 重复。
 
 ## 3. Commitment
 
@@ -65,6 +68,8 @@ constraints  可选；真实存在的约束
 当 `work` 包含封闭的技术边界，例如精确的输入或字段集合时，必须先检查能够改变该边界
 的相关消费者与变体；否则应承诺建立该边界，而不是把常见路径直接写成答案。
 这是 Commitment 文本的质量要求，不引入新字段、状态或对象。
+初步检查只需足以识别可靠的工作边界，不要求先独自解决问题才能 Claim；
+可以先承诺调查或组织工作，在 Claim 后委派独立调查。未知答案仍保持为待验证的问题。
 
 所有 Agent 在 Claim 成功前只能做只读仓库检查；任何编辑、写入或无法明确证明为只读的命令
 都由 Runtime 拦截。委派同样要求委派者已有开放的 Commitment。Claim 建立后 Agent 可立即
@@ -160,7 +165,10 @@ Task 的语义结束；Child Receipt 只关闭自己的 Commitment。
 字符时只保留前 300 个字符、一个省略号和后 300 个字符；持久记录本身不得截断。
 
 Context 是一次 Agent execution 启动时的确定性快照，不复制父 session、工具 transcript
-或隐藏推理。Commitment 与 Receipt 按共享
+或隐藏推理。因此 focus 应包含问题或交付物、相关路径或记录 id，以及共享写入边界；
+说明这些信息不等于替 Child 决定 Commitment、实现或验证方法。注入摘要不足时，
+Child 应通过 `inspect` 召回完整的 Goal、Commitment 或 Receipt。
+Commitment 与 Receipt 按共享
 单调序号排列，执行期间新增记录不得改写已发送的 context prefix；需要最新状态时使用
 `inspect`。新增的 Child 反馈以独立消息追加，不能重写已有 context prefix；Runtime
 负责避免重复投递和退出竞态，不要求模型维护通知游标。不存在 `state/semantic/full` recall 档位。
