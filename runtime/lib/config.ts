@@ -9,7 +9,7 @@ interface ExecutorConfig {
 }
 
 interface RuntimeConfig {
-	agents: Record<AgentScope, ExecutorConfig>;
+	agent: ExecutorConfig;
 	services: { output_compression: ExecutorConfig };
 }
 
@@ -20,8 +20,6 @@ export interface ResolvedExecutor {
 	systemPrompts: string[];
 	promptPaths: string[];
 }
-
-export type AgentScope = "manager" | "worker";
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
@@ -45,17 +43,6 @@ function parseExecutor(value: unknown, field: string): ExecutorConfig {
 	return { model: value.model, prompt: value.prompt };
 }
 
-function parseAgents(value: unknown): Record<AgentScope, ExecutorConfig> {
-	if (!isRecord(value)) throw new ConfigError("agents must be an object");
-	if (Object.keys(value).some((key) => key !== "manager" && key !== "worker")) {
-		throw new ConfigError("agents contains unknown keys");
-	}
-	return {
-		manager: parseExecutor(value.manager, "agents.manager"),
-		worker: parseExecutor(value.worker, "agents.worker"),
-	};
-}
-
 export function loadRuntimeConfig(configFile: string): RuntimeConfig {
 	let value: unknown;
 	try {
@@ -64,16 +51,16 @@ export function loadRuntimeConfig(configFile: string): RuntimeConfig {
 		throw new ConfigError(`cannot read runtime config ${configFile}: ${(error as Error).message}`);
 	}
 	if (!isRecord(value) || !isRecord(value.services)) {
-		throw new ConfigError("runtime config requires agents and services");
+		throw new ConfigError("runtime config requires agent and services");
 	}
-	if (Object.keys(value).some((key) => key !== "agents" && key !== "services")) {
+	if (Object.keys(value).some((key) => key !== "agent" && key !== "services")) {
 		throw new ConfigError("runtime config contains unknown keys");
 	}
 	if (Object.keys(value.services).some((key) => key !== "output_compression")) {
 		throw new ConfigError("runtime config contains an unknown service");
 	}
 	return {
-		agents: parseAgents(value.agents),
+		agent: parseExecutor(value.agent, "agent"),
 		services: { output_compression: parseExecutor(value.services.output_compression, "services.output_compression") },
 	};
 }
@@ -111,15 +98,14 @@ function resolveExecutor(
 
 export function resolveAgent(
 	configFile: string,
-	scope: AgentScope,
 	modelOverride?: string,
 ): ResolvedExecutor {
-	const agent = loadRuntimeConfig(configFile).agents[scope];
+	const agent = loadRuntimeConfig(configFile).agent;
 	const resolved = resolveExecutor(
 		configFile,
 		modelOverride ?? agent.model,
-		[{ ref: agent.prompt, field: `agents.${scope}.prompt` }],
-		`agents.${scope}`,
+		[{ ref: agent.prompt, field: "agent.prompt" }],
+		"agent",
 	);
 	const modelsFile = path.join(path.dirname(configFile), "models.json");
 	let manifest: unknown;
@@ -151,7 +137,7 @@ export function resolveOutputCompression(configFile: string): ResolvedExecutor {
 	], "services.output_compression");
 }
 
-export function buildWorkerArgv(
+export function buildAgentArgv(
 	resolved: ResolvedExecutor,
 	prompt: string,
 	extensions: string[],

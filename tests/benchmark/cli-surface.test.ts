@@ -24,11 +24,12 @@ describe("benchmark CLI discoverability", () => {
 		expect(result.stdout).toContain("benchmark");
 	});
 
-	test("codeflow --help advertises separate Manager and Worker model overrides", () => {
+	test("codeflow --help advertises one model override for every Agent", () => {
 		const result = runCodeflow(["--help"]);
 		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toContain("[--manager-model <provider/model>]");
-		expect(result.stdout).toContain("[--worker-model <provider/model>]");
+		expect(result.stdout).toContain("[--model <provider/model>]");
+		expect(result.stdout).not.toContain("--manager-model");
+		expect(result.stdout).not.toContain("--worker-model");
 	});
 
 	test("codeflow benchmark --help lists run and report", () => {

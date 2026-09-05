@@ -4,8 +4,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { canonicalJson } from "../../lib/canonical";
-import { loadCommitment, loadTerminalReceipt, submitReceipt } from "../../lib/commitment";
-import { loadWorkerReport, writeWorkerReport } from "../../lib/executions";
+import { loadCommitment, loadTerminalReceipt, recordRuntimeFailure } from "../../lib/commitment";
+import { recordExecutionFailure } from "../../lib/executions";
+import { CONTEXT_BUDGET_ABORT_MARKER } from "../../lib/runtime-signals";
 import {
 	appendRunFactsRecord,
 	RUN_FACTS_SCHEMA_VERSION,
@@ -18,11 +19,9 @@ import { buildWorkerContext } from "./context";
 const CONTEXT_CUSTOM_TYPE = "codeflow:context";
 const RUN_FACTS_CUSTOM_TYPE = "codeflow:run_facts";
 const RUN_FACT_THRESHOLDS = [0.5, 0.7] as const;
-export const WORKER_CONTEXT_STOP_UTILIZATION = 0.8;
-export const CONTEXT_BUDGET_BLOCKED_SUMMARY =
-	"Execution context reached 80% utilization; this work is too large for one Worker to finish safely.";
-export const CONTEXT_BUDGET_REMAINING =
-	"The Manager should split the remaining Goal work into smaller Worker boundaries.";
+export const AGENT_CONTEXT_STOP_UTILIZATION = 0.8;
+export const CONTEXT_BUDGET_INTERRUPTED_SUMMARY =
+	"Execution context reached 80% utilization; resume the same open Commitment with fresh context to reconcile unfinished descendants.";
 
 function readIfPresent(file: string): string {
 	try {
@@ -32,25 +31,15 @@ function readIfPresent(file: string): string {
 	}
 }
 
-function reportContextBudgetLimit(paths: RunPaths, goalId: string, executionId: string, commitmentId?: string) {
+function reportContextBudgetLimit(paths: RunPaths, goalId: string, executionId: string, commitmentId?: string): void {
 	if (commitmentId) {
-		const terminal = loadTerminalReceipt(paths, commitmentId);
-		if (terminal) return terminal;
-		return submitReceipt(paths, {
-			commitmentId,
-			status: "blocked",
-			summary: CONTEXT_BUDGET_BLOCKED_SUMMARY,
-			remaining: [CONTEXT_BUDGET_REMAINING],
-		});
+		if (loadTerminalReceipt(paths, commitmentId)) return;
+		// Context exhaustion is a Runtime interruption, not the Agent's semantic
+		// blocker. Keep parent identity open so nested Commitments remain resumable.
+		recordRuntimeFailure(paths, commitmentId, ["CONTEXT_BUDGET_EXCEEDED"], CONTEXT_BUDGET_INTERRUPTED_SUMMARY);
+		return;
 	}
-	const existing = loadWorkerReport(paths, executionId);
-	if (existing) return existing;
-	return writeWorkerReport(paths, {
-		goal_id: goalId,
-		execution_id: executionId,
-		summary: CONTEXT_BUDGET_BLOCKED_SUMMARY,
-		remaining: [CONTEXT_BUDGET_REMAINING],
-	});
+	recordExecutionFailure(paths, executionId, goalId, ["CONTEXT_BUDGET_EXCEEDED"], CONTEXT_BUDGET_INTERRUPTED_SUMMARY);
 }
 
 export default function (pi: ExtensionAPI) {
@@ -170,14 +159,14 @@ export default function (pi: ExtensionAPI) {
 			},
 		);
 		const shouldStopForContextBudget = !contextBudgetStopTriggered
-			&& process.env.CODEFLOW_PROCESS_KIND === "worker"
 			&& contextUtilization.basis === "pi_estimate"
-			&& contextUtilization.value >= WORKER_CONTEXT_STOP_UTILIZATION;
+			&& contextUtilization.value >= AGENT_CONTEXT_STOP_UTILIZATION;
 		if (shouldStopForContextBudget) {
-			contextBudgetStopTriggered = true;
-			reportContextBudgetLimit(paths, goalId, executionId, commitmentId);
-			// Print/JSON mode does not bind graceful shutdown, so abort the active
-			// turn as well. The durable blocked report is written before either call.
+				contextBudgetStopTriggered = true;
+				reportContextBudgetLimit(paths, goalId, executionId, commitmentId);
+				console.error(`${CONTEXT_BUDGET_ABORT_MARKER}: ${CONTEXT_BUDGET_INTERRUPTED_SUMMARY}`);
+				// Print/JSON mode does not bind graceful shutdown, so abort the active
+				// turn as well. The durable Runtime event is written before either call.
 			ctx.abort();
 			ctx.shutdown();
 		}

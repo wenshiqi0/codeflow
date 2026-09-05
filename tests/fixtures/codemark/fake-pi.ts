@@ -44,12 +44,12 @@ if (toolsIndex < 0 || argv[toolsIndex + 1] !== "read,collaborate") {
 }
 const runtimeDir = process.env.PI_CODING_AGENT_DIR;
 if (!runtimeDir) fail("PI_CODING_AGENT_DIR was not supplied");
-const productionManagerPrompt = fs.readFileSync(
-	path.resolve(runtimeDir, "..", "references", "manager.md"),
+const productionAgentPrompt = fs.readFileSync(
+	path.resolve(runtimeDir, "..", "references", "agent.md"),
 	"utf8",
 );
-if (systemPrompts.length !== 1 || systemPrompts[0] !== productionManagerPrompt) {
-	fail("Manager did not receive exactly the production manager.md system prompt");
+if (systemPrompts.length !== 1 || systemPrompts[0] !== productionAgentPrompt) {
+	fail("Agent did not receive exactly the production agent.md system prompt");
 }
 for (const key of [
 	"CODEFLOW_RUN_ID",

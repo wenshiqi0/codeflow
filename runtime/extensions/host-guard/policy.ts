@@ -127,7 +127,7 @@ export function preClaimToolViolation(
 	environment: Environment = process.env,
 ): string | null {
 	if (
-		environment.CODEFLOW_PROCESS_KIND !== "worker"
+		(environment.CODEFLOW_PROCESS_KIND !== "worker" && environment.CODEFLOW_PROCESS_KIND !== "root")
 		|| environment.CODEFLOW_COMMITMENT_ID
 	) return null;
 	if (toolName === "read" || toolName === "collaborate") return null;

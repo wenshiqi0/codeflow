@@ -97,7 +97,7 @@ describe("Codemark collaborate extension", () => {
 		expect(allowedInput.path).toBe(fs.realpathSync(`${repository}/README.md`));
 	});
 
-	test("keeps the complete production Manager tool metadata surface", () => {
+	test("keeps the complete production Agent tool metadata surface", () => {
 		process.env.CODEFLOW_PROCESS_KIND = "root";
 		const productionTool = registeredTool(codeflowOrganization);
 		const codemarkTool = registeredTool(codemarkOrganization);
@@ -106,6 +106,10 @@ describe("Codemark collaborate extension", () => {
 		expect(codemarkTool.label).toBe(productionTool.label);
 		expect(codemarkTool.description).toBe(productionTool.description);
 		expect(codemarkTool.parameters).toEqual(productionTool.parameters);
+		process.env.CODEFLOW_PROCESS_KIND = "child";
+		const childTool = registeredTool(codeflowOrganization);
+		expect(codemarkTool.description).toBe(childTool.description);
+		expect(codemarkTool.parameters).toEqual(childTool.parameters);
 		expect(codemarkTool.executionMode).toBe("sequential");
 		expect(codemark.map((entry) => entry.properties.name.const)).toEqual([
 			"inspect",
@@ -124,7 +128,7 @@ describe("Codemark collaborate extension", () => {
 			action: {
 				name: "delegate",
 				new_goal: { goal_id: "tests", objective: "design regression coverage" },
-				focus: "record a proposed Worker",
+				focus: "record a proposed Child",
 			},
 		})).toBe(true);
 	});
@@ -165,7 +169,7 @@ describe("Codemark collaborate extension", () => {
 		expect("wait" in readInitialOrganization(runDir)).toBe(false);
 	});
 
-	test("zero-Worker natural turn end is measured successfully with policy violations", () => {
+	test("an unclaimed natural turn end retains only the missing-Claim policy violation", () => {
 		const runDir = makeTmpDir("codemark-extension-zero-");
 		createInitialOrganization(runDir, { runId: "codemark-zero", issue: "Inspect", repository: "/workspace/repository" });
 		process.env.CODEMARK_RUN_DIR = runDir;
@@ -174,7 +178,7 @@ describe("Codemark collaborate extension", () => {
 		handlers.agent_end?.({ messages: [{ role: "assistant", stopReason: "stop", content: [] }] }, { cwd: "/workspace/repository" });
 		expect(readInitialOrganization(runDir)).toMatchObject({
 			status: "completed", termination: "first_turn_end",
-			assessment: { organization_valid: false, policy_violations: ["manager_claim_missing", "delegation_missing"] },
+			assessment: { organization_valid: false, policy_violations: ["manager_claim_missing"] },
 		});
 	});
 
@@ -214,20 +218,28 @@ describe("Codemark collaborate extension", () => {
 		expect(readInitialOrganization(runDir).status).toBe("running");
 	});
 
-	test("terminal report still fails without creating canonical protocol objects", async () => {
+	test("a valid leaf terminal report stays simulated and freezes only at natural turn end", async () => {
 		const runDir = makeTmpDir("codemark-extension-report-");
 		process.env.CODEMARK_RUN_DIR = runDir;
 		process.env.CODEMARK_RUN_ID = "codemark-report-run";
 		process.env.CODEMARK_ISSUE = "Inspect this issue";
 		delete process.env.CODEMARK_ISSUE_FILE;
-		const tool = registeredTool(codemarkOrganization);
+		const handlers: Record<string, (...args: any[]) => unknown> = {};
+		const tool = registeredTool(codemarkOrganization, handlers);
 		const ctx = { cwd: "/workspace/repository", abort() {}, shutdown() {} };
 		await tool.execute("claim", { action: { name: "claim", work: "plan only" } }, undefined, undefined, ctx);
-		await expect(tool.execute("report", {
-			action: { name: "report", status: "completed", summary: "not allowed" },
-		}, undefined, undefined, ctx)).rejects.toThrow(/terminal Root Receipt requires at least one Child Worker Commitment/i);
+		expect(body(await tool.execute("report", {
+			action: { name: "report", status: "completed", summary: "Read-only analysis complete" },
+		}, undefined, undefined, ctx))).toMatchObject({ status: "completed" });
 		expect(readInitialOrganization(runDir)).toMatchObject({ status: "running", termination: null });
+		handlers.agent_end?.({ messages: [{ role: "assistant", stopReason: "stop", content: [] }] }, ctx);
+		expect(readInitialOrganization(runDir)).toMatchObject({
+			status: "completed", termination: "first_turn_end", delegations: [],
+			assessment: { organization_valid: true, policy_violations: [] },
+			manager_progress: [{ status: "completed", benchmark: { simulated: true, canonical_receipt_written: false } }],
+		});
 		expect(fs.existsSync(`${runDir}/receipts`)).toBe(false);
 		expect(fs.existsSync(`${runDir}/commitments`)).toBe(false);
+		expect(fs.readdirSync(runDir)).toEqual(["frontier.json"]);
 	});
 });

@@ -1,9 +1,11 @@
 /**
  * Durable state for one Codemark initial-organization run.
  *
- * Codemark deliberately does not create Codeflow Tasks, Commitments, Worker
+ * Codemark deliberately does not create Codeflow Tasks, Commitments, Agent
  * executions, or Receipts. Stable proposal ids and explicit benchmark markers
  * keep the recorded frontier distinguishable from runtime work.
+ * Artifact v1 retains manager/manager_claim/manager_progress and worker metric
+ * keys as serialized names, not distinct Agent roles or capability levels.
  */
 
 import { createHash } from "node:crypto";
@@ -72,6 +74,8 @@ export type CodemarkEffect =
 export interface CodemarkProgressReport {
 	planning_receipt_id: string;
 	semantic_seq: number;
+	/** Legacy v1 entries omit status for progress; leaf terminal reports set it. */
+	status?: "completed" | "blocked";
 	summary: string;
 	effects: CodemarkEffect[];
 	remaining: string[];
@@ -124,9 +128,7 @@ export interface CodemarkMetrics {
 	new_goal_count: number;
 }
 
-export type CodemarkPolicyViolation =
-	| "manager_claim_missing"
-	| "delegation_missing";
+export type CodemarkPolicyViolation = "manager_claim_missing";
 
 export interface CodemarkAssessment {
 	organization_valid: boolean;
@@ -322,6 +324,7 @@ function opaqueHex(parts: readonly (string | number)[], length: number): string 
 }
 
 function rootExecutionId(organization: InitialOrganization): string {
+	// Preserve the artifact v1 identity seed; it does not select an Agent role.
 	return `exec_${opaqueHex([organization.run_id, "root-manager"], 24)}`;
 }
 
@@ -359,7 +362,7 @@ function progressProjection(
 	report: CodemarkProgressReport,
 ): Record<string, unknown> {
 	const claim = organization.manager_claim;
-	if (!claim) throw new CodemarkOrganizationError("progress report has no Manager claim");
+	if (!claim) throw new CodemarkOrganizationError("report has no Agent claim");
 	return {
 		id: report.planning_receipt_id,
 		schema_version: 1,
@@ -367,7 +370,7 @@ function progressProjection(
 		task_id: organization.run_id,
 		goal_id: claim.goal_id,
 		commitment_id: claim.planning_claim_id,
-		status: "progress",
+		status: report.status ?? "progress",
 		summary: report.summary,
 		effects: report.effects,
 		remaining: report.remaining,
@@ -377,7 +380,6 @@ function progressProjection(
 function assessOrganization(organization: InitialOrganization): CodemarkAssessment {
 	const policyViolations: CodemarkPolicyViolation[] = [];
 	if (organization.manager_claim === null) policyViolations.push("manager_claim_missing");
-	if (organization.delegations.length === 0) policyViolations.push("delegation_missing");
 	return {
 		organization_valid: policyViolations.length === 0,
 		policy_violations: policyViolations,
@@ -530,6 +532,7 @@ function inspect(organization: InitialOrganization, action: Extract<CodemarkActi
 		const commitment = commitmentProjection(organization);
 		const receipts = organization.manager_progress.map((report) => progressProjection(organization, report));
 		const latest = receipts.at(-1) ?? null;
+		const terminalStatus = organization.manager_progress.at(-1)?.status;
 		const effects = [...new Map(
 			organization.manager_progress
 				.flatMap((report) => report.effects)
@@ -538,7 +541,7 @@ function inspect(organization: InitialOrganization, action: Extract<CodemarkActi
 		return {
 			goal: {
 				...organization.root_goal,
-				status: claim ? "active" : "pending",
+				status: terminalStatus ?? (claim ? "active" : "pending"),
 				commitment_refs: claim ? [claim.planning_claim_id] : [],
 				receipt_refs: organization.manager_progress.map((report) => report.planning_receipt_id),
 				summaries: organization.manager_progress.map((report) => report.summary),
@@ -548,7 +551,7 @@ function inspect(organization: InitialOrganization, action: Extract<CodemarkActi
 			commitments: claim && commitment
 				? [{
 					commitment,
-					status: "running",
+					status: terminalStatus ?? "running",
 					receipt_count: receipts.length,
 					latest,
 				}]
@@ -664,7 +667,7 @@ export function writeInitialOrganization(runDir: string, organization: InitialOr
 
 /**
  * Atomically promote the private frontier to one immutable terminal artifact
- * after host-side usage has been attached. Until this rename the Manager
+ * after host-side usage has been attached. Until this rename the Agent
  * extension only mutates the private path, so readers can never observe a
  * completed public artifact whose usage is still null.
  */
@@ -703,7 +706,7 @@ export function transitionOrganization(
 		case "claim": {
 			requireRunning(organization, action.name);
 			if (organization.preclaim_report !== null) {
-				throw new CodemarkOrganizationError("a Worker that reported a blocker cannot claim in the same execution");
+				throw new CodemarkOrganizationError("an Agent that reported a blocker cannot claim in the same execution");
 			}
 			if (organization.manager_claim !== null) {
 				throw new CodemarkOrganizationError(
@@ -747,6 +750,9 @@ export function transitionOrganization(
 		}
 		case "report": {
 			requireRunning(organization, action.name);
+			if (!["progress", "completed", "blocked"].includes(action.status)) {
+				throw new CodemarkOrganizationError("invalid Receipt status");
+			}
 			if (organization.manager_claim === null) {
 				if (action.status !== "blocked") {
 					throw new CodemarkOrganizationError("a pre-claim report must be blocked");
@@ -770,22 +776,31 @@ export function transitionOrganization(
 				organization.timestamps.updated_at = now;
 				return { organization, result: report };
 			}
-			if (action.status !== "progress") {
+			if (organization.manager_progress.at(-1)?.status) {
+				throw new CodemarkOrganizationError("current Commitment already has a terminal Receipt");
+			}
+			if (action.status !== "progress" && organization.delegations.some((entry) => entry.readiness === "ready_now")) {
 				throw new CodemarkOrganizationError(
-					"terminal Root Receipt requires at least one Child Worker Commitment",
+					"terminal Receipt requires every delegated Agent and descendant Commitment to finish; continue local work or consume asynchronous feedback",
 				);
 			}
 			const semanticSeq = nextSemanticSeq(organization);
 			const summary = nonEmpty(action.summary, "summary");
 			const effects = effectArray(action.effects);
 			const remaining = stringArray(action.remaining, "remaining");
+			if (action.status === "blocked" && remaining.length === 0) {
+				throw new CodemarkOrganizationError("a blocked Receipt must explain what remains");
+			}
+			if (action.status === "completed" && remaining.length > 0) {
+				throw new CodemarkOrganizationError("a completed Receipt cannot contain remaining work");
+			}
 			const receiptContent = {
 				schema_version: 1 as const,
 				seq: semanticSeq,
 				task_id: organization.run_id,
 				goal_id: organization.manager_claim.goal_id,
 				commitment_id: organization.manager_claim.planning_claim_id,
-				status: "progress" as const,
+				status: action.status,
 				summary,
 				effects,
 				remaining,
@@ -793,6 +808,7 @@ export function transitionOrganization(
 			const report: CodemarkProgressReport = {
 				planning_receipt_id: contentId("r", receiptContent),
 				semantic_seq: semanticSeq,
+				...(action.status === "progress" ? {} : { status: action.status }),
 				summary,
 				effects,
 				remaining,
@@ -803,13 +819,16 @@ export function transitionOrganization(
 			organization.timestamps.updated_at = now;
 			return {
 				organization,
-				result: { receipt_id: report.planning_receipt_id, status: "progress" },
+				result: { receipt_id: report.planning_receipt_id, status: action.status },
 			};
 		}
 		case "delegate": {
 			requireRunning(organization, action.name);
 			if (organization.manager_claim === null) {
-				throw new CodemarkOrganizationError("delegate requires the Root Worker to claim its own Commitment first");
+				throw new CodemarkOrganizationError("delegate requires the Agent to claim its own Commitment first");
+			}
+			if (organization.manager_progress.at(-1)?.status) {
+				throw new CodemarkOrganizationError("delegate requires an open current Commitment");
 			}
 			if (action.resume_commitment_id !== undefined) {
 				throw new CodemarkOrganizationError(`unknown commitment: ${action.resume_commitment_id}`);

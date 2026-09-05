@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
-/** Start or resume the root Worker for one Task. */
+/** Start or resume the root Agent for one Task. */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
-import { buildWorkerArgv, ConfigError, resolveAgent, resolveOutputCompression } from "../lib/config";
+import { buildAgentArgv, ConfigError, resolveAgent, resolveOutputCompression } from "../lib/config";
+import { AGENT_TOOL_ALLOWLIST, agentExtensions } from "../lib/agent-launch";
 import {
 	commitmentForExecution,
 	loadTerminalReceipt,
@@ -14,7 +15,9 @@ import {
 	runStart,
 	runnerChildStarted,
 	runnerExited,
+	reconcileDeadCommitments,
 } from "../lib/commitment";
+import { CONTEXT_BUDGET_ABORT_MARKER } from "../lib/runtime-signals";
 import { loadWorkerReport } from "../lib/executions";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../lib/paths";
 import { loadResumeSource, ResumeError, type ResumeSource } from "../lib/resume";
@@ -24,16 +27,6 @@ const RUNTIME_DIR = path.resolve(import.meta.dir, "..");
 const CONFIG_FILE = path.join(RUNTIME_DIR, "config.json");
 const VERSION = "0.2.0";
 const ROOT_OUTPUT_DIAGNOSTIC_LIMIT = 8_000;
-const ROOT_TOOL_ALLOWLIST = ["read", "collaborate"] as const;
-const ROOT_EXTENSIONS = [
-	"provider-profiles",
-	"codeflow-organization",
-	"host-guard",
-	"codeflow-context",
-	"usage-ledger",
-	"telemetry-ledger",
-	"agent-watchdog",
-].map((name) => path.join(RUNTIME_DIR, "extensions", name, "index.ts"));
 
 export function newRunId(now = new Date()): string {
 	const stamp = now.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
@@ -62,17 +55,19 @@ function interruptedReasons(
 	aborted: boolean,
 ): import("../lib/commitment").RuntimeFailureReason[] {
 	const reasons: import("../lib/commitment").RuntimeFailureReason[] = [];
+	const diagnostics = `${observation.stderrTail}\n${observation.errorMessage ?? ""}`;
+	if (diagnostics.includes(CONTEXT_BUDGET_ABORT_MARKER)) return ["CONTEXT_BUDGET_EXCEEDED"];
 	if (aborted || observation.stopReason === "aborted") reasons.push("USER_CANCELLED");
 	if (observation.stopReason === "length") reasons.push("OUTPUT_TRUNCATED");
-	const diagnostics = `${observation.stderrTail}\n${observation.errorMessage ?? ""}`;
 	if (diagnostics.includes("CODEFLOW_EXECUTION_TIMEOUT")) reasons.push("EXECUTION_TIMEOUT");
 	if (code !== 0 || observation.stopReason === "error") reasons.push("PROVIDER_FAILURE");
 	return [...new Set(reasons)];
 }
 
-function rootCommitmentForResume(paths: RunPaths) {
+export function rootCommitmentForResume(paths: RunPaths) {
 	return commitmentHistory(paths)
-		.filter((view) => view.commitment.goal_id === paths.runId && view.folded.terminal === null)
+		.filter((view) => view.commitment.goal_id === paths.runId
+			&& view.commitment.parent_commitment_id === null && view.folded.terminal === null)
 		.sort((left, right) => right.commitment.seq - left.commitment.seq)[0]?.commitment ?? null;
 }
 
@@ -119,38 +114,31 @@ interface RunOptions { resume?: ResumeSource }
 
 export interface ExecArguments {
 	prompt: string;
-	managerModel?: string;
-	workerModel?: string;
+	model?: string;
 }
 
 export function parseExecArguments(argv: string[]): ExecArguments {
 	const objective: string[] = [];
-	let managerModel: string | undefined;
-	let workerModel: string | undefined;
+	let model: string | undefined;
 	for (let index = 0; index < argv.length; index += 1) {
 		const value = argv[index];
-		if (value === "--manager-model" || value === "--worker-model") {
-			const manager = value === "--manager-model";
-			if (manager ? managerModel !== undefined : workerModel !== undefined) {
+		if (value === "--model") {
+			if (model !== undefined) {
 				throw new ConfigError(`${value} may be specified only once`);
 			}
 			const next = argv[index + 1];
 			if (!next || next.startsWith("--")) throw new ConfigError(`${value} requires '<provider>/<model>'`);
-			if (manager) managerModel = next;
-			else workerModel = next;
+			model = next;
 			index += 1;
 			continue;
 		}
-		if (value.startsWith("--manager-model=") || value.startsWith("--worker-model=")) {
-			const manager = value.startsWith("--manager-model=");
-			const flag = manager ? "--manager-model" : "--worker-model";
-			if (manager ? managerModel !== undefined : workerModel !== undefined) {
+		if (value.startsWith("--model=")) {
+			const flag = "--model";
+			if (model !== undefined) {
 				throw new ConfigError(`${flag} may be specified only once`);
 			}
-			const model = value.slice(`${flag}=`.length);
+			model = value.slice(`${flag}=`.length);
 			if (!model) throw new ConfigError(`${flag} requires '<provider>/<model>'`);
-			if (manager) managerModel = model;
-			else workerModel = model;
 			continue;
 		}
 		if (value.startsWith("--")) throw new ConfigError(`unknown exec option: ${value}`);
@@ -158,7 +146,7 @@ export function parseExecArguments(argv: string[]): ExecArguments {
 	}
 	const prompt = objective.join(" ").trim();
 	if (!prompt) throw new ConfigError("exec requires a requirement");
-	return { prompt, managerModel, workerModel };
+	return { prompt, model };
 }
 
 export async function run(
@@ -168,17 +156,16 @@ export async function run(
 ): Promise<number> {
 	if (process.env.CODEFLOW_RUN_ID) return fail(`${entry} cannot start inside a Codeflow Task`, entry);
 	let prompt: string;
-	let managerModel: string | undefined;
-	let workerModel: string | undefined;
+	let model: string | undefined;
 	let resolved;
 	try {
-		if (entry === "exec") ({ prompt, managerModel, workerModel } = parseExecArguments(argv));
+		if (entry === "exec") ({ prompt, model } = parseExecArguments(argv));
 		else {
 			if (argv.some((value) => value.startsWith("--"))) throw new ConfigError(`unknown ${entry} option`);
 			prompt = argv.join(" ").trim();
 			if (!prompt) throw new ConfigError(`${entry} requires a requirement`);
 		}
-		resolved = resolveAgent(CONFIG_FILE, "manager", managerModel);
+		resolved = resolveAgent(CONFIG_FILE, model ?? process.env.CODEFLOW_AGENT_MODEL);
 	} catch (error) {
 		if (error instanceof ConfigError) return fail(error.message, entry);
 		throw error;
@@ -189,6 +176,7 @@ export async function run(
 	const objective = options.resume?.objective ?? prompt;
 	if (options.resume) runResume(paths, process.pid);
 	else runStart(paths, process.pid, objective);
+	if (options.resume) reconcileDeadCommitments(paths, ["TERMINAL_RECEIPT_MISSING"]);
 	const resumedCommitment = options.resume ? rootCommitmentForResume(paths) : null;
 	const executionId = `exec_${randomBytes(12).toString("hex")}`;
 
@@ -204,21 +192,20 @@ export async function run(
 		CODEFLOW_EVIDENCE_DIR: paths.evidence,
 		CODEFLOW_GOAL_ID: taskId,
 		CODEFLOW_EXECUTION_ID: executionId,
+		CODEFLOW_AGENT_MODEL: `${resolved.provider}/${resolved.model}`,
 	};
 	delete childEnv.CODEFLOW_PARENT_COMMITMENT_ID;
 	delete childEnv.CODEFLOW_WORK_FOCUS;
 	if (resumedCommitment) childEnv.CODEFLOW_COMMITMENT_ID = resumedCommitment.id;
 	else delete childEnv.CODEFLOW_COMMITMENT_ID;
-	delete childEnv.CODEFLOW_WORKER_MODEL;
-	if (workerModel !== undefined) childEnv.CODEFLOW_WORKER_MODEL = workerModel;
 	const child = Bun.spawn(
-		buildWorkerArgv(
+		buildAgentArgv(
 			resolved,
 			resumedCommitment
 				? "Re-ground the Task from durable state and continue it to closure."
 				: "Inspect the Task and organize the work needed to close it.",
-			ROOT_EXTENSIONS,
-			ROOT_TOOL_ALLOWLIST,
+			agentExtensions(RUNTIME_DIR),
+			AGENT_TOOL_ALLOWLIST,
 		),
 		{
 			stdin: "ignore",
@@ -234,6 +221,7 @@ export async function run(
 	let escalation: ReturnType<typeof setTimeout> | undefined;
 	let aborted = false;
 	const terminate = () => {
+		if (aborted) return;
 		aborted = true;
 		try { process.kill(-child.pid, "SIGTERM"); } catch { child.kill("SIGTERM"); }
 		escalation = setTimeout(() => {
@@ -248,7 +236,18 @@ export async function run(
 		drain(child.stderr, () => undefined, (chunk) => { observation.stderrTail = appendTail(observation.stderrTail, chunk); }),
 	]);
 	const code = await child.exited;
+	// Root can crash before its extension runs shutdown. Its detached process
+	// group is Task-owned, so reap orphaned descendants before draining pipes.
+	try { process.kill(-child.pid, "SIGKILL"); } catch { /* group already exited */ }
 	await drained;
+	// OS reaping can lag signal delivery. Wait only for this Task's recorded
+	// PIDs, then reconcile confirmed-dead active markers for explicit recovery.
+	const stoppedPids = commitmentHistory(paths).flatMap((view) => view.pid === null ? [] : [view.pid]);
+	const cleanupDeadline = Date.now() + 2_000;
+	while (Date.now() < cleanupDeadline && stoppedPids.some((pid) => {
+		try { process.kill(pid, 0); return true; }
+		catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+	})) await Bun.sleep(25);
 	if (escalation) clearTimeout(escalation);
 	process.off("SIGTERM", terminate);
 	process.off("SIGINT", terminate);
@@ -266,14 +265,15 @@ export async function run(
 			receipt ? undefined : {
 				reasons,
 				summary: report?.summary ?? (rootCommitment
-					? "root Worker execution ended without a terminal Receipt"
-					: "root Worker execution ended before claiming a Work Commitment"),
+					? "root Agent execution ended without a terminal Receipt"
+					: "root Agent execution ended before claiming a Work Commitment"),
 			},
 		);
+		reconcileDeadCommitments(paths, reasons.length > 0 ? reasons : ["TERMINAL_RECEIPT_MISSING"]);
 	} catch { /* bookkeeping cannot mask execution */ }
 	if (!receipt) {
 		const tail = (observation.errorMessage ?? observation.stderrTail ?? observation.stdoutTail).trim().slice(-2_000);
-		console.error(`codeflow ${entry}: root Worker exited without a terminal Receipt${report ? `; report=${JSON.stringify(report)}` : ""}${tail ? `; diagnostic tail:\n${tail}` : ""}`);
+		console.error(`codeflow ${entry}: root Agent exited without a terminal Receipt${report ? `; report=${JSON.stringify(report)}` : ""}${tail ? `; diagnostic tail:\n${tail}` : ""}`);
 	}
 	try {
 		const summary = writeUsageSummary(paths);
@@ -299,21 +299,13 @@ async function resume(argv: string[]): Promise<number> {
 
 function debug(argv: string[]): number {
 	if (argv.length !== 1 || argv[0] !== "runtime") return fail("debug requires: runtime", "debug");
-	const manager = resolveAgent(CONFIG_FILE, "manager");
-	const worker = resolveAgent(CONFIG_FILE, "worker");
+	const agent = resolveAgent(CONFIG_FILE, process.env.CODEFLOW_AGENT_MODEL);
 	const compression = resolveOutputCompression(CONFIG_FILE);
 	console.log(JSON.stringify({
-		agents: {
-			manager: {
-				model: `${manager.provider}/${manager.model}`,
-				thinking_level: manager.thinkingLevel ?? null,
-				prompt: path.relative(path.dirname(RUNTIME_DIR), manager.promptPaths[0]),
-			},
-			worker: {
-				model: `${worker.provider}/${worker.model}`,
-				thinking_level: worker.thinkingLevel ?? null,
-				prompt: path.relative(path.dirname(RUNTIME_DIR), worker.promptPaths[0]),
-			},
+		agent: {
+			model: `${agent.provider}/${agent.model}`,
+			thinking_level: agent.thinkingLevel ?? null,
+			prompt: path.relative(path.dirname(RUNTIME_DIR), agent.promptPaths[0]),
 		},
 		services: {
 			output_compression: {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { loadReceiptChain, resumeCommitment, runResume, runnerChildStarted, runnerExited, runStart, submitReceipt } from "../../runtime/lib/commitment";
+import { commitmentHistory, loadReceiptChain, reconcileDeadCommitments, resumeCommitment, runResume, runnerChildStarted, runnerExited, runStart, submitReceipt } from "../../runtime/lib/commitment";
 import { RunPaths } from "../../runtime/lib/paths";
 import { assertResumeStopped } from "../../runtime/lib/resume";
 import { scan } from "../../runtime/lib/wait";
@@ -18,6 +18,24 @@ function runtime(): RunPaths {
 }
 
 describe("attempt lifecycle", () => {
+	test("confirmed-dead descendant executions recover without replacing Commitments or clearing live siblings", async () => {
+		const paths = runtime();
+		runStart(paths, process.pid, "recover recursive work");
+		const deadProcess = Bun.spawn([process.execPath, "-e", ""], { stdout: "ignore", stderr: "ignore" });
+		await deadProcess.exited;
+		const root = claimTestWork(paths, { goalId: paths.runId, pid: deadProcess.pid, work: "parent" });
+		const child = claimTestWork(paths, { goalId: paths.runId, parentCommitmentId: root.id, pid: deadProcess.pid, work: "child" });
+		const live = claimTestWork(paths, { goalId: paths.runId, parentCommitmentId: root.id, pid: process.pid, work: "live sibling" });
+		expect(reconcileDeadCommitments(paths, ["USER_CANCELLED"], [child.id])).toBe(1);
+		expect(commitmentHistory(paths).find((view) => view.commitment.id === root.id)?.pid).toBe(deadProcess.pid);
+		expect(reconcileDeadCommitments(paths, ["USER_CANCELLED"])).toBe(1);
+		expect(commitmentHistory(paths).find((view) => view.commitment.id === live.id)?.pid).toBe(process.pid);
+		resumeCommitment(paths, root.id, "new-root-execution", process.pid);
+		resumeCommitment(paths, child.id, "new-child-execution", process.pid);
+		expect(commitmentHistory(paths)).toHaveLength(3);
+		expect(loadReceiptChain(paths, child.id).terminal).toBeNull();
+	});
+
 	test("runtime interruption records no Receipt and permits an explicit resume", () => {
 		const paths = runtime();
 		runStart(paths, 100, "finish work");

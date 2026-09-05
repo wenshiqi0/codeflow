@@ -30,6 +30,16 @@ provider.setResponses([
 		if (process.env.CODEMARK_OFFLINE_SCENARIO === "zero-workers") {
 			return fauxAssistantMessage([{ type: "text", text: "No delegation proposed." }]);
 		}
+		if (process.env.CODEMARK_OFFLINE_SCENARIO === "leaf") {
+			return fauxAssistantMessage([
+				fauxToolCall("collaborate", {
+					action: { name: "claim", work: "answer the bounded repository question locally" },
+				}, { id: "offline-leaf-claim" }),
+				fauxToolCall("collaborate", {
+					action: { name: "report", status: "completed", summary: "Local analysis is sufficient; no independent subtask is needed" },
+				}, { id: "offline-leaf-report" }),
+			]);
+		}
 		if (process.env.CODEMARK_OFFLINE_SCENARIO === "identity-probe") {
 			const runDir = process.env.CODEMARK_RUN_DIR;
 			if (!runDir) throw new Error("identity probe requires private run state");

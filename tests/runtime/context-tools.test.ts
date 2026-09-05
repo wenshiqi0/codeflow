@@ -5,7 +5,8 @@ import * as path from "node:path";
 import organization from "../../runtime/extensions/codeflow-organization";
 import { buildChildWorkerArgs, resolveLaunchWorker } from "../../runtime/extensions/codeflow-organization/worker-launcher";
 import { buildWorkerContext, truncateContextText } from "../../runtime/extensions/codeflow-context/context";
-import { buildWorkerArgv, loadRuntimeConfig, resolveAgent, type ResolvedExecutor } from "../../runtime/lib/config";
+import { buildAgentArgv, loadRuntimeConfig, resolveAgent, type ResolvedExecutor } from "../../runtime/lib/config";
+import { AGENT_TOOL_ALLOWLIST, agentExtensions } from "../../runtime/lib/agent-launch";
 import { createGoal } from "../../runtime/lib/goals";
 import { loadReceiptChain, submitReceipt } from "../../runtime/lib/commitment";
 import { claimTestWork } from "./helpers";
@@ -79,15 +80,15 @@ describe("pull-first Goal context", () => {
 });
 
 describe("capability is the loaded tool surface", () => {
-	test("one collaborate tool exposes process-scoped capabilities", () => {
+	test("one collaborate tool exposes unified capabilities", () => {
 		const tools: string[] = [];
 		process.env.CODEFLOW_PROCESS_KIND = "worker";
-		organization({ registerTool(tool: { name: string }) { tools.push(tool.name); } } as never);
+		organization({ on() {}, registerTool(tool: { name: string }) { tools.push(tool.name); } } as never);
 		expect(tools).toEqual(["collaborate"]);
 		delete process.env.CODEFLOW_PROCESS_KIND;
 	});
 
-	test("every Worker launch is a fresh Pi context with extension discovery disabled", () => {
+	test("every Agent launch has identical tools and extensions in a fresh Pi context", () => {
 		const launcher = fs.readFileSync(path.resolve(import.meta.dir, "../../runtime/extensions/codeflow-organization/worker-launcher.ts"), "utf8");
 		const resolved: ResolvedExecutor = {
 			provider: "test-provider",
@@ -95,11 +96,12 @@ describe("capability is the loaded tool surface", () => {
 			systemPrompts: ["shared system prompt", "scoped method knowledge"],
 			promptPaths: ["/tmp/worker.md", "/tmp/methods.md"],
 		};
-		const rootArgs = buildWorkerArgv(
+		const runtimeDir = path.resolve(import.meta.dir, "../../runtime");
+		const rootArgs = buildAgentArgv(
 			resolved,
 			"root prompt",
-			["/runtime/extensions/root-only.ts"],
-			["read", "collaborate"],
+			agentExtensions(runtimeDir),
+			AGENT_TOOL_ALLOWLIST,
 		);
 		const childArgs = buildChildWorkerArgs(resolved);
 		expect(rootArgs).toContain("--no-extensions");
@@ -111,9 +113,11 @@ describe("capability is the loaded tool surface", () => {
 		expect(rootArgs).not.toContain("--system-prompt");
 		expect(childArgs).not.toContain("--system-prompt");
 		expect(rootArgs.slice(rootArgs.indexOf("--tools"), rootArgs.indexOf("--tools") + 2))
-			.toEqual(["--tools", "read,collaborate"]);
-		expect(childArgs).not.toContain("--tools");
-		expect(rootArgs).toContain("/runtime/extensions/root-only.ts");
+			.toEqual(["--tools", "read,write,edit,bash,collaborate"]);
+		expect(childArgs.slice(childArgs.indexOf("--tools"), childArgs.indexOf("--tools") + 2))
+			.toEqual(["--tools", AGENT_TOOL_ALLOWLIST.join(",")]);
+		expect(rootArgs.filter((arg, index) => rootArgs[index - 1] === "--extension"))
+			.toEqual(childArgs.filter((arg, index) => childArgs[index - 1] === "--extension"));
 		const childExtensions = childArgs.flatMap((arg, index) =>
 			arg === "--extension" ? [path.basename(path.dirname(childArgs[index + 1]))] : [],
 		);
@@ -134,36 +138,29 @@ describe("capability is the loaded tool surface", () => {
 		expect(launcher).not.toContain("--session-id");
 	});
 
-	test("Manager and Worker receive separate formal prompts", () => {
+	test("all Agent generations use the same formal prompt and model", () => {
 		const config = path.resolve(import.meta.dir, "../../runtime/config.json");
-		const manager = resolveAgent(config, "manager");
-		const worker = resolveAgent(config, "worker");
-		expect(manager.promptPaths.map((prompt) => path.basename(prompt))).toEqual(["manager.md"]);
-		expect(worker.promptPaths.map((prompt) => path.basename(prompt))).toEqual(["worker.md"]);
-		expect({ provider: manager.provider, model: manager.model }).toEqual({
+		const agent = resolveAgent(config);
+		const child = resolveLaunchWorker();
+		expect(agent.promptPaths.map((prompt) => path.basename(prompt))).toEqual(["agent.md"]);
+		expect(child).toEqual(agent);
+		expect({ provider: agent.provider, model: agent.model }).toEqual({
 			provider: "zhipuai-coding-plan",
 			model: "glm-5.3",
 		});
-		expect({ provider: worker.provider, model: worker.model }).toEqual({
-			provider: "zhipuai-coding-plan",
-			model: "glm-5.3-flash",
-		});
-		expect(manager.thinkingLevel).toBe("high");
-		expect(worker.thinkingLevel).toBe("high");
-		expect(manager.systemPrompts.join("\n")).toContain("# Manager");
-		expect(manager.systemPrompts.join("\n")).not.toContain("Test-driven development");
-		expect(worker.systemPrompts.join("\n")).toContain("Test-driven development");
-		expect(worker.systemPrompts.join("\n")).not.toContain("cross-Goal integration");
+		expect(agent.thinkingLevel).toBe("high");
+		expect(agent.systemPrompts.join("\n")).toContain("# Agent");
+		expect(agent.systemPrompts.join("\n")).toContain("Test-driven development");
 	});
 
-	test("the retired shared agent shape is rejected instead of treated as compatibility input", () => {
+	test("the retired split role shape is rejected instead of treated as compatibility input", () => {
 		const temp = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-config-"));
 		dirs.push(temp);
 		const config = path.join(temp, "config.json");
 		fs.writeFileSync(config, JSON.stringify({
-			agent: {
-				model: "provider/model",
-				prompts: { manager: "references/manager.md", worker: "references/worker.md" },
+			agents: {
+				manager: { model: "provider/model", prompt: "references/manager.md" },
+				worker: { model: "provider/model", prompt: "references/worker.md" },
 			},
 			services: {
 				output_compression: { model: "provider/model", prompt: "references/output-compression.md" },
@@ -172,7 +169,7 @@ describe("capability is the loaded tool surface", () => {
 		expect(() => loadRuntimeConfig(config)).toThrow("runtime config contains unknown keys");
 	});
 
-	test("spawned Workers inherit the run-scoped model override", () => {
+	test("spawned Agents inherit the run-scoped model override", () => {
 		const resolved = resolveLaunchWorker("explicit-provider/explicit-model");
 		expect({ provider: resolved.provider, model: resolved.model }).toEqual({
 			provider: "explicit-provider",
@@ -180,11 +177,11 @@ describe("capability is the loaded tool surface", () => {
 		});
 	});
 
-	test("the default GLM Flash Worker uses its highest supported thinking level", () => {
+	test("the default GLM Agent uses its highest supported thinking level", () => {
 		const resolved = resolveLaunchWorker();
 		expect({ provider: resolved.provider, model: resolved.model }).toEqual({
 			provider: "zhipuai-coding-plan",
-			model: "glm-5.3-flash",
+			model: "glm-5.3",
 		});
 		const args = buildChildWorkerArgs(resolved);
 		expect(resolved.thinkingLevel).toBe("high");

@@ -11,25 +11,19 @@ import {
 	loadReceiptChain,
 	loadTerminalReceipt,
 	recordRuntimeFailure,
+	reconcileDeadCommitments,
 	resumeCommitment,
 	type RuntimeFailureReason,
 } from "../../lib/commitment";
-import { buildWorkerArgv, resolveAgent, type ResolvedExecutor } from "../../lib/config";
+import { buildAgentArgv, resolveAgent, type ResolvedExecutor } from "../../lib/config";
+import { AGENT_TOOL_ALLOWLIST, agentExtensions } from "../../lib/agent-launch";
+import { reserveAgentSlot, descendantAgentPids, closeAgentSubtree, type AgentLease } from "../../lib/agent-capacity";
 import { loadWorkerReport, recordExecutionFailure, type WorkerReport } from "../../lib/executions";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
+import { CONTEXT_BUDGET_ABORT_MARKER } from "../../lib/runtime-signals";
 
 const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CONFIG_FILE = path.join(RUNTIME_DIR, "config.json");
-const CHILD_EXTENSIONS = [
-	"provider-profiles",
-	"codeflow-organization",
-	"host-guard",
-	"codeflow-context",
-	"bash-compressor",
-	"usage-ledger",
-	"telemetry-ledger",
-	"agent-watchdog",
-].map((name) => path.join(RUNTIME_DIR, "extensions", name, "index.ts"));
 
 export interface DelegateWorkerInput {
 	goalId: string;
@@ -55,20 +49,21 @@ export interface WorkerLauncherDependencies {
 	resolve?: () => ResolvedExecutor;
 	spawnProcess?: typeof spawn;
 	executionId?: string;
+	lease?: AgentLease;
 }
 
-export function resolveLaunchWorker(modelOverride = process.env.CODEFLOW_WORKER_MODEL): ResolvedExecutor {
-	return resolveAgent(CONFIG_FILE, "worker", modelOverride);
+export function resolveLaunchWorker(modelOverride = process.env.CODEFLOW_AGENT_MODEL): ResolvedExecutor {
+	return resolveAgent(CONFIG_FILE, modelOverride);
 }
 
 export function buildChildWorkerArgs(resolved: ResolvedExecutor, resuming = false): string[] {
-	return buildWorkerArgv(
+	return buildAgentArgv(
 		resolved,
 		resuming
 			? "Re-ground the current Work Commitment from durable state, continue it, and close it with a terminal Receipt."
 			: "Inspect the injected Goal and current state. Claim bounded work, then report progress, completion, or what blocks it.",
-		CHILD_EXTENSIONS,
-		null,
+		agentExtensions(RUNTIME_DIR),
+		AGENT_TOOL_ALLOWLIST,
 	).slice(1);
 }
 
@@ -111,6 +106,7 @@ function invocation(args: string[]): { command: string; args: string[] } {
 }
 
 function reasonsFor(result: { exitCode: number; stopReason?: string; aborted: boolean; stderr: string }): RuntimeFailureReason[] {
+	if (result.stderr.includes(CONTEXT_BUDGET_ABORT_MARKER)) return ["CONTEXT_BUDGET_EXCEEDED"];
 	const reasons: RuntimeFailureReason[] = [];
 	if (result.aborted || result.stopReason === "aborted") reasons.push("USER_CANCELLED");
 	if (result.stopReason === "length") reasons.push("OUTPUT_TRUNCATED");
@@ -146,9 +142,27 @@ export async function spawnWorker(
 ): Promise<WorkerExecution> {
 	const paths = currentPaths();
 	const executionId = dependencies.executionId ?? `exec_${randomBytes(12).toString("hex")}`;
+	const lease = dependencies.lease ?? reserveAgentSlot(paths, executionId, process.env.CODEFLOW_EXECUTION_ID ?? loadCommitment(paths, input.parentCommitmentId).worker_execution_id);
+	try {
+		return await spawnLeasedAgent(input, signal, cwd, { ...dependencies, executionId, lease });
+	} finally {
+		lease.release();
+	}
+}
+
+async function spawnLeasedAgent(
+	input: DelegateWorkerInput,
+	signal: AbortSignal | undefined,
+	cwd: string,
+	dependencies: WorkerLauncherDependencies & { executionId: string; lease: AgentLease },
+): Promise<WorkerExecution> {
+	const paths = currentPaths();
+	const executionId = dependencies.executionId;
 	if (input.resumeCommitmentId) {
+		reconcileDeadCommitments(paths, ["TERMINAL_RECEIPT_MISSING"], [input.resumeCommitmentId]);
 		const commitment = loadCommitment(paths, input.resumeCommitmentId);
 		if (commitment.goal_id !== input.goalId) throw new Error("resumed Commitment does not belong to the requested Goal");
+		if (commitment.parent_commitment_id !== input.parentCommitmentId) throw new Error("resumed Commitment does not belong to the current parent");
 		const view = commitmentView(paths, commitment);
 		if (view.folded.terminal) throw new Error(`commitment is already closed: ${commitment.id}`);
 		if (view.pid !== null) throw new Error(`commitment is already running: ${commitment.id}`);
@@ -177,22 +191,25 @@ export async function spawnWorker(
 				env: childEnv,
 				stdio: ["ignore", "pipe", "pipe"],
 			});
-			if (child.pid !== undefined) {
-				try {
-					if (input.resumeCommitmentId) resumeCommitment(paths, input.resumeCommitmentId, executionId, child.pid);
-				} catch (error) {
-					child.kill("SIGTERM");
-					reject(error);
-					return;
-				}
-				launched = true;
-			}
 			let closed = false;
 			let killTimer: ReturnType<typeof setTimeout> | undefined;
+			const killDescendants = (kind: NodeJS.Signals) => {
+				try {
+					closeAgentSubtree(paths, executionId);
+					for (const pid of descendantAgentPids(paths, executionId)) {
+						try { process.kill(pid, kind); } catch (error) {
+							if ((error as NodeJS.ErrnoException).code !== "ESRCH") stderr += String(error);
+						}
+					}
+				} catch (error) { stderr += `Agent descendant cleanup failed: ${String(error)}`; }
+			};
 			const stop = () => {
+				if (aborted || closed) return;
 				aborted = true;
+				killDescendants("SIGTERM");
 				child.kill("SIGTERM");
 				killTimer = setTimeout(() => {
+					killDescendants("SIGKILL");
 					if (!closed && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
 				}, 5_000);
 			};
@@ -212,15 +229,29 @@ export async function spawnWorker(
 				buffer = lines.pop() ?? "";
 				for (const line of lines) if (line.trim()) processLine(line);
 			});
-			child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+			child.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString()).slice(-64_000); });
 			child.on("error", (error) => { stderr += String(error); });
 			child.on("close", (code) => {
 				closed = true;
+				// A crashed parent must not leave nested Agents running outside its lifetime.
+				killDescendants("SIGKILL");
 				if (killTimer) clearTimeout(killTimer);
 				if (buffer.trim()) processLine(buffer);
 				signal?.removeEventListener("abort", stop);
 				resolve(code ?? 1);
 			});
+			// Install all listeners and escalation before publishing the PID. A
+			// setup error must retain capacity until the real child has exited.
+			if (child.pid !== undefined) {
+				try {
+					dependencies.lease.attach(child.pid);
+					if (input.resumeCommitmentId) resumeCommitment(paths, input.resumeCommitmentId, executionId, child.pid);
+					launched = true;
+				} catch (error) {
+					stderr += String(error);
+					stop();
+				}
+			}
 			if (signal?.aborted) stop();
 			else signal?.addEventListener("abort", stop, { once: true });
 		});
@@ -331,7 +362,7 @@ export function hasLiveWorkers(): boolean {
 	return [...trackedExecutions.values()].some((execution) => execution.result === undefined);
 }
 
-/** Cancel all live Children, including those launched during an earlier Root turn. */
+/** Cancel all live children and descendants, including launches from earlier turns. */
 export function cancelWorkers(): void {
 	for (const execution of trackedExecutions.values()) {
 		if (execution.result !== undefined) continue;
@@ -340,7 +371,7 @@ export function cancelWorkers(): void {
 	}
 }
 
-/** Start a Worker without blocking the Root's collaboration loop. */
+/** Start a child Agent without blocking the parent's collaboration loop. */
 export function delegateWorker(
 	input: DelegateWorkerInput,
 	signal: AbortSignal | undefined,
@@ -367,9 +398,11 @@ export function delegateWorker(
 			tracked.observedRecords.add(receipt.id);
 		}
 	}
+	// Reserve synchronously so saturation returns an actionable tool error, not a phantom launch.
+	const lease = reserveAgentSlot(paths, executionId, process.env.CODEFLOW_EXECUTION_ID ?? loadCommitment(paths, input.parentCommitmentId).worker_execution_id);
 	if (signal?.aborted) abort();
 	else signal?.addEventListener("abort", abort, { once: true });
-	const running = spawnWorker(input, abortController.signal, cwd, { ...dependencies, executionId }).catch(() => {
+	const running = spawnWorker(input, abortController.signal, cwd, { ...dependencies, executionId, lease }).catch(() => {
 		recordExecutionFailure(paths, executionId, input.goalId, ["WORKER_LAUNCH_FAILURE"], "Worker launcher failed before execution");
 		return interrupted(executionId, input.goalId, ["WORKER_LAUNCH_FAILURE"]);
 	});

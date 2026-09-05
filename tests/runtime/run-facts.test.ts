@@ -3,12 +3,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
-	CONTEXT_BUDGET_BLOCKED_SUMMARY,
-	CONTEXT_BUDGET_REMAINING,
-	WORKER_CONTEXT_STOP_UTILIZATION,
+	CONTEXT_BUDGET_INTERRUPTED_SUMMARY,
+	AGENT_CONTEXT_STOP_UTILIZATION,
 	default as codeflowContext,
 } from "../../runtime/extensions/codeflow-context";
-import { loadReceiptChain, submitReceipt } from "../../runtime/lib/commitment";
+import { commitmentHistory, loadReceiptChain, submitReceipt } from "../../runtime/lib/commitment";
+import { loadWorkerReport } from "../../runtime/lib/executions";
+import { scan } from "../../runtime/lib/wait";
 import { readRunFactsRecords, summarizePrefixCache } from "../../runtime/lib/observability/run-facts";
 import { RunPaths } from "../../runtime/lib/paths";
 import { createTask } from "../../runtime/lib/tasks";
@@ -190,18 +191,28 @@ describe("execution-local run facts", () => {
 		expect(records.map((record) => record.message_prefix_invalidated)).toEqual([0, 0]);
 	});
 
-	test("a Child Worker reports a blocked Receipt and stops at 80% utilization", () => {
+	test.each(["root", "worker"] as const)("a %s Agent interrupts at 80% without closing its own or descendant Commitments", (kind) => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-facts-"));
 		dirs.push(root);
 		const paths = new RunPaths(path.join(root, "runs"), "task-facts");
-		const runtime = harness(paths, "worker");
+		const runtime = harness(paths, kind);
 		const commitment = claimTestWork(paths, {
 			goalId: paths.runId,
 			workerExecutionId: "exec-facts",
 			work: "implement a bounded change",
 		});
 		process.env.CODEFLOW_COMMITMENT_ID = commitment.id;
-		let utilization = WORKER_CONTEXT_STOP_UTILIZATION - 0.01;
+		const child = claimTestWork(paths, {
+			goalId: paths.runId,
+			parentCommitmentId: commitment.id,
+			work: "preserve child work across parent context exhaustion",
+		});
+		const grandchild = claimTestWork(paths, {
+			goalId: paths.runId,
+			parentCommitmentId: child.id,
+			work: "preserve nested work across ancestor context exhaustion",
+		});
+		let utilization = AGENT_CONTEXT_STOP_UTILIZATION - 0.01;
 		let aborts = 0;
 		let shutdowns = 0;
 		const ctx = {
@@ -216,20 +227,50 @@ describe("execution-local run facts", () => {
 		expect(loadReceiptChain(paths, commitment.id).terminal).toBeNull();
 		expect({ aborts, shutdowns }).toEqual({ aborts: 0, shutdowns: 0 });
 
-		utilization = WORKER_CONTEXT_STOP_UTILIZATION;
+		utilization = AGENT_CONTEXT_STOP_UTILIZATION;
 		context({ messages }, ctx);
-		const folded = loadReceiptChain(paths, commitment.id);
-		expect(folded.receipts).toHaveLength(1);
-		expect(folded.terminal).toMatchObject({
-			status: "blocked",
-			summary: CONTEXT_BUDGET_BLOCKED_SUMMARY,
-			remaining: [CONTEXT_BUDGET_REMAINING],
+		for (const record of [commitment, child, grandchild]) {
+			expect(loadReceiptChain(paths, record.id).receipts).toHaveLength(0);
+			expect(loadReceiptChain(paths, record.id).terminal).toBeNull();
+		}
+		expect(commitmentHistory(paths).find((view) => view.commitment.id === commitment.id)?.status).toBe("open");
+		const interrupted = scan(paths.events, 0, ["execution_interrupted"]).events;
+		expect(interrupted).toHaveLength(1);
+		expect(interrupted[0]).toMatchObject({
+			reasons: ["CONTEXT_BUDGET_EXCEEDED"],
+			summary: CONTEXT_BUDGET_INTERRUPTED_SUMMARY,
 		});
+		expect(scan(paths.events, 0, ["run_finished", "worker_reported", "receipt_submitted"]).events).toHaveLength(0);
 		expect({ aborts, shutdowns }).toEqual({ aborts: 1, shutdowns: 1 });
 
 		utilization = 0.9;
 		context({ messages }, ctx);
-		expect(loadReceiptChain(paths, commitment.id).receipts).toHaveLength(1);
+		expect(loadReceiptChain(paths, commitment.id).receipts).toHaveLength(0);
+		expect(scan(paths.events, 0, ["execution_interrupted"]).events).toHaveLength(1);
 		expect({ aborts, shutdowns }).toEqual({ aborts: 1, shutdowns: 1 });
+	});
+
+	test("pre-claim context exhaustion emits one Runtime failure rather than a semantic blocker", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-facts-preclaim-"));
+		dirs.push(root);
+		const paths = new RunPaths(path.join(root, "runs"), "task-facts");
+		const runtime = harness(paths);
+		let aborts = 0;
+		const ctx = {
+			getContextUsage: () => ({ tokens: 800, contextWindow: 1000, percent: 80 }),
+			getSystemPrompt: () => "system",
+			abort: () => { aborts++; },
+			shutdown() {},
+		};
+		const messages = [{ role: "user", content: "work" }, runtime.bootstrapMessage];
+		runtime.handlers.get("context")!({ messages }, ctx);
+		runtime.handlers.get("context")!({ messages }, ctx);
+		expect(aborts).toBe(1);
+		expect(commitmentHistory(paths)).toHaveLength(0);
+		expect(loadWorkerReport(paths, "exec-facts")).toBeNull();
+		const interrupted = scan(paths.events, 0, ["execution_interrupted"]).events;
+		expect(interrupted).toHaveLength(1);
+		expect(interrupted[0].reasons).toEqual(["CONTEXT_BUDGET_EXCEEDED"]);
+		expect(scan(paths.events, 0, ["run_finished", "worker_reported", "receipt_submitted"]).events).toHaveLength(0);
 	});
 });

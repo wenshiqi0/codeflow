@@ -474,6 +474,22 @@ export function resumeCommitment(paths: RunPaths, commitmentId: string, executio
 	return commitmentView(paths, commitment);
 }
 
+/** Reconcile only Task-owned executions whose recorded PID is confirmed gone. */
+export function reconcileDeadCommitments(paths: RunPaths, reasons: RuntimeFailureReason[], commitmentIds?: readonly string[]): number {
+	let cleared = 0;
+	for (const view of commitmentHistory(paths)) {
+		if (commitmentIds && !commitmentIds.includes(view.commitment.id)) continue;
+		if (view.folded.terminal || view.pid === null || !Number.isSafeInteger(view.pid) || view.pid <= 0) continue;
+		try { process.kill(view.pid, 0); }
+		catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ESRCH") continue;
+			recordRuntimeFailure(paths, view.commitment.id, reasons, "Agent process is confirmed stopped; preserve its Commitment for explicit resume");
+			cleared++;
+		}
+	}
+	return cleared;
+}
+
 export function submitReceipt(paths: RunPaths, options: SubmitReceiptOptions): ReceiptRecord {
 	const commitment = loadCommitment(paths, options.commitmentId);
 	const prior = loadReceiptChain(paths, commitment.id);

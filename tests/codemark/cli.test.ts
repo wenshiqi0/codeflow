@@ -27,23 +27,23 @@ describe("Codemark CLI arguments", () => {
 
 	test("accepts separated and equals option forms", () => {
 		expect(parseArguments([
-			"--manager-model", "provider/manager",
+			"--model", "provider/agent",
 			"--out=.codemark/runs/case-a",
 			"--timeout", "17",
 			"inspect this issue",
 		])).toMatchObject({
 			issue: "inspect this issue",
-			managerModel: "provider/manager",
+			model: "provider/agent",
 			outDir: ".codemark/runs/case-a",
 			timeoutSeconds: 17,
 		});
 		expect(parseArguments([
-			"--manager-model=provider/other",
+			"--model=provider/other",
 			"--out", "/tmp/codemark-exact",
 			"--timeout=23",
 			"another issue",
 		])).toMatchObject({
-			managerModel: "provider/other",
+			model: "provider/other",
 			outDir: "/tmp/codemark-exact",
 			timeoutSeconds: 23,
 		});
@@ -60,6 +60,9 @@ describe("Codemark CLI arguments", () => {
 	test("rejects ambiguous or malformed input without starting a run", () => {
 		const invalid: Array<[string[], RegExp]> = [
 			[["--unknown", "issue"], /unknown option.*--unknown/i],
+			[["--manager-model", "provider/model", "issue"], /unknown option/i],
+			[["--model"], /--model.*requires/i],
+			[["--model", "a/b", "--model=c/d", "issue"], /--model.*only once/i],
 			[["--timeout", "0", "issue"], /timeout.*positive integer/i],
 			[["--timeout=-1", "issue"], /timeout.*positive integer/i],
 			[["--timeout", "1.5", "issue"], /timeout.*positive integer/i],
@@ -104,9 +107,9 @@ describe("standalone codemark wrapper", () => {
 		const help = runCodemark(["--help"], { cwd, env });
 		expect(help.exitCode).toBe(0);
 		expect(help.stdout).toContain("usage: codemark");
-		expect(help.stdout).toContain("--manager-model <provider/model>");
+		expect(help.stdout).toContain("--model <provider/model>");
 		expect(help.stdout).toContain("--timeout <seconds>");
-		expect(help.stdout).toMatch(/No Worker is started/i);
+		expect(help.stdout).toMatch(/No child Agent is started/i);
 
 		const version = runCodemark(["--version"], { cwd, env });
 		expect(version.exitCode).toBe(0);

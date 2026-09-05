@@ -28,9 +28,9 @@ function createRun() {
 		repository: "/workspace/repository",
 		manager: {
 			provider: "test-provider",
-			model: "test-manager",
+			model: "test-agent",
 			thinking_level: "high",
-			prompt_paths: ["references/manager.md"],
+			prompt_paths: ["references/agent.md"],
 		},
 		limits: { timeout_seconds: 30 },
 		createdAt: T0,
@@ -140,17 +140,17 @@ describe("Codemark initial organization", () => {
 		}, "2026-09-04T00:00:05.000Z")).toThrow(/unavailable after Codemark terminated with first_turn_end/i);
 	});
 
-	test("captures zero Workers as a completed but invalid organization", () => {
+	test("a claimed leaf is a valid zero-Child organization while missing Claim remains a violation", () => {
 		const unclaimed = createRun();
 		expect(finalizeOrganization(unclaimed.runDir, { termination: "first_turn_end", now: T1 })).toMatchObject({
 			status: "completed", termination: "first_turn_end",
 			metrics: { initial_worker_count: 0, delegate_count: 0 },
-			assessment: { organization_valid: false, policy_violations: ["manager_claim_missing", "delegation_missing"] },
+			assessment: { organization_valid: false, policy_violations: ["manager_claim_missing"] },
 		});
 		const claimed = createRun();
 		claim(claimed.runDir);
 		expect(finalizeOrganization(claimed.runDir, { termination: "first_turn_end", now: T2 }).assessment).toEqual({
-			organization_valid: false, policy_violations: ["delegation_missing"],
+			organization_valid: true, policy_violations: [],
 		});
 	});
 
@@ -288,19 +288,84 @@ describe("Codemark initial organization", () => {
 			receipt: commitment.receipts[0],
 		});
 
-		expect(() => applyOrganizationAction(runDir, {
-			name: "report",
-			status: "completed",
-			summary: "must not masquerade as implementation completion",
-		}, T2)).toThrow(/terminal Root Receipt requires at least one Child Worker Commitment/i);
-
 		expect(fs.readdirSync(runDir).sort()).toEqual(["frontier.json"]);
 		expect(readInitialOrganization(runDir)).toMatchObject({
 			status: "running",
 			termination: null,
 			manager_progress: [{ planning_receipt_id: receiptId }],
 		});
+	});
+
+	test("records and inspects a valid leaf terminal report without real execution or canonical Receipts", () => {
+		const { runDir } = createRun();
+		const claimed = claim(runDir).result as { commitment_id: string };
+		const completed = applyOrganizationAction(runDir, {
+			name: "report", status: "completed", summary: "The requested repository boundary is identified",
+		}, T2);
+		const receiptId = (completed.result as { receipt_id: string }).receipt_id;
+		expect(completed.result).toEqual({ receipt_id: receiptId, status: "completed" });
+		expect(completed.organization.manager_progress).toMatchObject([{
+			planning_receipt_id: receiptId, status: "completed",
+			benchmark: { simulated: true, canonical_receipt_written: false },
+		}]);
+		expect(applyOrganizationAction(runDir, { name: "inspect", receipt_id: receiptId }, T3).result).toMatchObject({
+			commitment: { id: claimed.commitment_id },
+			receipt: { id: receiptId, status: "completed", remaining: [] },
 		});
+		expect(applyOrganizationAction(runDir, { name: "inspect" }, T3).result).toMatchObject({
+			goal: { status: "completed", receipt_refs: [receiptId] },
+			commitments: [{ status: "completed" }],
+		});
+		expect(readInitialOrganization(runDir).status).toBe("running");
+		expect(finalizeOrganization(runDir, { termination: "first_turn_end", now: T4 })).toMatchObject({
+			status: "completed", termination: "first_turn_end", schema_version: 1,
+			assessment: { organization_valid: true, policy_violations: [] },
+			delegations: [], metrics: { initial_worker_count: 0, delegate_count: 0 },
+		});
+		expect(fs.readdirSync(runDir)).toEqual(["frontier.json"]);
+	});
+
+	test("leaf terminal reports preserve Receipt remaining rules and close subsequent report or delegate actions", () => {
+		const { runDir } = createRun();
+		claim(runDir);
+		expect(() => applyOrganizationAction(runDir, {
+			name: "report", status: "invented", summary: "invalid state",
+		} as never, T2)).toThrow(/invalid Receipt status/);
+		for (const action of [
+			{ name: "report", status: "completed", summary: "unfinished", remaining: ["repair"] },
+			{ name: "report", status: "blocked", summary: "no explanation" },
+		] as const) {
+			expect(() => applyOrganizationAction(runDir, { ...action, remaining: "remaining" in action ? [...action.remaining] : [] }, T2))
+				.toThrow(/Receipt.*remaining|Receipt.*remains/);
+		}
+		const blocked = applyOrganizationAction(runDir, {
+			name: "report", status: "blocked", summary: "Required source is unavailable", remaining: ["provide the module"],
+		}, T2);
+		expect(blocked.result).toMatchObject({ status: "blocked" });
+		expect(applyOrganizationAction(runDir, { name: "inspect" }, T3).result).toMatchObject({
+			goal: { status: "blocked", remaining: ["provide the module"] },
+			commitments: [{ status: "blocked" }],
+		});
+		expect(() => applyOrganizationAction(runDir, {
+			name: "report", status: "progress", summary: "cannot reopen the same claim",
+		}, T3)).toThrow(/already has a terminal Receipt/);
+		expect(() => applyOrganizationAction(runDir, {
+			name: "delegate", goal_id: "codemark-test-run", focus: "cannot delegate after closure",
+		}, T3)).toThrow(/open current Commitment/);
+		expect(readInitialOrganization(runDir).manager_progress).toHaveLength(1);
+	});
+
+	test("terminal reporting cannot invent completed results for a proposed Child", () => {
+		const { runDir } = createRun();
+		claim(runDir);
+		applyOrganizationAction(runDir, {
+			name: "delegate", goal_id: "codemark-test-run", focus: "inspect independently",
+		}, T2);
+		expect(() => applyOrganizationAction(runDir, {
+			name: "report", status: "completed", summary: "Child has not actually run",
+		}, T3)).toThrow(/every delegated Agent and descendant Commitment to finish/);
+		expect(readInitialOrganization(runDir).delegations[0].benchmark).toEqual({ simulated: true, execution: "not_started" });
+	});
 
 	test("keeps Goal sequence independent from Commitment and Receipt semantic sequence", () => {
 		const { organization } = createRun();
@@ -416,7 +481,7 @@ describe("Codemark initial organization", () => {
 		expect(readInitialOrganization(runDir).usage).toEqual(usage);
 	});
 
-	test("artifact proposal ids stay distinct from simulated Worker execution ids", () => {
+	test("artifact proposal ids stay distinct from simulated Child execution ids", () => {
 		const { runDir } = createRun();
 		claim(runDir);
 		const proposal = applyOrganizationAction(runDir, {
@@ -499,7 +564,7 @@ describe("Codemark initial organization", () => {
 
 		finalizeOrganization(runDir, {
 			termination: "manager_exit",
-			diagnostic: "Manager exited before natural turn end",
+			diagnostic: "Agent exited before natural turn end",
 			now: T2,
 		});
 		expect(fs.existsSync(publicArtifact)).toBe(false);

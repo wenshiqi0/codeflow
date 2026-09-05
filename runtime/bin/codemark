@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run one Manager-only initial-organization measurement.
+# Run one root-Agent-only initial-organization measurement.
 set -euo pipefail
 
 RUNTIME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,10 +11,10 @@ usage() {
   cat <<'EOF'
 usage: codemark [options] ["<issue>"]
 
-Run the configured Codeflow Manager until its first natural turn end, recording only its
-initial organization frontier. No Worker is started.
+Run the configured Codeflow Agent until its first natural turn end, recording only its
+initial organization frontier. No child Agent is started.
 
-  --manager-model <provider/model>  override the configured Manager model
+  --model <provider/model>          override the configured Agent model
   --out <dir>                       exact output directory for this run
   --timeout <seconds>               wall-clock limit (default: 300)
   --help                            show this help
@@ -36,7 +36,7 @@ case "${1:-}" in
     ;;
 esac
 
-# The Manager inspects the repository root. Artifacts default to CODEFLOW_HOME;
+# The Agent inspects the repository root. Artifacts default to CODEFLOW_HOME;
 # a relative explicit --out is still resolved from this project boundary.
 if PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
   cd "$PROJECT_ROOT"
@@ -47,7 +47,7 @@ export PATH="$RUNTIME_DIR/bin:$PATH"
 # Match Codeflow's optional global credential loading. Snapshot every exported
 # variable on a private descriptor so caller-provided values, including
 # provider-specific apiKeyEnv names from runtime/config.json, retain precedence
-# over the convenience file without carrying the snapshot into the Manager.
+# over the convenience file without carrying the snapshot into the Agent.
 exec 9< <(export -p)
 if [[ -f "$CODEFLOW_HOME/.env" ]]; then
   set -a

@@ -13,12 +13,12 @@ import { createGoal } from "../../lib/goals";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
 import { inspectCommitment, inspectGoal, inspectReceipt } from "../../lib/inspection";
 import { goalState } from "../../lib/state";
+import { descendantAgentPids, validateAgentStartup } from "../../lib/agent-capacity";
 import { cancelWorkers, delegateWorker, hasLiveWorkers, takeWorkerUpdates } from "./worker-launcher";
 import { registerWorkerFeedback } from "./feedback";
 
-const COMMON_ACTIONS = ["inspect", "claim", "report"] as const;
-const ROOT_ACTIONS = ["delegate"] as const;
-type CollaborateAction = (typeof COMMON_ACTIONS)[number] | (typeof ROOT_ACTIONS)[number];
+const ACTIONS = ["inspect", "claim", "report", "delegate"] as const;
+type CollaborateAction = (typeof ACTIONS)[number];
 
 function currentRun(): RunPaths {
 	const taskId = process.env.CODEFLOW_RUN_ID;
@@ -32,7 +32,7 @@ function currentGoal(paths: RunPaths): string {
 
 function currentExecution(): string {
 	const executionId = process.env.CODEFLOW_EXECUTION_ID;
-	if (!executionId) throw new Error("collaborate requires a Worker execution");
+	if (!executionId) throw new Error("collaborate requires an Agent execution");
 	return executionId;
 }
 
@@ -44,9 +44,19 @@ function dependenciesCompleted(paths: RunPaths, goalId: string): boolean {
 }
 
 function delegatedCommitments(paths: RunPaths, parentCommitmentId: string) {
-	return commitmentHistory(paths).filter(
-		(view) => view.commitment.parent_commitment_id === parentCommitmentId,
-	);
+	const history = commitmentHistory(paths);
+	const descendants = new Set([parentCommitmentId]);
+	let changed = true;
+	while (changed) {
+		changed = false;
+		for (const { commitment } of history) {
+			if (commitment.parent_commitment_id && descendants.has(commitment.parent_commitment_id) && !descendants.has(commitment.id)) {
+				descendants.add(commitment.id);
+				changed = true;
+			}
+		}
+	}
+	return history.filter(({ commitment }) => commitment.id !== parentCommitmentId && descendants.has(commitment.id));
 }
 
 function result(value: unknown, details?: unknown) {
@@ -81,7 +91,7 @@ const ACTION_SCHEMAS = {
 		work: Type.String({ minLength: 1, maxLength: 600 }),
 		done_when: Type.Optional(StringArray),
 		constraints: Type.Optional(StringArray),
-	}, { additionalProperties: false, description: "Create this Worker's bounded Commitment." }),
+	}, { additionalProperties: false, description: "Create this Agent's bounded Commitment." }),
 	report: Type.Object({
 		name: Type.Literal("report"),
 		status: ReceiptStatus,
@@ -101,34 +111,38 @@ const ACTION_SCHEMAS = {
 		resume_commitment_id: Type.Optional(Type.String({ minLength: 1 })),
 	}, {
 		additionalProperties: false,
-		description: "Root only: start a Worker. Set exactly one of goal_id (reuse) or new_goal (create).",
+		description: "Start a child Agent asynchronously for bounded independent work. Set exactly one of goal_id (reuse) or new_goal (create).",
 	}),
 } as const;
 
-function parameters(root: boolean) {
-	const actions = root ? [...COMMON_ACTIONS, ...ROOT_ACTIONS] : [...COMMON_ACTIONS];
+function parameters() {
 	return Type.Object({
-		action: Type.Union(actions.map((action) => ACTION_SCHEMAS[action])),
+		action: Type.Union(ACTIONS.map((action) => ACTION_SCHEMAS[action])),
 	}, { additionalProperties: false });
 }
 
 export default function (pi: ExtensionAPI) {
-	const root = process.env.CODEFLOW_PROCESS_KIND === "root";
+	if (process.env.CODEFLOW_PARENT_COMMITMENT_ID && process.env.CODEFLOW_RUN_ID && process.env.CODEFLOW_EXECUTION_ID) {
+		try { validateAgentStartup(currentRun(), currentExecution()); }
+		catch (error) {
+			// A parent may die between fork and PID publication. Fail before the
+			// first provider call, not merely by disabling this one extension.
+			console.error(`Codeflow Agent startup rejected: ${String(error)}`);
+			process.exit(1);
+		}
+	}
 	// Pass the same launcher instance: Pi loads separate extensions in isolated caches.
-	if (root) registerWorkerFeedback(pi, { cancelWorkers, hasLiveWorkers, takeWorkerUpdates });
+	registerWorkerFeedback(pi, { cancelWorkers, hasLiveWorkers, takeWorkerUpdates });
 	pi.registerTool({
 		name: "collaborate",
 		label: "Collaborate",
-		description: root
-			? "Coordinate Goal-scoped work. Use inspect, claim, report, or delegate. Root alone can create Goals and delegate Workers."
-			: "Coordinate Goal-scoped work. Use inspect, claim, or report.",
-		parameters: parameters(root),
+		description: "Coordinate Goal-scoped work. Every Agent can inspect, claim, report, or delegate; child results arrive asynchronously. Keep useful local work moving and integrate delegated results before completing.",
+		parameters: parameters(),
 		async execute(_id, rawParams, signal, _update, ctx) {
 			const params = (rawParams as { action: Record<string, unknown> }).action;
 			const action = params.name as CollaborateAction;
-			const allowed = root ? [...COMMON_ACTIONS, ...ROOT_ACTIONS] : [...COMMON_ACTIONS];
-			if (!(allowed as readonly string[]).includes(action)) {
-				throw new Error(`collaborate action is unavailable to this Worker: ${String(action)}`);
+			if (!(ACTIONS as readonly string[]).includes(action)) {
+				throw new Error(`unknown collaborate action: ${String(action)}`);
 			}
 			const paths = currentRun();
 			switch (action) {
@@ -143,7 +157,9 @@ export default function (pi: ExtensionAPI) {
 					const executionId = currentExecution();
 					const goalId = currentGoal(paths);
 					if (!dependenciesCompleted(paths, goalId)) throw new Error(`goal dependencies are not completed: ${goalId}`);
-					if (loadWorkerReport(paths, executionId)) throw new Error("a Worker that reported a blocker cannot claim in the same execution");
+					if (loadWorkerReport(paths, executionId)) throw new Error("an Agent that reported a blocker cannot claim in the same execution");
+					const parentId = process.env.CODEFLOW_PARENT_COMMITMENT_ID;
+					if (parentId && loadTerminalReceipt(paths, parentId)) throw new Error("cannot claim under a closed parent Commitment");
 					const currentId = process.env.CODEFLOW_COMMITMENT_ID;
 					if (currentId && !loadTerminalReceipt(paths, currentId)) {
 						throw new Error(`current Commitment is still open: ${currentId}`);
@@ -172,13 +188,10 @@ export default function (pi: ExtensionAPI) {
 							remaining: (params.remaining as string[] | undefined) ?? [],
 						}));
 					}
-					if (root && status !== "progress") {
+					if (status !== "progress") {
 						const children = delegatedCommitments(paths, commitmentId);
-						if (children.length === 0) {
-							throw new Error("terminal Root Receipt requires at least one Child Worker Commitment");
-						}
-						if (hasLiveWorkers() || children.some((child) => child.folded.terminal === null)) {
-							throw new Error("terminal Root Receipt requires every delegated Worker and Child Commitment to finish");
+						if (hasLiveWorkers() || descendantAgentPids(paths, currentExecution()).length > 0 || children.some((child) => child.folded.terminal === null)) {
+							throw new Error("terminal Receipt requires every delegated Agent and descendant Commitment to finish; continue local work or consume asynchronous feedback");
 						}
 					}
 					const receipt = submitReceipt(paths, {
@@ -192,7 +205,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				case "delegate": {
 					const parentId = process.env.CODEFLOW_COMMITMENT_ID;
-					if (!parentId) throw new Error("delegate requires the Root Worker to claim its own Commitment first");
+					if (!parentId) throw new Error("delegate requires the Agent to claim its own Commitment first");
 					if (loadReceiptChain(paths, parentId).terminal) throw new Error("delegate requires an open current Commitment");
 					const existingGoalId = params.goal_id as string | undefined;
 					const newGoal = params.new_goal as {

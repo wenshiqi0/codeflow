@@ -19,10 +19,10 @@ function environment(project: string, evidence: string, runs: string): Record<st
 }
 
 describe("host runtime guard", () => {
-	test("limits a Child Worker to read-only inspection before Claim", () => {
+	test.each(["root", "worker"])("limits every %s Agent to read-only inspection before Claim", (kind) => {
 		const env = {
 			...environment("/tmp/project", "/tmp/evidence", "/tmp/runs"),
-			CODEFLOW_PROCESS_KIND: "worker",
+			CODEFLOW_PROCESS_KIND: kind,
 		};
 		expect(preClaimToolViolation("read", { path: "/tmp/project/src/app.ts" }, env)).toBeNull();
 		expect(preClaimToolViolation("collaborate", { action: { name: "claim" } }, env)).toBeNull();

@@ -1,9 +1,9 @@
 /**
  * Codemark's plan-only collaborate surface.
  *
- * The action shapes intentionally match Codeflow's Manager-facing tool, but
+ * The action shapes intentionally match Codeflow's shared Agent tool, but
  * every mutation is confined to Codemark's private organization artifact. No
- * Worker process is launched and no Codeflow protocol object is written.
+ * Child process is launched and no Codeflow protocol object is written.
  */
 
 import * as fs from "node:fs";
@@ -32,7 +32,7 @@ const ReceiptStatus = Type.Union([
 	Type.Literal("blocked"),
 ]);
 
-/** Same fields and order as the production Root collaborate surface. */
+/** Same fields and order as the production Agent collaborate surface. */
 export const CODEMARK_ACTION_SCHEMAS = {
 	inspect: Type.Object({
 		name: Type.Literal("inspect"),
@@ -50,7 +50,7 @@ export const CODEMARK_ACTION_SCHEMAS = {
 		constraints: Type.Optional(StringArray),
 	}, {
 		additionalProperties: false,
-		description: "Create this Worker's bounded Commitment.",
+		description: "Create this Agent's bounded Commitment.",
 	}),
 	report: Type.Object({
 		name: Type.Literal("report"),
@@ -74,7 +74,7 @@ export const CODEMARK_ACTION_SCHEMAS = {
 		resume_commitment_id: Type.Optional(Type.String({ minLength: 1 })),
 	}, {
 		additionalProperties: false,
-		description: "Root only: start a Worker. Set exactly one of goal_id (reuse) or new_goal (create).",
+		description: "Start a child Agent asynchronously for bounded independent work. Set exactly one of goal_id (reuse) or new_goal (create).",
 	}),
 } as const;
 
@@ -105,7 +105,7 @@ function requiredEnvironment(name: string): string {
 	return value;
 }
 
-/** Keep the Manager's read tool from observing private harness process state. */
+/** Keep the Agent's read tool from observing private harness process state. */
 export function codemarkReadBoundaryViolation(
 	rawPath: string,
 	cwd: string,
@@ -195,7 +195,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "collaborate",
 		label: "Collaborate",
-		description: "Coordinate Goal-scoped work. Use inspect, claim, report, or delegate. Root alone can create Goals and delegate Workers.",
+		description: "Coordinate Goal-scoped work. Every Agent can inspect, claim, report, or delegate; child results arrive asynchronously. Keep useful local work moving and integrate delegated results before completing.",
 		parameters: codemarkCollaborateParameters,
 		executionMode: "sequential",
 		async execute(_id, rawParams, _signal, _update, ctx) {

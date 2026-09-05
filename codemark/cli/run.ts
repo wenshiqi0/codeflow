@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
-/** Run one Manager-only measurement of an Issue's initial organization. */
+/** Run one root-Agent-only measurement of an Issue's initial organization. */
 
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { buildWorkerArgv, ConfigError, resolveAgent } from "../../runtime/lib/config";
+import { buildAgentArgv, ConfigError, resolveAgent } from "../../runtime/lib/config";
 import { nowIso, writeJsonAtomic } from "../../runtime/lib/paths";
 import {
 	attachOrganizationUsage,
@@ -36,7 +36,7 @@ export class CodemarkError extends Error {}
 
 export interface CodemarkArguments {
 	issue?: string;
-	managerModel?: string;
+	model?: string;
 	outDir?: string;
 	timeoutSeconds: number;
 	help: boolean;
@@ -106,10 +106,10 @@ export function usage(): string {
 	return [
 		"usage: codemark [options] [\"<issue>\"]",
 		"",
-		"Run the configured Codeflow Manager until its first natural turn end, recording only its",
-		"initial organization frontier. No Worker is started.",
+		"Run the configured Codeflow Agent until its first natural turn end, recording only its",
+		"initial organization frontier. No child Agent is started.",
 		"",
-		"  --manager-model <provider/model>  override the configured Manager model",
+		"  --model <provider/model>          override the configured Agent model",
 		"  --out <dir>                       exact output directory for this run",
 		"  --timeout <seconds>               wall-clock limit (default: 300)",
 		"  --help                            show this help",
@@ -136,7 +136,7 @@ function parsePositiveInteger(value: string, flag: string): number {
 /** Parse without touching stdin, credentials, the filesystem, or a provider. */
 export function parseArguments(argv: string[]): CodemarkArguments {
 	const issueParts: string[] = [];
-	let managerModel: string | undefined;
+	let model: string | undefined;
 	let outDir: string | undefined;
 	let timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
 	let timeoutSeen = false;
@@ -162,16 +162,16 @@ export function parseArguments(argv: string[]): CodemarkArguments {
 			version = true;
 			continue;
 		}
-		if (value === "--manager-model") {
-			if (managerModel !== undefined) throw new CodemarkError("--manager-model may be specified only once");
-			managerModel = takeValue(argv, index, value);
+		if (value === "--model") {
+			if (model !== undefined) throw new CodemarkError("--model may be specified only once");
+			model = takeValue(argv, index, value);
 			index += 1;
 			continue;
 		}
-		if (value.startsWith("--manager-model=")) {
-			if (managerModel !== undefined) throw new CodemarkError("--manager-model may be specified only once");
-			managerModel = value.slice("--manager-model=".length);
-			if (!managerModel) throw new CodemarkError("--manager-model requires a value");
+		if (value.startsWith("--model=")) {
+			if (model !== undefined) throw new CodemarkError("--model may be specified only once");
+			model = value.slice("--model=".length);
+			if (!model) throw new CodemarkError("--model requires a value");
 			continue;
 		}
 		if (value === "--out") {
@@ -204,7 +204,7 @@ export function parseArguments(argv: string[]): CodemarkArguments {
 	}
 
 	const issue = issueParts.join(" ").trim() || undefined;
-	return { issue, managerModel, outDir, timeoutSeconds, help, version };
+	return { issue, model, outDir, timeoutSeconds, help, version };
 }
 
 export function newRunId(now = new Date()): string {
@@ -484,7 +484,7 @@ function managerEnvironment(runId: string, runDir: string, requestFile: string, 
 		"CODEFLOW_PARENT_COMMITMENT_ID",
 		"CODEFLOW_WORK_FOCUS",
 		"CODEFLOW_PROCESS_KIND",
-		"CODEFLOW_WORKER_MODEL",
+		"CODEFLOW_AGENT_MODEL",
 	]) delete env[name];
 	return env;
 }
@@ -538,7 +538,7 @@ export async function run(argv: string[], options: RunOptions = {}): Promise<num
 
 	const repository = path.resolve(options.cwd ?? process.cwd());
 	const issue = await issueFromInput(parsed, options.stdin);
-	const manager = resolveAgent(CONFIG_FILE, "manager", parsed.managerModel);
+	const manager = resolveAgent(CONFIG_FILE, parsed.model ?? process.env.CODEFLOW_AGENT_MODEL);
 	const runId = newRunId(options.now);
 	const outputDir = resolveOutputDir(parsed.outDir, runId, repository);
 	assertOutputDirAvailable(outputDir);
@@ -578,11 +578,11 @@ export async function run(argv: string[], options: RunOptions = {}): Promise<num
 	}
 
 	console.error(
-		`codemark run_id=${runId} out=${outputDir} manager=${manager.provider}/${manager.model} timeout=${parsed.timeoutSeconds}s`,
+		`codemark run_id=${runId} out=${outputDir} agent=${manager.provider}/${manager.model} timeout=${parsed.timeoutSeconds}s`,
 	);
 
 	const argvForManager = [
-		...buildWorkerArgv(
+		...buildAgentArgv(
 			manager,
 			buildManagerInput(),
 			EXTENSIONS,

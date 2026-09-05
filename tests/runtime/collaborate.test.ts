@@ -63,7 +63,7 @@ function body(result: any): any {
 }
 
 describe("minimal collaborate protocol", () => {
-	test("Root and Worker receive one tool with depth-scoped actions", () => {
+	test("Root and child receive identical actions without a depth restriction", () => {
 		const root = runtime("root");
 		const rootActions = root.tool.parameters.properties.action.anyOf.map((entry: any) => entry.properties.name.const);
 		expect(rootActions).toEqual(["inspect", "claim", "report", "delegate"]);
@@ -71,8 +71,8 @@ describe("minimal collaborate protocol", () => {
 
 		const worker = runtime("worker");
 		const workerActions = worker.tool.parameters.properties.action.anyOf.map((entry: any) => entry.properties.name.const);
-		expect(workerActions).toEqual(["inspect", "claim", "report"]);
-		expect(worker.tool.description).not.toContain("delegate");
+		expect(workerActions).toEqual(rootActions);
+		expect(worker.tool.description).toBe(root.tool.description);
 		expect(worker.tool.promptSnippet).toBeUndefined();
 		expect(worker.tool.promptGuidelines).toBeUndefined();
 	});
@@ -166,15 +166,19 @@ describe("minimal collaborate protocol", () => {
 		await expect(execute(tool, { name: "claim", work: "fabricated work" }, root)).rejects.toThrow(/reported a blocker/);
 	});
 
-	test("Root needs an open Commitment and a Child Commitment before closure", async () => {
-		const { paths, root, tool } = runtime("root");
+	test("a leaf Root can finish locally without forced delegation", async () => {
+		const { root, tool } = runtime("root");
+		await execute(tool, { name: "claim", work: "repair a local typo" }, root);
+		const receipt = body(await execute(tool, { name: "report", status: "completed", summary: "typo repaired and checked" }, root));
+		expect(receipt.status).toBe("completed");
+	});
+
+	test.each(["root", "worker"] as const)("every %s parent reconciles recursive descendants before closure", async (kind) => {
+		const { paths, root, tool } = runtime(kind);
 		await expect(execute(tool, {
 			name: "delegate", goal_id: paths.runId, focus: "inspect one outcome",
 		}, root)).rejects.toThrow(/claim its own Commitment first/);
 		const claimed = body(await execute(tool, { name: "claim", work: "steward Task closure" }, root));
-		await expect(execute(tool, {
-			name: "report", status: "completed", summary: "all work integrated",
-		}, root)).rejects.toThrow(/requires at least one Child Worker Commitment/);
 		const child = claimTestWork(paths, {
 			goalId: paths.runId,
 			parentCommitmentId: claimed.commitment_id,
@@ -182,8 +186,17 @@ describe("minimal collaborate protocol", () => {
 		});
 		await expect(execute(tool, {
 			name: "report", status: "completed", summary: "too early",
-		}, root)).rejects.toThrow(/every delegated Worker and Child Commitment to finish/);
+		}, root)).rejects.toThrow(/every delegated Agent and descendant Commitment to finish/);
+		const grandchild = claimTestWork(paths, {
+			goalId: paths.runId,
+			parentCommitmentId: child.id,
+			work: "independent regression check",
+		});
 		submitReceipt(paths, { commitmentId: child.id, status: "completed", summary: "change verified" });
+		await expect(execute(tool, {
+			name: "report", status: "completed", summary: "grandchild is still open",
+		}, root)).rejects.toThrow(/descendant Commitment to finish/);
+		submitReceipt(paths, { commitmentId: grandchild.id, status: "completed", summary: "regression checked" });
 		const receipt = body(await execute(tool, {
 			name: "report", status: "completed", summary: "delegated result integrated",
 		}, root));
@@ -197,7 +210,7 @@ describe("minimal collaborate protocol", () => {
 		delete process.env.CODEFLOW_COMMITMENT_ID;
 		process.env.CODEFLOW_EXECUTION_ID = "exec-worker-2";
 		let secondTool: any;
-		organization({ registerTool(value: unknown) { secondTool = value; } } as never);
+		organization({ on() {}, registerTool(value: unknown) { secondTool = value; } } as never);
 		const second = body(await execute(secondTool, { name: "claim", work: "follow-up from new evidence" }, root));
 		expect(second.commitment_id).not.toBe(first.commitment_id);
 		expect(commitmentHistory(paths).map((view) => view.commitment.goal_id)).toEqual([paths.runId, paths.runId]);
@@ -274,6 +287,29 @@ describe("minimal collaborate protocol", () => {
 			runtime_failure_reasons: ["WORKER_LAUNCH_FAILURE"],
 		});
 		expect(commitmentHistory(paths)).toEqual([]);
+	});
+
+	test("a failed PID publication keeps its slot until the spawned process really closes", async () => {
+		const { paths, root } = runtime("root");
+		const child = new EventEmitter() as any;
+		Object.assign(child, { pid: 999_999, stdout: new PassThrough(), stderr: new PassThrough(), exitCode: null, signalCode: null });
+		const signals: string[] = [];
+		child.kill = (kind: string) => { signals.push(kind); return true; };
+		let releases = 0;
+		let settled = false;
+		const running = spawnWorker({ goalId: paths.runId, focus: "bounded work", parentCommitmentId: "c_parent" }, undefined, root, {
+			executionId: "exec-attach-failed",
+			lease: { attach() { throw new Error("subtree was closed"); }, release() { releases++; } },
+			resolve: () => ({ provider: "test", model: "test", systemPrompts: ["agent"], promptPaths: ["/tmp/agent.md"] }),
+			spawnProcess: (() => child) as never,
+		}).then((outcome) => { settled = true; return outcome; });
+		await Bun.sleep(20);
+		expect(signals).toEqual(["SIGTERM"]);
+		expect({ releases, settled }).toEqual({ releases: 0, settled: false });
+		child.exitCode = 1;
+		child.emit("close", 1);
+		expect(await running).toMatchObject({ status: "interrupted", runtime_failure_reasons: ["WORKER_LAUNCH_FAILURE"] });
+		expect(releases).toBe(1);
 	});
 
 	test("delegate returns immediately and feedback includes the eventual Worker result", async () => {

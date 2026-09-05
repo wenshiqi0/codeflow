@@ -12,14 +12,14 @@ the harness; it never relies on an unrelated `python3` from `PATH`.
 
 Each attempt uses a fresh workspace and Task id. The model-visible input is the
 allowlisted dataset projection only. Gold patches, evaluator results, and issue
-lookup are never exposed to a Worker.
+lookup are never exposed to an Agent.
 
 Workspace provisioning prefers a read-only source clone containing the requested
 commit and tree at `$CODEFLOW_BENCHMARK_REPO_CACHE_DIR/<repo-name>` and otherwise checks
 `$HOME/Documents/swe/<repo-name>` before cloning GitHub. Every attempt still
 gets a separate workspace at the dataset `base_commit`; after materializing the
 tree, provisioning replaces Git history with one synthetic baseline commit so
-the Worker cannot inspect later upstream history. Provisioning never fetches
+the Agent cannot inspect later upstream history. Provisioning never fetches
 into or otherwise mutates the source cache.
 
 The append-only usage ledger records one completed assistant response as one
@@ -43,8 +43,9 @@ open | running | interrupted |
 completed | blocked
 ```
 
-Reports break usage and tool calls down by Goal, provider/model, and Worker
-kind. Runtime observability reports Receipt statuses and Runtime failure
+Reports break usage and tool calls down by Goal, provider/model, and internal
+worker kind. Every execution Agent uses the same model/prompt and capabilities;
+Root/Child describe topology, not separate benchmark roles. Runtime observability reports Receipt statuses and Runtime failure
 reasons by Goal. There are no role, thread, lane, depth, mutable state, or
 alternate-schema dimensions.
 
@@ -52,7 +53,11 @@ Tool operations separate `source_discovery` from validation and integration.
 Source discovery covers bounded reads and repository searches. Validation is
 the sum of direct execution, evidence runs, evidence reads, and source checks.
 Integration covers `inspect`, `claim`, `report`, and `delegate`.
-Worker feedback is delivered asynchronously by Runtime, not through a blocking tool.
+Child feedback is delivered asynchronously to every Parent by Runtime, not through
+a blocking tool. Agent creation can occur at any depth and throughout an attempt;
+topology is observed from durable parent/child relationships, never supplied as
+a required initial plan. A zero-Child attempt is valid when the work is better
+completed locally; Agent count alone is not a correctness or quality score.
 The report does not infer a redundant-discovery rate from these unlike
 activities.
 
@@ -64,9 +69,9 @@ denominator silently.
 
 Run-facts telemetry uses schema version 3. Before every provider request it
 records privacy-safe shapes for the system prompt, active tool schema, injected
-Worker context, and message prefix. Each shape contains only a hash and character
-count; the tool schema additionally records tool count, and Worker context lists
-section shapes. Reports separate system-prompt, tool-schema, and Worker-context
+Agent context, and message prefix. Each shape contains only a hash and character
+count; the tool schema additionally records tool count, and Agent context lists
+section shapes. Reports separate system-prompt, tool-schema, and Agent-context
 changes from message-prefix invalidations instead of treating all prefix movement
 as one cause. They also expose component sizes and maximum observed context
 utilization.

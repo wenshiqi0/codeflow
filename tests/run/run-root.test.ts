@@ -1,6 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
-import { parseExecArguments, resolveRunsDir } from "../../runtime/cli/run";
+import { parseExecArguments, resolveRunsDir, rootCommitmentForResume } from "../../runtime/cli/run";
+import { claimTestWork } from "../runtime/helpers";
+import { RunPaths } from "../../runtime/lib/paths";
+import { createTask } from "../../runtime/lib/tasks";
+import { AGENT_TOOL_ALLOWLIST, agentExtensions } from "../../runtime/lib/agent-launch";
+
+const dirs: string[] = [];
+afterEach(() => { for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
 
 describe("run root resolution", () => {
 	test("the default run root is absolute before a child changes worktree", () => {
@@ -16,35 +25,94 @@ describe("run root resolution", () => {
 			path.join(path.dirname(launchRoot), "run-state"),
 		);
 	});
+
+	test("resume never adopts a descendant Commitment on the root Goal", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-root-resume-"));
+		dirs.push(dir);
+		const paths = new RunPaths(dir, "task-resume");
+		createTask(paths, "Deliver the outcome");
+		const root = claimTestWork(paths, { goalId: paths.runId, work: "Own final delivery" });
+		claimTestWork(paths, {
+			goalId: paths.runId,
+			parentCommitmentId: root.id,
+			work: "Independently inspect the outcome",
+		});
+		expect(rootCommitmentForResume(paths)?.id).toBe(root.id);
+	});
 });
 
 describe("exec arguments", () => {
-	test("accepts independent Manager and Worker model overrides before or after the objective", () => {
-		expect(parseExecArguments(["--manager-model", "manager/model", "--worker-model", "worker/model", "build", "it"])).toEqual({
+	test("accepts one Agent model override before or after the objective", () => {
+		expect(parseExecArguments(["--model", "agent/model", "build", "it"])).toEqual({
 			prompt: "build it",
-			managerModel: "manager/model",
-			workerModel: "worker/model",
+			model: "agent/model",
 		});
-		expect(parseExecArguments(["build it", "--manager-model=manager/other", "--worker-model=worker/other"])).toEqual({
+		expect(parseExecArguments(["build it", "--model=agent/other"])).toEqual({
 			prompt: "build it",
-			managerModel: "manager/other",
-			workerModel: "worker/other",
+			model: "agent/other",
 		});
 	});
 
 	test("preserves the configured default when no override is supplied", () => {
 		expect(parseExecArguments(["build", "it"])).toEqual({
 			prompt: "build it",
-			managerModel: undefined,
-			workerModel: undefined,
+			model: undefined,
 		});
 	});
 
 	test("rejects missing, duplicate, and unknown options", () => {
-		expect(() => parseExecArguments(["--manager-model"])).toThrow("--manager-model requires");
-		expect(() => parseExecArguments(["--worker-model"])).toThrow("--worker-model requires");
-		expect(() => parseExecArguments(["--manager-model", "a/b", "--manager-model=c/d", "work"])).toThrow("only once");
-		expect(() => parseExecArguments(["--worker-model", "a/b", "--worker-model=c/d", "work"])).toThrow("only once");
+		expect(() => parseExecArguments(["--model"])).toThrow("--model requires");
+		expect(() => parseExecArguments(["--model", "a/b", "--model=c/d", "work"])).toThrow("only once");
+		expect(() => parseExecArguments(["--manager-model", "a/b", "work"])).toThrow("unknown exec option");
+		expect(() => parseExecArguments(["--worker-model", "a/b", "work"])).toThrow("unknown exec option");
 		expect(() => parseExecArguments(["--other", "work"])).toThrow("unknown exec option: --other");
+	});
+});
+
+describe("root Agent launch boundary", () => {
+	test("a CLI override pins the run-scoped model and full Agent capabilities", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-root-launch-"));
+		dirs.push(dir);
+		const capture = path.join(dir, "capture.json");
+		const fakePi = path.join(dir, "fake-pi.ts");
+		fs.writeFileSync(fakePi, `
+			import * as fs from "node:fs";
+			fs.writeFileSync(process.env.CODEFLOW_TEST_CAPTURE!, JSON.stringify({
+				args: process.argv.slice(2),
+				model: process.env.CODEFLOW_AGENT_MODEL,
+				parent: process.env.CODEFLOW_PARENT_COMMITMENT_ID ?? null,
+			}));
+		`);
+		const runtimeDir = path.resolve(import.meta.dir, "../../runtime");
+		const env = { ...process.env };
+		delete env.CODEFLOW_RUN_ID;
+		const result = Bun.spawnSync([
+			process.execPath, path.join(runtimeDir, "cli/run.ts"),
+			"exec", "--model", "explicit-provider/explicit-model", "Exercise launch only",
+		], {
+			cwd: dir,
+			env: {
+				...env,
+				CODEFLOW_PI_CLI: fakePi,
+				CODEFLOW_TEST_CAPTURE: capture,
+				CODEFLOW_RUNS_DIR: path.join(dir, "runs"),
+				CODEFLOW_AGENT_MODEL: "environment-provider/environment-model",
+				CODEFLOW_PARENT_COMMITMENT_ID: "unrelated-parent",
+			},
+			timeout: 5_000,
+		});
+		// The stand-in deliberately claims no work and cannot complete this Task.
+		expect(result.exitCode).toBe(1);
+		const observed = JSON.parse(fs.readFileSync(capture, "utf8"));
+		expect(observed.model).toBe("explicit-provider/explicit-model");
+		expect(observed.parent).toBeNull();
+		const args: string[] = observed.args;
+		expect(args[args.indexOf("--provider") + 1]).toBe("explicit-provider");
+		expect(args[args.indexOf("--model") + 1]).toBe("explicit-model");
+		expect(args[args.indexOf("--tools") + 1]).toBe(AGENT_TOOL_ALLOWLIST.join(","));
+		expect(args.filter((arg, index) => args[index - 1] === "--extension"))
+			.toEqual(agentExtensions(runtimeDir));
+		expect(args[args.indexOf("--append-system-prompt") + 1])
+			.toBe(fs.readFileSync(path.join(runtimeDir, "../references/agent.md"), "utf8"));
 	});
 });

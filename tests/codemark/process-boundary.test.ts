@@ -49,7 +49,7 @@ describe("Codemark process boundary", () => {
 		expect(fs.existsSync(missingTarget)).toBe(false);
 	});
 
-	test("standalone command runs one fake Manager and writes the complete measured frontier", () => {
+	test("standalone command runs one fake Agent and writes the complete measured frontier", () => {
 		const repository = makeTmpDir("codemark-fake-repository-");
 		const outDir = path.join(makeTmpDir("codemark-fake-output-"), "run");
 		const result = runCodemark([
@@ -83,7 +83,7 @@ describe("Codemark process boundary", () => {
 			repository: canonicalRepository,
 			limits: { timeout_seconds: 10 },
 		});
-		expect(request.manager.prompts).toEqual(["references/manager.md"]);
+		expect(request.manager.prompts).toEqual(["references/agent.md"]);
 		expect(artifact).toMatchObject({
 			run_id: request.run_id,
 			status: "completed",
@@ -98,7 +98,7 @@ describe("Codemark process boundary", () => {
 				new_goal_count: 2,
 			},
 		});
-		expect(artifact.manager.prompt_paths).toEqual(["references/manager.md"]);
+		expect(artifact.manager.prompt_paths).toEqual(["references/agent.md"]);
 		expect(artifact.delegations).toHaveLength(3);
 		expect(artifact.delegations[0]).toMatchObject({
 			sequence: 1,
@@ -159,7 +159,7 @@ describe("Codemark process boundary", () => {
 		const sessions = path.join(REPO, "runtime", "sessions");
 		const sessionsBefore = filesBelow(sessions);
 		const result = runCodemark([
-			"--manager-model", "codemark-offline/manager",
+			"--model", "codemark-offline/manager",
 			"--out", outDir,
 			"--timeout", "10",
 			"Exercise the real Pi termination boundary",
@@ -183,28 +183,38 @@ describe("Codemark process boundary", () => {
 	});
 
 	for (const scenario of [
-		{ mode: "zero-workers", workers: 0, calls: 1, violations: ["manager_claim_missing", "delegation_missing"] },
+		{ mode: "zero-workers", workers: 0, calls: 1, violations: ["manager_claim_missing"] },
+		{ mode: "leaf", workers: 0, calls: 2, violations: [] },
 		{ mode: "multi-step", workers: 2, calls: 3, violations: [] },
 	]) {
 		test(`real offline Pi freezes the natural initial organization: ${scenario.mode}`, () => {
 			const repository = makeTmpDir("codemark-real-frontier-repository-");
 			const outDir = path.join(makeTmpDir("codemark-real-frontier-output-"), "run");
-			const result = runCodemark(["--manager-model", "codemark-offline/manager", "--out", outDir, "--timeout", "10", "Organize this issue"], {
+			const result = runCodemark(["--model", "codemark-offline/manager", "--out", outDir, "--timeout", "10", "Organize this issue"], {
 				cwd: repository,
 				env: fakeEnvironment({ CODEFLOW_PI_CLI: REAL_PI, CODEMARK_OFFLINE_SCENARIO: scenario.mode }),
 				timeoutMs: 15_000,
 			});
 			expect(result.exitCode).toBe(0);
-			expect(readJson(path.join(outDir, "initial-organization.json"))).toMatchObject({
+			const artifact = readJson(path.join(outDir, "initial-organization.json"));
+			expect(artifact).toMatchObject({
 				status: "completed", termination: "first_turn_end",
 				metrics: { delegate_count: scenario.workers, initial_worker_count: scenario.workers },
 				assessment: { organization_valid: scenario.violations.length === 0, policy_violations: scenario.violations },
 				usage: { calls: scenario.calls },
 			});
+			if (scenario.mode === "leaf") {
+				expect(artifact.manager_progress).toMatchObject([{
+					status: "completed", benchmark: { simulated: true, canonical_receipt_written: false },
+				}]);
+				expect(artifact.delegations).toEqual([]);
+				expect(fs.readdirSync(repository)).toEqual([]);
+				expect(fs.readdirSync(outDir).sort()).toEqual(["initial-organization.json", "request.json", "usage.json"]);
+			}
 		});
 	}
 
-	test("the real Pi Manager cannot observe private harness state through read or project output", () => {
+	test("the real Pi Agent cannot observe private harness state through read or project output", () => {
 		const repository = makeTmpDir("codemark-identity-repository-");
 		const codeflowHome = makeTmpDir("codemark-identity-home-");
 		fs.writeFileSync(path.join(repository, "inside.txt"), "INSIDE_REPOSITORY_CANARY", "utf8");
@@ -214,7 +224,7 @@ describe("Codemark process boundary", () => {
 			"utf8",
 		);
 		const result = runCodemark([
-			"--manager-model", "codemark-offline/manager",
+			"--model", "codemark-offline/manager",
 			"--timeout", "10",
 			"Attempt to identify the measurement harness before organizing",
 		], {
@@ -252,7 +262,7 @@ describe("Codemark process boundary", () => {
 		const repository = makeTmpDir("codemark-coercible-repository-");
 		const outDir = path.join(makeTmpDir("codemark-coercible-output-"), "run");
 		const result = runCodemark([
-			"--manager-model", "codemark-offline/manager",
+			"--model", "codemark-offline/manager",
 			"--out", outDir,
 			"--timeout", "10",
 			"Preserve Pi argument coercion",
@@ -278,12 +288,12 @@ describe("Codemark process boundary", () => {
 		expect(artifact.delegations[0].focus).toBe("456");
 	});
 
-	test("a zero-Worker first natural turn end is a successful measurement instead of a runtime failure", () => {
+	test("a zero-Child first natural turn end is a successful measurement instead of a runtime failure", () => {
 		const repository = makeTmpDir("codemark-zero-workers-repository-");
 		const outDir = path.join(makeTmpDir("codemark-zero-workers-output-"), "run");
 		const result = runCodemark([
 			"--out", outDir,
-			"Issue whose Manager chooses not to delegate",
+			"Issue whose Agent chooses not to delegate",
 		], {
 			cwd: repository,
 			env: fakeEnvironment({ CODEMARK_FAKE_PI_MODE: "zero-workers" }),
@@ -298,7 +308,7 @@ describe("Codemark process boundary", () => {
 			metrics: { delegate_count: 0, initial_worker_count: 0 },
 			assessment: {
 				organization_valid: false,
-				policy_violations: ["manager_claim_missing", "delegation_missing"],
+				policy_violations: ["manager_claim_missing"],
 			},
 			usage: { calls: 1, total_tokens: 159 },
 		});
@@ -309,7 +319,7 @@ describe("Codemark process boundary", () => {
 		});
 	});
 
-	test("a clean Manager exit before natural turn end is an incomplete measurement", () => {
+	test("a clean Agent exit before natural turn end is an incomplete measurement", () => {
 		const repository = makeTmpDir("codemark-exit-repository-");
 		const outDir = path.join(makeTmpDir("codemark-exit-output-"), "run");
 		const result = runCodemark([
@@ -330,7 +340,7 @@ describe("Codemark process boundary", () => {
 		});
 		});
 
-	test("a natural Manager exit wins over a later timeout while stdout is still draining", () => {
+	test("a natural Agent exit wins over a later timeout while stdout is still draining", () => {
 		const repository = makeTmpDir("codemark-exit-drain-repository-");
 		const outDir = path.join(makeTmpDir("codemark-exit-drain-output-"), "run");
 		const result = runCodemark([
@@ -351,7 +361,7 @@ describe("Codemark process boundary", () => {
 		});
 		});
 
-	test("a Manager descendant cannot hold inherited output pipes open forever", () => {
+	test("an Agent subprocess cannot hold inherited output pipes open forever", () => {
 		const repository = makeTmpDir("codemark-exit-stuck-drain-repository-");
 		const outDir = path.join(makeTmpDir("codemark-exit-stuck-drain-output-"), "run");
 		const startedAt = Date.now();
@@ -374,7 +384,7 @@ describe("Codemark process boundary", () => {
 		});
 	});
 
-	test("a late signal cannot interrupt terminal artifact publication after Manager exit", () => {
+	test("a late signal cannot interrupt terminal artifact publication after Agent exit", () => {
 		const repository = makeTmpDir("codemark-exit-drain-signal-repository-");
 		const outputParent = makeTmpDir("codemark-exit-drain-signal-output-");
 		const outDir = path.join(outputParent, "run");
@@ -382,7 +392,7 @@ describe("Codemark process boundary", () => {
 		const result = runCodemark([
 			"--out", outDir,
 			"--timeout", "10",
-			"Publish after the Manager exits",
+			"Publish after the Agent exits",
 		], {
 			cwd: repository,
 			env: fakeEnvironment({
@@ -474,7 +484,7 @@ describe("Codemark process boundary", () => {
 		test(`real offline Pi abnormal end: ${scenario.mode}`, () => {
 			const repository = makeTmpDir("codemark-real-abnormal-repository-");
 			const outDir = path.join(makeTmpDir("codemark-real-abnormal-output-"), "run");
-			const result = runCodemark(["--manager-model", "codemark-offline/manager", "--out", outDir, "--timeout", "10", "Handle abnormal Manager output"], {
+			const result = runCodemark(["--model", "codemark-offline/manager", "--out", outDir, "--timeout", "10", "Handle abnormal Manager output"], {
 				cwd: repository,
 				env: fakeEnvironment({ CODEFLOW_PI_CLI: REAL_PI, CODEMARK_OFFLINE_SCENARIO: scenario.mode }),
 				timeoutMs: 15_000,
