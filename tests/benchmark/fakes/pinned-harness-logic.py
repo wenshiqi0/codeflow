@@ -215,6 +215,9 @@ def main(argv: list[str]) -> int:
         log_dir = Path("logs/run_evaluation") / run_id / model_dir / str(instance_id)
         log_dir.mkdir(parents=True, exist_ok=True)
         resolved = os.environ.get("PINNED_HARNESS_VERDICT", "resolved") != "unresolved"
+        # Deliberately malformed stand-in output tests the wrapper's trust boundary.
+        if "PINNED_HARNESS_RESOLVED_JSON" in os.environ:
+            resolved = json.loads(os.environ["PINNED_HARNESS_RESOLVED_JSON"])
         report = {
             str(instance_id): {
                 "patch_is_None": patch is None,

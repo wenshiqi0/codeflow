@@ -9,10 +9,11 @@
  *   stdout: NDJSON DriverEvents
  *
  * What it does per attempt:
- *  1. starts `codeflow exec "<task prompt>"` with cwd = the fresh
+ *  1. starts the single-executor baseline `codeflow exec "<task prompt>"` with cwd = the fresh
  *     repo@base_commit workspace, a fresh Codeflow Task id (run-scoped
  *     env is stripped), and run artifacts redirected OUTSIDE the workspace
  *     (attempt dir), so the extracted patch stays exactly the model's work;
+ *     it does not run the outer codeteam orchestration loop;
  *  2. the telemetry-ledger extension (runtime/extensions/telemetry-ledger)
  *     appends attributed usage rows, privacy-safe tool-call rows, and failed
  *     provider attempts to a staging ledger under the attempt dir — real
@@ -112,8 +113,7 @@ const prompt = [
 const childEnv: Record<string, string> = { ...process.env } as Record<string, string>;
 for (const key of RUN_SCOPED_ENV_KEYS) delete childEnv[key];
 // §4 tool-network wall: mechanically deny outbound network for the whole
-// spawned Codeflow tree — root Worker and children through the organization
-// launcher's environment inheritance — while the run's
+// spawned single-executor Codeflow process and its commands while the run's
 // configured provider endpoints (env-supplied base URLs, exactly) stay
 // reachable. Environment is the mechanism: every stock HTTP client (curl,
 // fetch, pip, git-over-http …) honors it with no tool-argument parsing, and
@@ -135,7 +135,7 @@ const child = Bun.spawn(["bash", CODEFLOW_BIN, "exec", prompt], {
 });
 
 // Budget stops SIGTERM this process; forward to the live Codeflow run and let
-// its own supervision terminate the Worker tree. Escalate to SIGKILL if it
+// its own supervision terminate the executor. Escalate to SIGKILL if it
 // lingers, so the whole run dies inside the runner's grace window.
 const TERMINATION_ESCALATE_MS = 3_000;
 let terminating = false;

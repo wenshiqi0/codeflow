@@ -3,8 +3,8 @@
  * The outer ring: Task-level `codeflow ls`, `sub`, `stop`, and `audit`.
  *
  * Everything here is about a whole Task, never about one Work Commitment.
- * Commitment closure, Recall, and mechanical evidence stay on the Worker-facing
- * `codeteam` surface.
+ * The outer `codeteam` CLI owns Agent organization; Pi's collaborate tool owns
+ * Commitment closure and Recall. Mechanical evidence remains an executor helper.
  *
  * Output is one JSON object per line on stdout and diagnostics on stderr, so a
  * follower can read incrementally without waiting for a document to close.
@@ -17,6 +17,8 @@ import { taskState } from "../lib/state";
 import { probeAll } from "../lib/liveness";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../lib/paths";
 import { scan, wait } from "../lib/wait";
+import { loadTeam, stopTeamAgents, teamStatus } from "../lib/team";
+import { loadTask } from "../lib/tasks";
 import { buildUsageReport, readUsageRecords } from "../lib/usage";
 
 /** Requirements are summarized for a table, not reproduced in it. */
@@ -24,7 +26,7 @@ const REQUIREMENT_WIDTH = 60;
 
 export class OuterError extends Error {}
 
-export type RunStatus = "running" | "finished" | "unknown";
+export type RunStatus = "open" | "running" | "finished" | "unknown";
 
 export interface RunRow {
 	task_id: string;
@@ -122,6 +124,12 @@ function readExit(
  */
 export function classify(runsDir: string, runId: string, now = Date.now()): RunRow {
 	const paths = new RunPaths(runsDir, runId);
+	if (fs.existsSync(path.join(paths.runDir, "team.json"))) {
+		const team = loadTeam(paths);
+		return { task_id: runId, status: team.status === "open" ? "open" : "finished",
+			duration_seconds: seconds(team.created_at, team.finished_at ? Date.parse(team.finished_at) : now),
+			objective: truncateObjective(loadTask(paths).objective) };
+	}
 	const runner = readRunner(paths.runDir);
 	const objective = truncateObjective(runner?.objective ?? "");
 
@@ -372,17 +380,24 @@ function audit(runsDir: string, argv: string[]): number {
 	if (!fs.existsSync(paths.runDir)) throw new OuterError(`no such run: ${args.runId}`);
 
 	const runner = readRunner(paths.runDir);
+	const team = fs.existsSync(path.join(paths.runDir, "team.json")) ? teamStatus(paths) : null;
 	const row = classify(runsDir, args.runId as string);
 	const commitments = auditCommitments(paths);
 	const hasBlocked = commitments.some((commitment) => commitment.status === "blocked");
 	const hasActive = commitments.some((commitment) => commitment.status === "open" || commitment.status === "running");
 
-	let trigger: "blocked" | "dead_runner" | "missing_runner" | "forced";
+	let trigger: "blocked" | "dead_runner" | "missing_runner" | "interrupted_agent" | "forced" | undefined;
 	if (hasBlocked) trigger = "blocked";
-	else if (runner === null && hasActive) trigger = "missing_runner";
+	else if (team) {
+		const assigned = team.agents.filter(agent => agent.status === "starting" || agent.status === "running");
+		if (team.status === "open" && team.agents.some(agent => agent.status === "interrupted")) trigger = "interrupted_agent";
+		else if (assigned.some(agent => !pidAlive(agent.runner_pid ?? agent.owner_pid)
+			|| (agent.pid !== null && !pidAlive(agent.pid)))) trigger = "dead_runner";
+		else if (hasActive && assigned.length === 0) trigger = "missing_runner";
+	} else if (runner === null && hasActive) trigger = "missing_runner";
 	else if (row.status !== "running" && hasActive) trigger = "dead_runner";
-	else if (args.force) trigger = "forced";
-	else {
+	if (!trigger && args.force) trigger = "forced";
+	if (!trigger) {
 		throw new OuterError("audit refused: run is healthy and progressing; use --force only when a human asked");
 	}
 
@@ -393,6 +408,7 @@ function audit(runsDir: string, argv: string[]): number {
 			run_status: row.status,
 			forced: args.force,
 			commitments,
+			...(team ? { agents: team.agents } : {}),
 			workers: auditWorkers(paths),
 			last_event: lastEventIdentity(paths),
 		}),
@@ -415,6 +431,10 @@ export async function main(argv: string[]): Promise<number> {
 			case "usage":
 				return usage(runsDir, rest);
 			case "stop":
+				if (rest.length === 1 && fs.existsSync(path.join(runsDir, rest[0], "team.json"))) {
+					const paths = new RunPaths(path.resolve(runsDir), rest[0]);
+					await stopTeamAgents(paths); console.log(JSON.stringify(teamStatus(paths))); return 0;
+				}
 				return stop(runsDir, rest[0]);
 
 			case "audit":

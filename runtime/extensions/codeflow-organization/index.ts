@@ -2,22 +2,18 @@ import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
 	claimCommitment,
-	commitmentHistory,
 	goalClaimRevision,
-	loadReceiptChain,
 	loadTerminalReceipt,
 	submitReceipt,
 } from "../../lib/commitment";
 import { loadWorkerReport, writeWorkerReport } from "../../lib/executions";
-import { createGoal } from "../../lib/goals";
 import { DEFAULT_RUNS_DIR, RunPaths } from "../../lib/paths";
 import { inspectCommitment, inspectGoal, inspectReceipt } from "../../lib/inspection";
 import { goalState } from "../../lib/state";
-import { descendantAgentPids, validateAgentStartup } from "../../lib/agent-capacity";
-import { cancelWorkers, delegateWorker, hasLiveWorkers, takeWorkerUpdates } from "./worker-launcher";
-import { registerWorkerFeedback } from "./feedback";
+import { validateTeamAgentStartup } from "../../lib/team";
+import { isAlive } from "../../lib/watchdog";
 
-const ACTIONS = ["inspect", "claim", "report", "delegate"] as const;
+const ACTIONS = ["inspect", "claim", "report"] as const;
 type CollaborateAction = (typeof ACTIONS)[number];
 
 function currentRun(): RunPaths {
@@ -41,22 +37,6 @@ function dependenciesCompleted(paths: RunPaths, goalId: string): boolean {
 	return goalState(paths, goalId).dependencies.every(
 		(dependency) => goalState(paths, dependency).status === "completed",
 	);
-}
-
-function delegatedCommitments(paths: RunPaths, parentCommitmentId: string) {
-	const history = commitmentHistory(paths);
-	const descendants = new Set([parentCommitmentId]);
-	let changed = true;
-	while (changed) {
-		changed = false;
-		for (const { commitment } of history) {
-			if (commitment.parent_commitment_id && descendants.has(commitment.parent_commitment_id) && !descendants.has(commitment.id)) {
-				descendants.add(commitment.id);
-				changed = true;
-			}
-		}
-	}
-	return history.filter(({ commitment }) => commitment.id !== parentCommitmentId && descendants.has(commitment.id));
 }
 
 function result(value: unknown, details?: unknown) {
@@ -99,20 +79,6 @@ const ACTION_SCHEMAS = {
 		effects: Type.Optional(Type.Array(Effect)),
 		remaining: Type.Optional(StringArray),
 	}, { additionalProperties: false, description: "Report progress, completion, or a blocker. Before claim, only blocked is valid." }),
-	delegate: Type.Object({
-		name: Type.Literal("delegate"),
-		goal_id: Type.Optional(Type.String({ minLength: 1 })),
-		new_goal: Type.Optional(Type.Object({
-			goal_id: Type.String({ minLength: 1 }),
-			objective: Type.String({ minLength: 1 }),
-			dependencies: Type.Optional(StringArray),
-		}, { additionalProperties: false })),
-		focus: Type.String({ minLength: 1 }),
-		resume_commitment_id: Type.Optional(Type.String({ minLength: 1 })),
-	}, {
-		additionalProperties: false,
-		description: "Start a child Agent asynchronously for bounded independent work; requires an open Commitment. Reassess parallel opportunities as independent questions or change boundaries emerge, and delegate when it can improve speed or quality. Set exactly one of goal_id (reuse) or new_goal (create).",
-	}),
 } as const;
 
 function parameters() {
@@ -121,24 +87,75 @@ function parameters() {
 	}, { additionalProperties: false });
 }
 
+/** A Pi execution must not outlive the outer runner that owns its assignment. */
+export function registerTeamRunnerSupervisor(
+	pi: Pick<ExtensionAPI, "on">,
+	runnerPid: number,
+	options: {
+		pid?: number;
+		alive?: (pid: number) => boolean;
+		kill?: (pid: number, signal: NodeJS.Signals) => unknown;
+		intervalMs?: number;
+		killGraceMs?: number;
+	} = {},
+): () => void {
+	const pid = options.pid ?? process.pid;
+	if (!Number.isSafeInteger(runnerPid) || runnerPid <= 0 || runnerPid > 2_147_483_647 || runnerPid === pid) {
+		throw new Error("a Team Agent requires its valid, distinct outer runner PID");
+	}
+	const alive = options.alive ?? isAlive;
+	const kill = options.kill ?? ((target, signal) => process.kill(target, signal));
+	let escalation: ReturnType<typeof setTimeout> | undefined;
+	const signalGroup = (signal: NodeJS.Signals) => {
+		try { kill(-pid, signal); }
+		catch { kill(pid, signal); }
+	};
+	const timer = setInterval(() => {
+		if (alive(runnerPid)) return;
+		clearInterval(timer);
+		console.error("Codeflow outer runner exited; stopping its orphaned Agent process group");
+		// Pi's SIGTERM handler also reaps its separately detached bash groups.
+		// A direct SIGKILL would bypass that cleanup and strand tool processes.
+		escalation = setTimeout(() => signalGroup("SIGKILL"), options.killGraceMs ?? 5_000);
+		escalation.unref();
+		signalGroup("SIGTERM");
+	}, options.intervalMs ?? 1_000);
+	timer.unref();
+	const dispose = () => { clearInterval(timer); if (escalation) clearTimeout(escalation); };
+	// Once orphan cleanup began, shutdown must not cancel its hard backstop.
+	pi.on("session_shutdown", () => clearInterval(timer));
+	return dispose;
+}
+
 export default function (pi: ExtensionAPI) {
-	if (process.env.CODEFLOW_PARENT_COMMITMENT_ID && process.env.CODEFLOW_RUN_ID && process.env.CODEFLOW_EXECUTION_ID) {
-		try { validateAgentStartup(currentRun(), currentExecution()); }
+	if (process.env.CODEFLOW_TEAM_AGENT_ID) {
+		try {
+			const startup = validateTeamAgentStartup(currentRun(), process.env.CODEFLOW_TEAM_AGENT_ID, currentExecution());
+			if (startup.commitment_id) process.env.CODEFLOW_COMMITMENT_ID = startup.commitment_id;
+			else delete process.env.CODEFLOW_COMMITMENT_ID;
+			registerTeamRunnerSupervisor(pi, Number(process.env.CODEFLOW_TEAM_RUNNER_PID));
+			// Pi can otherwise continue after an extension load error. Never fall
+			// back to an untracked native shell in an outer-managed execution.
+			pi.on("before_agent_start", () => {
+				if (process.env.CODEFLOW_TEAM_SHELL_READY !== currentExecution()) {
+					console.error("Codeflow Agent startup rejected: tracked shell extension did not initialize");
+					process.exit(1);
+				}
+			});
+		}
 		catch (error) {
-			// A parent may die between fork and PID publication. Fail before the
-			// first provider call, not merely by disabling this one extension.
+			// The outer runner owns admission and PID publication. An extension
+			// load error alone is not fail-closed: Pi may continue without it.
 			console.error(`Codeflow Agent startup rejected: ${String(error)}`);
 			process.exit(1);
 		}
 	}
-	// Pass the same launcher instance: Pi loads separate extensions in isolated caches.
-	registerWorkerFeedback(pi, { cancelWorkers, hasLiveWorkers, takeWorkerUpdates });
 	pi.registerTool({
 		name: "collaborate",
 		label: "Collaborate",
-		description: "Coordinate Goal-scoped work. Every Agent can inspect, claim, report, or delegate; child results arrive asynchronously. Keep useful local work moving and integrate delegated results before completing.",
+		description: "Execute one assigned Goal: inspect durable evidence, claim bounded work, and report progress or a terminal Receipt. Task and Agent control commands are available through codeteam, not this tool.",
 		parameters: parameters(),
-		async execute(_id, rawParams, signal, _update, ctx) {
+		async execute(_id, rawParams) {
 			const params = (rawParams as { action: Record<string, unknown> }).action;
 			const action = params.name as CollaborateAction;
 			if (!(ACTIONS as readonly string[]).includes(action)) {
@@ -158,8 +175,6 @@ export default function (pi: ExtensionAPI) {
 					const goalId = currentGoal(paths);
 					if (!dependenciesCompleted(paths, goalId)) throw new Error(`goal dependencies are not completed: ${goalId}`);
 					if (loadWorkerReport(paths, executionId)) throw new Error("an Agent that reported a blocker cannot claim in the same execution");
-					const parentId = process.env.CODEFLOW_PARENT_COMMITMENT_ID;
-					if (parentId && loadTerminalReceipt(paths, parentId)) throw new Error("cannot claim under a closed parent Commitment");
 					const currentId = process.env.CODEFLOW_COMMITMENT_ID;
 					if (currentId && !loadTerminalReceipt(paths, currentId)) {
 						throw new Error(`current Commitment is still open: ${currentId}`);
@@ -171,7 +186,7 @@ export default function (pi: ExtensionAPI) {
 						work: params.work as string,
 						doneWhen: params.done_when as string[] | undefined,
 						constraints: params.constraints as string[] | undefined,
-						parentCommitmentId: process.env.CODEFLOW_PARENT_COMMITMENT_ID ?? null,
+						parentCommitmentId: null,
 					});
 					process.env.CODEFLOW_COMMITMENT_ID = commitment.id;
 					return result({ commitment_id: commitment.id, goal_id: commitment.goal_id });
@@ -188,12 +203,6 @@ export default function (pi: ExtensionAPI) {
 							remaining: (params.remaining as string[] | undefined) ?? [],
 						}));
 					}
-					if (status !== "progress") {
-						const children = delegatedCommitments(paths, commitmentId);
-						if (hasLiveWorkers() || descendantAgentPids(paths, currentExecution()).length > 0 || children.some((child) => child.folded.terminal === null)) {
-							throw new Error("terminal Receipt requires every delegated Agent and descendant Commitment to finish; continue local work or consume asynchronous feedback");
-						}
-					}
 					const receipt = submitReceipt(paths, {
 						commitmentId,
 						status,
@@ -202,42 +211,6 @@ export default function (pi: ExtensionAPI) {
 						remaining: params.remaining as string[] | undefined,
 					});
 					return result({ receipt_id: receipt.id, status: receipt.status });
-				}
-				case "delegate": {
-					const parentId = process.env.CODEFLOW_COMMITMENT_ID;
-					if (!parentId) throw new Error("delegate requires the Agent to claim its own Commitment first");
-					if (loadReceiptChain(paths, parentId).terminal) throw new Error("delegate requires an open current Commitment");
-					const existingGoalId = params.goal_id as string | undefined;
-					const newGoal = params.new_goal as {
-						goal_id: string;
-						objective: string;
-						dependencies?: string[];
-					} | undefined;
-					if ((existingGoalId === undefined) === (newGoal === undefined)) {
-						throw new Error("delegate requires exactly one of goal_id or new_goal");
-					}
-					let goalId: string;
-					if (newGoal) {
-						goalId = newGoal.goal_id;
-						createGoal(paths, {
-							id: goalId,
-							objective: newGoal.objective,
-							dependencies: newGoal.dependencies,
-						});
-					} else {
-						goalId = existingGoalId as string;
-						goalState(paths, goalId);
-					}
-					if (!dependenciesCompleted(paths, goalId)) {
-						return result({ goal_id: goalId, status: "waiting", execution_id: null });
-					}
-					const execution = delegateWorker({
-						goalId,
-						focus: params.focus as string,
-						parentCommitmentId: parentId,
-						resumeCommitmentId: params.resume_commitment_id as string | undefined,
-					}, signal, ctx.cwd);
-					return result(execution, execution);
 				}
 			}
 		},

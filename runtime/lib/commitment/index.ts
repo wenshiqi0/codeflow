@@ -529,7 +529,8 @@ export function submitReceipt(paths: RunPaths, options: SubmitReceiptOptions): R
 		receipt_ref: path.relative(paths.runDir, receiptFile),
 		summary: eventSummary(summary),
 	});
-	if (isTerminal && commitment.goal_id === paths.runId && commitment.parent_commitment_id === null) {
+	if (isTerminal && commitment.goal_id === paths.runId && commitment.parent_commitment_id === null
+		&& !fs.existsSync(path.join(paths.runDir, "team.json"))) {
 		emitRunEvent(paths, "run_finished", status, {
 			commitment_id: commitment.id,
 			receipt_id: receipt.id,

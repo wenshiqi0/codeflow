@@ -184,6 +184,7 @@ export function buildWorkerContext(
 		...historyEntries.map(({ seq: _, ...entry }) => entry),
 		...(bootstrap ? [{ kind: "worker_bootstrap", ref: goalId, value: bootstrap }] : []),
 		...(current ? [{ kind: "current_commitment", ref: current.id, value: current }] : []),
+		...(current && priors.workFocus?.trim() ? [{ kind: "assignment_focus", ref: current.id, value: priors.workFocus, format: "text" as const }] : []),
 		...(current && foldedState ? [{ kind: "current_commitment_folded", ref: current.id, value: foldedState }] : []),
 	];
 	return buildContext(entries);

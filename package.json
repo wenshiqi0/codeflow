@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Goal-scoped commitment and receipt runtime for equal coding workers",
+  "description": "Outer-orchestrated coding executors with Goal-scoped commitments and receipts",
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc -p tsconfig.json",

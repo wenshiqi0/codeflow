@@ -70,6 +70,26 @@ function outsideSideEffect(name: string): string {
 }
 
 describe("mechanical command evidence", () => {
+	test.each(["pi", "codeteam"])("Worker evidence can execute a local command named %s", (name) => {
+		env.CODEFLOW_EXECUTION_ID = "exec-evidence";
+		env.CODEFLOW_TEAM_AGENT_ID = "agent-evidence";
+		const fixture = path.join(project, name);
+		fs.writeFileSync(fixture, "#!/bin/sh\nprintf 'offline fixture only'\n", { mode: 0o755 });
+		const result = evidence(["run", "--id", "worker-command", "--", fixture]);
+		expect(result.exitCode).toBe(0);
+		expect(record("worker-command").command_argv).toEqual([fixture]);
+		expect(record("worker-command").exit_code).toBe(0);
+	});
+
+	test("the outer caller can still record its own command named pi", () => {
+		for (const key of ["CODEFLOW_EXECUTION_ID", "CODEFLOW_TEAM_AGENT_ID", "CODEFLOW_PROCESS_KIND"]) delete env[key];
+		const fixture = path.join(project, "pi");
+		fs.writeFileSync(fixture, "#!/bin/sh\nprintf 'offline fixture only'\n", { mode: 0o755 });
+		const result = evidence(["run", "--id", "outer-command", "--", fixture]);
+		expect(result.exitCode).toBe(0);
+		expect(record("outer-command").exit_code).toBe(0);
+	});
+
 	test("records the real child exit code and complete stdout/stderr", () => {
 		const result = evidence([
 			"run",

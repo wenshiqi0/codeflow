@@ -6,11 +6,9 @@
 # project, under .codeflow/runs/. That is why RUNTIME_DIR is resolved relative
 # to this file while the working directory becomes the target repository root.
 #
-# This binary speaks exec/resume/ls/sub/goals/usage/audit/stop and nothing else.
-# Worker semantic actions live only in the model-visible `collaborate` tool;
-# `codeteam`, which is not on a user PATH, contains evidence and source-check
-# helpers only. There is no passthrough default: an unknown verb fails here
-# instead of quietly reaching a model.
+# This binary provides the single-executor baseline, metadata, and benchmark
+# entrypoints. codeteam is the outer loop's asynchronous Agent control plane.
+# Pi semantic actions live only in its three-action collaborate tool.
 #
 # Everything below is Bun: the extensions are TypeScript loaded without a build
 # step, so a second runtime would only add a dependency and a cold start.
@@ -26,8 +24,8 @@ usage() {
 usage: codeflow <command> [options]
 
   exec [--model <provider/model>] "<objective>"
-                                    start a Task and follow it
-  resume <task-id>                  resume a fully stopped Task
+                                    run one executor (no inner organization)
+  resume <task-id>                  resume a stopped single-executor Task
   ls                                list Tasks: id, status, duration, objective
   sub <task-id> [--since <seq>]     subscribe to a Task's event stream
   goals <task-id>                   show reduced Task and Goal state
@@ -35,6 +33,9 @@ usage: codeflow <command> [options]
   audit <task-id> [--force]         gated audit of a blocked or stale Task
   stop <task-id>                    terminate a running Task
   benchmark run|report              SWE-bench Verified benchmark runs and reports
+  benchmark prepare|evaluate        outer-managed candidate preparation/evaluation
+
+Use codeteam for asynchronous assignment and Agent session reuse.
 
   --help, --version
 EOF

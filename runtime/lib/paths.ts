@@ -12,11 +12,11 @@
  *     ├── goals/<goal-id>/          child Goal contracts
  *     ├── active/<commitment-id>    sentinel per in-flight commitment
  *     ├── executions/<execution-id>/ runtime-only Worker feedback
- *     ├── events/                  the outer loop's only listening surface
+ *     ├── events/                  bounded semantic/lifecycle notifications
  *     ├── tmp/                     staging; rename into events/ delivers
  *     ├── liveness/                watchdog heartbeats
  *     ├── .resume-claims/          one atomic claim per resumed attempt
- *     ├── usage.jsonl              one row per attributed model call
+ *     ├── usage.jsonl              attributed model calls; watch tails activity silently
  *     ├── usage.json               aggregate report written at run exit
  *     └── runner.json              root Worker pid and startup info
  * ```

@@ -190,6 +190,8 @@ test("report exposes uniform observation metadata, actual delegation, round buck
 	}, null, 2));
 
 	const report = buildBenchmarkReport(out);
+	expect(report.execution_method).toBe("legacy-unspecified");
+	expect(report.outer_orchestration_measurement).toBe(false);
 	expect(report.prefix_cache).toMatchObject({
 		prefix_transition_count: 1,
 		prefix_invalidation_count: 1,
@@ -223,4 +225,10 @@ test("report exposes uniform observation metadata, actual delegation, round buck
 		observation_schema_version: 3,
 		intervention_flags: observation.intervention_flags,
 	});
+	const manifestFile = path.join(out, "benchmark-run.json");
+	const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+	fs.writeFileSync(manifestFile, JSON.stringify({ ...manifest, execution_method: "single-executor" }));
+	const single = buildBenchmarkReport(out);
+	expect(single.execution_method).toBe("single-executor");
+	expect(single.split_economics).toMatchObject({ spontaneous_split_eligible: 0, spontaneous_split_count: 0, spontaneous_split_rate: null });
 });

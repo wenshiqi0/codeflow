@@ -61,6 +61,8 @@ export interface BreakdownTotals {
 
 export interface BenchmarkReport {
 	schema_version: 5;
+	execution_method: "single-executor" | "legacy-unspecified";
+	outer_orchestration_measurement: false;
 	benchmark_run_id: string;
 	generated_at: string;
 	attempts_per_instance: number;
@@ -621,10 +623,10 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 		const value = attempt.metrics.prefix_cache.max_context_utilization;
 		return value === null ? [] : [value];
 	});
-	const spontaneousEligible = manifest.observation.request_named_split
+	const spontaneousEligible = manifest.execution_method === "single-executor" || manifest.observation.request_named_split
 		? 0
 		: attempts.filter((attempt) => attempt.metrics.commitments.metrics_available).length;
-	const spontaneousSplit = manifest.observation.request_named_split
+	const spontaneousSplit = manifest.execution_method === "single-executor" || manifest.observation.request_named_split
 		? 0
 		: attempts.filter((attempt) =>
 			attempt.metrics.commitments.metrics_available
@@ -689,6 +691,8 @@ export function buildBenchmarkReport(outDir: string): BenchmarkReport {
 		.filter((value): value is number => value !== null);
 	return {
 		schema_version: BENCHMARK_REPORT_SCHEMA_VERSION as 5,
+		execution_method: manifest.execution_method ?? "legacy-unspecified",
+		outer_orchestration_measurement: false,
 		benchmark_run_id: manifest.benchmark_run_id,
 		generated_at: nowIso(),
 		attempts_per_instance: attemptsPerInstance,

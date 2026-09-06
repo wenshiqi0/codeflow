@@ -3,7 +3,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import organization from "../../runtime/extensions/codeflow-organization";
-import { buildChildWorkerArgs, resolveLaunchWorker } from "../../runtime/extensions/codeflow-organization/worker-launcher";
 import { buildWorkerContext, truncateContextText } from "../../runtime/extensions/codeflow-context/context";
 import { buildAgentArgv, loadRuntimeConfig, resolveAgent, type ResolvedExecutor } from "../../runtime/lib/config";
 import { AGENT_TOOL_ALLOWLIST, agentExtensions } from "../../runtime/lib/agent-launch";
@@ -80,7 +79,7 @@ describe("pull-first Goal context", () => {
 });
 
 describe("capability is the loaded tool surface", () => {
-	test("one collaborate tool exposes unified capabilities", () => {
+	test("one collaborate tool exposes executor capabilities", () => {
 		const tools: string[] = [];
 		process.env.CODEFLOW_PROCESS_KIND = "worker";
 		organization({ on() {}, registerTool(tool: { name: string }) { tools.push(tool.name); } } as never);
@@ -88,8 +87,7 @@ describe("capability is the loaded tool surface", () => {
 		delete process.env.CODEFLOW_PROCESS_KIND;
 	});
 
-	test("every Agent launch has identical tools and extensions in a fresh Pi context", () => {
-		const launcher = fs.readFileSync(path.resolve(import.meta.dir, "../../runtime/extensions/codeflow-organization/worker-launcher.ts"), "utf8");
+	test("executor arguments contain only the explicit tools and extensions", () => {
 		const resolved: ResolvedExecutor = {
 			provider: "test-provider",
 			model: "test-model",
@@ -103,7 +101,7 @@ describe("capability is the loaded tool surface", () => {
 			agentExtensions(runtimeDir),
 			AGENT_TOOL_ALLOWLIST,
 		);
-		const childArgs = buildChildWorkerArgs(resolved);
+		const childArgs = buildAgentArgv(resolved, "another assignment", agentExtensions(runtimeDir), AGENT_TOOL_ALLOWLIST);
 		expect(rootArgs).toContain("--no-extensions");
 		expect(childArgs).toContain("--no-extensions");
 		const appended = (args: string[]) => args.flatMap((arg, index) =>
@@ -124,6 +122,7 @@ describe("capability is the loaded tool surface", () => {
 		expect(childExtensions).toEqual([
 			"provider-profiles",
 			"codeflow-organization",
+			"team-shell",
 			"host-guard",
 			"codeflow-context",
 			"bash-compressor",
@@ -131,19 +130,14 @@ describe("capability is the loaded tool surface", () => {
 			"telemetry-ledger",
 			"agent-watchdog",
 		]);
-		expect(launcher).toContain("buildChildWorkerArgs(resolved, input.resumeCommitmentId !== undefined)");
-		expect(launcher).not.toContain('"--no-session"');
 		expect(rootArgs).not.toContain("--no-session");
 		expect(childArgs).not.toContain("--no-session");
-		expect(launcher).not.toContain("--session-id");
 	});
 
-	test("all Agent generations use the same formal prompt and model", () => {
+	test("the executor uses the configured formal prompt and model", () => {
 		const config = path.resolve(import.meta.dir, "../../runtime/config.json");
 		const agent = resolveAgent(config);
-		const child = resolveLaunchWorker();
 		expect(agent.promptPaths.map((prompt) => path.basename(prompt))).toEqual(["agent.md"]);
-		expect(child).toEqual(agent);
 		expect({ provider: agent.provider, model: agent.model }).toEqual({
 			provider: "zhipuai-coding-plan",
 			model: "glm-5.3",
@@ -169,8 +163,8 @@ describe("capability is the loaded tool surface", () => {
 		expect(() => loadRuntimeConfig(config)).toThrow("runtime config contains unknown keys");
 	});
 
-	test("spawned Agents inherit the run-scoped model override", () => {
-		const resolved = resolveLaunchWorker("explicit-provider/explicit-model");
+	test("the executor accepts an outer-specified model override", () => {
+		const resolved = resolveAgent(path.resolve(import.meta.dir, "../../runtime/config.json"), "explicit-provider/explicit-model");
 		expect({ provider: resolved.provider, model: resolved.model }).toEqual({
 			provider: "explicit-provider",
 			model: "explicit-model",
@@ -178,12 +172,13 @@ describe("capability is the loaded tool surface", () => {
 	});
 
 	test("the default GLM Agent uses its highest supported thinking level", () => {
-		const resolved = resolveLaunchWorker();
+		const resolved = resolveAgent(path.resolve(import.meta.dir, "../../runtime/config.json"));
 		expect({ provider: resolved.provider, model: resolved.model }).toEqual({
 			provider: "zhipuai-coding-plan",
 			model: "glm-5.3",
 		});
-		const args = buildChildWorkerArgs(resolved);
+		const runtimeDir = path.resolve(import.meta.dir, "../../runtime");
+		const args = buildAgentArgv(resolved, "assigned work", agentExtensions(runtimeDir), AGENT_TOOL_ALLOWLIST);
 		expect(resolved.thinkingLevel).toBe("high");
 		expect(args.slice(args.indexOf("--thinking"), args.indexOf("--thinking") + 2)).toEqual(["--thinking", "high"]);
 	});

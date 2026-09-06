@@ -2,16 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
 import { Value } from "typebox/value";
-import organization from "../../runtime/extensions/codeflow-organization";
-import {
-	buildChildEnvironment,
-	delegateWorker,
-	spawnWorker,
-	takeWorkerUpdates,
-} from "../../runtime/extensions/codeflow-organization/worker-launcher";
+import organization, { registerTeamRunnerSupervisor } from "../../runtime/extensions/codeflow-organization";
 import { commitmentHistory, loadReceiptChain, submitReceipt } from "../../runtime/lib/commitment";
 import { createGoal } from "../../runtime/lib/goals";
 import { createTask } from "../../runtime/lib/tasks";
@@ -23,15 +15,14 @@ const dirs: string[] = [];
 const ENV_KEYS = [
 	"CODEFLOW_RUN_ID", "CODEFLOW_RUNS_DIR", "CODEFLOW_GOAL_ID", "CODEFLOW_EXECUTION_ID",
 	"CODEFLOW_COMMITMENT_ID", "CODEFLOW_PARENT_COMMITMENT_ID", "CODEFLOW_PROCESS_KIND",
+	"CODEFLOW_TEAM_AGENT_ID", "CODEFLOW_TEAM_RUNNER_PID",
 ] as const;
 const originalEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
-
 afterEach(() => {
 	for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 	for (const key of ENV_KEYS) {
 		const value = originalEnv[key];
-		if (value === undefined) delete process.env[key];
-		else process.env[key] = value;
+		if (value === undefined) delete process.env[key]; else process.env[key] = value;
 	}
 });
 
@@ -39,394 +30,136 @@ function runtime(kind: "root" | "worker" = "worker") {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-collaborate-"));
 	dirs.push(root);
 	const paths = new RunPaths(path.join(root, "runs"), "task-collaborate");
-	createTask(paths, "collaborate safely");
+	createTask(paths, "execute bounded work safely");
 	process.env.CODEFLOW_RUN_ID = paths.runId;
 	process.env.CODEFLOW_RUNS_DIR = paths.code;
 	process.env.CODEFLOW_GOAL_ID = paths.runId;
 	process.env.CODEFLOW_EXECUTION_ID = `exec-${kind}`;
 	process.env.CODEFLOW_PROCESS_KIND = kind;
-	delete process.env.CODEFLOW_COMMITMENT_ID;
-	delete process.env.CODEFLOW_PARENT_COMMITMENT_ID;
+	for (const key of ["CODEFLOW_COMMITMENT_ID", "CODEFLOW_PARENT_COMMITMENT_ID", "CODEFLOW_TEAM_AGENT_ID", "CODEFLOW_TEAM_RUNNER_PID"]) delete process.env[key];
 	let tool: any;
-	organization({ on() {}, registerTool(value: unknown) { tool = value; } } as never);
-	return { paths, root, tool };
+	const hooks: string[] = [];
+	organization({ on(name: string) { hooks.push(name); }, registerTool(value: unknown) { tool = value; } } as never);
+	return { paths, root, tool, hooks };
 }
-
-async function execute(tool: any, action: Record<string, unknown>, cwd: string) {
+async function execute(tool: any, action: Record<string, unknown>) {
 	const input = { action };
 	if (!Value.Check(tool.parameters, input)) throw new Error("test supplied an invalid collaborate action");
-	return tool.execute("call", input, undefined, undefined, { cwd });
+	return tool.execute("call", input, undefined, undefined, {});
 }
+function body(result: any): any { return JSON.parse(result.content[0].text); }
 
-function body(result: any): any {
-	return JSON.parse(result.content[0].text);
-}
-
-describe("minimal collaborate protocol", () => {
-	test("Root and child receive identical actions without a depth restriction", () => {
-		const root = runtime("root");
-		const rootActions = root.tool.parameters.properties.action.anyOf.map((entry: any) => entry.properties.name.const);
-		expect(rootActions).toEqual(["inspect", "claim", "report", "delegate"]);
-		expect(Value.Check(root.tool.parameters, { action: { name: "wait" } })).toBe(false);
-
-		const worker = runtime("worker");
-		const workerActions = worker.tool.parameters.properties.action.anyOf.map((entry: any) => entry.properties.name.const);
-		expect(workerActions).toEqual(rootActions);
-		expect(worker.tool.description).toBe(root.tool.description);
-		expect(worker.tool.promptSnippet).toBeUndefined();
-		expect(worker.tool.promptGuidelines).toBeUndefined();
+describe("executor-only collaborate protocol", () => {
+	test.each(["root", "worker"] as const)("%s has three actions and no scheduling lifecycle hooks", async (kind) => {
+		const { tool, hooks } = runtime(kind);
+		expect(tool.parameters.properties.action.anyOf.map((entry: any) => entry.properties.name.const)).toEqual(["inspect", "claim", "report"]);
+		for (const action of ["delegate", "wait", "spawn", "message", "followup", "finish"]) {
+			expect(Value.Check(tool.parameters, { action: { name: action } })).toBe(false);
+			await expect(tool.execute("call", { action: { name: action } })).rejects.toThrow("unknown collaborate action");
+		}
+		expect(hooks).toEqual([]);
+		expect(tool.promptSnippet).toBeUndefined();
+		expect(tool.promptGuidelines).toBeUndefined();
 	});
-
-	test("schema locks the small claim and report surfaces", () => {
-		const { tool } = runtime("root");
-		const variants = tool.parameters.properties.action.anyOf as any[];
-		const byName = new Map(variants.map((variant) => [variant.properties.name.const, variant]));
+	test("schema preserves the small self-authored claim and report surfaces", () => {
+		const { tool } = runtime();
+		const byName = new Map((tool.parameters.properties.action.anyOf as any[]).map((variant) => [variant.properties.name.const, variant]));
 		expect(Object.keys(byName.get("inspect").properties)).toEqual(["name", "goal_id", "commitment_id", "receipt_id"]);
 		expect(Object.keys(byName.get("claim").properties)).toEqual(["name", "work", "done_when", "constraints"]);
 		expect(byName.get("claim").required).toEqual(["name", "work"]);
 		expect(Object.keys(byName.get("report").properties)).toEqual(["name", "status", "summary", "effects", "remaining"]);
 		expect(byName.get("report").required).toEqual(["name", "status", "summary"]);
-		expect(Object.keys(byName.get("delegate").properties)).toEqual(["name", "goal_id", "new_goal", "focus", "resume_commitment_id"]);
-		expect(byName.get("delegate").properties.focus.maxLength).toBeUndefined();
-		expect(Value.Check(tool.parameters, {
-			action: { name: "delegate", goal_id: "task-a", focus: "inspect one outcome" },
-		})).toBe(true);
-		expect(Value.Check(tool.parameters, {
-			action: { name: "delegate", goal_id: "task-a", focus: "x".repeat(1_200) },
-		})).toBe(true);
-		expect(Value.Check(tool.parameters, {
-			action: {
-				name: "delegate",
-				new_goal: { goal_id: "child", objective: "deliver a distinct outcome" },
-				focus: "inspect the new outcome",
-			},
-		})).toBe(true);
-		expect(Value.Check(tool.parameters, {
-			action: {
-				name: "delegate",
-				goal: { existing: "task-a" },
-				focus: "legacy nested syntax",
-			},
-		})).toBe(false);
-		expect(Value.Check(tool.parameters, {
-			action: {
-				name: "delegate",
-				goal_id: "task-a",
-				objective: "ambiguous legacy create signal",
-				focus: "legacy objective syntax",
-			},
-		})).toBe(false);
 		expect(JSON.stringify(tool.parameters)).not.toMatch(/claim_revision|invariant|falsification|obligation|decomposition|resolved|partial|superseded/);
 		expect(Value.Check(tool.parameters, { action: { name: "claim", work: "bounded work" } })).toBe(true);
 		expect(Value.Check(tool.parameters, { action: { name: "claim" } })).toBe(false);
 	});
-
-	test("a Worker claims, reports progress, and completes", async () => {
-		const { paths, root, tool } = runtime("worker");
-		const inspected = body(await execute(tool, { name: "inspect" }, root));
-		expect(inspected.goal.goal_id).toBe(paths.runId);
-		const claimed = body(await execute(tool, {
-			name: "claim",
-			work: "repair the parser",
-			done_when: ["the regression passes"],
-		}, root));
-		await execute(tool, {
-			name: "report",
-			status: "progress",
-			summary: "isolated the failing branch",
-			remaining: ["apply and verify the repair"],
-		}, root);
-		const receipt = body(await execute(tool, {
-			name: "report",
-			status: "completed",
-			summary: "parser repaired and verified",
-			effects: [{ file: "src/parser.ts" }],
-		}, root));
+	test("an executor claims, reports progress, completes and recalls evidence", async () => {
+		const { paths, tool } = runtime();
+		expect(body(await execute(tool, { name: "inspect" })).goal.goal_id).toBe(paths.runId);
+		const claimed = body(await execute(tool, { name: "claim", work: "repair the parser", done_when: ["regression passes"] }));
+		await execute(tool, { name: "report", status: "progress", summary: "isolated the failure", remaining: ["repair and verify"] });
+		expect(loadReceiptChain(paths, claimed.commitment_id).terminal).toBeNull();
+		const receipt = body(await execute(tool, { name: "report", status: "completed", summary: "parser repaired and verified", effects: [{ file: "src/parser.ts" }] }));
 		expect(loadReceiptChain(paths, claimed.commitment_id).terminal?.id).toBe(receipt.receipt_id);
-		const recalled = body(await execute(tool, { name: "inspect", receipt_id: receipt.receipt_id }, root));
+		const recalled = body(await execute(tool, { name: "inspect", receipt_id: receipt.receipt_id }));
 		expect(recalled.commitment.id).toBe(claimed.commitment_id);
-		expect(recalled.receipt).toMatchObject({ id: receipt.receipt_id, summary: "parser repaired and verified" });
-		await expect(execute(tool, {
-			name: "inspect",
-			commitment_id: claimed.commitment_id,
-			receipt_id: receipt.receipt_id,
-		}, root)).rejects.toThrow(/at most one/);
+		expect(recalled.receipt.summary).toBe("parser repaired and verified");
+		await expect(execute(tool, { name: "inspect", commitment_id: claimed.commitment_id, receipt_id: receipt.receipt_id })).rejects.toThrow(/at most one/);
 	});
-
-	test("pre-claim blockers use report and prevent a fabricated claim", async () => {
-		const { paths, root, tool } = runtime("worker");
-		const report = body(await execute(tool, {
-			name: "report",
-			status: "blocked",
-			summary: "the requested outcome needs a different Goal",
-			remaining: ["Root must revise the Goal boundary"],
-		}, root));
+	test("pre-claim blockers prevent fabricated claims and only blocked is accepted", async () => {
+		const { paths, tool } = runtime();
+		await expect(execute(tool, { name: "report", status: "completed", summary: "nothing done" })).rejects.toThrow(/pre-claim report must be blocked/);
+		const report = body(await execute(tool, { name: "report", status: "blocked", summary: "assignment needs clarification", remaining: ["outer caller must revise the boundary"] }));
 		expect(report.execution_id).toBe("exec-worker");
 		expect(scan(paths.events, 0, ["worker_reported"]).events).toHaveLength(1);
-		await expect(execute(tool, { name: "claim", work: "fabricated work" }, root)).rejects.toThrow(/reported a blocker/);
+		await expect(execute(tool, { name: "claim", work: "fabricated work" })).rejects.toThrow(/reported a blocker/);
+		expect(commitmentHistory(paths)).toHaveLength(0);
 	});
-
-	test("a leaf Root can finish locally without forced delegation", async () => {
-		const { root, tool } = runtime("root");
-		await execute(tool, { name: "claim", work: "repair a local typo" }, root);
-		const receipt = body(await execute(tool, { name: "report", status: "completed", summary: "typo repaired and checked" }, root));
-		expect(receipt.status).toBe("completed");
+	test("an open resumed Commitment cannot be replaced with a fresh claim", async () => {
+		const { paths, tool } = runtime();
+		const commitment = claimTestWork(paths, { goalId: paths.runId, workerExecutionId: "exec-worker", work: "original work" });
+		process.env.CODEFLOW_COMMITMENT_ID = commitment.id;
+		await expect(execute(tool, { name: "claim", work: "narrow replacement" })).rejects.toThrow(/still open/);
+		expect(body(await execute(tool, { name: "report", status: "completed", summary: "original work reconciled" })).status).toBe("completed");
 	});
-
-	test.each(["root", "worker"] as const)("every %s parent reconciles recursive descendants before closure", async (kind) => {
-		const { paths, root, tool } = runtime(kind);
-		await expect(execute(tool, {
-			name: "delegate", goal_id: paths.runId, focus: "inspect one outcome",
-		}, root)).rejects.toThrow(/claim its own Commitment first/);
-		const claimed = body(await execute(tool, { name: "claim", work: "steward Task closure" }, root));
-		const child = claimTestWork(paths, {
-			goalId: paths.runId,
-			parentCommitmentId: claimed.commitment_id,
-			work: "implement the delegated change",
-		});
-		await expect(execute(tool, {
-			name: "report", status: "completed", summary: "too early",
-		}, root)).rejects.toThrow(/every delegated Agent and descendant Commitment to finish/);
-		const grandchild = claimTestWork(paths, {
-			goalId: paths.runId,
-			parentCommitmentId: child.id,
-			work: "independent regression check",
-		});
-		submitReceipt(paths, { commitmentId: child.id, status: "completed", summary: "change verified" });
-		await expect(execute(tool, {
-			name: "report", status: "completed", summary: "grandchild is still open",
-		}, root)).rejects.toThrow(/descendant Commitment to finish/);
-		submitReceipt(paths, { commitmentId: grandchild.id, status: "completed", summary: "regression checked" });
-		const receipt = body(await execute(tool, {
-			name: "report", status: "completed", summary: "delegated result integrated",
-		}, root));
-		expect(receipt.status).toBe("completed");
+	test("a claimed Goal still respects unmet dependencies", async () => {
+		const { paths, tool } = runtime();
+		createGoal(paths, { id: "dependency", objective: "establish prerequisite" });
+		createGoal(paths, { id: "dependent", objective: "use prerequisite", dependencies: ["dependency"] });
+		process.env.CODEFLOW_GOAL_ID = "dependent";
+		await expect(execute(tool, { name: "claim", work: "too early" })).rejects.toThrow(/dependencies are not completed/);
+		const prior = claimTestWork(paths, { goalId: "dependency", work: "establish prerequisite" });
+		submitReceipt(paths, { commitmentId: prior.id, status: "completed", summary: "prerequisite established" });
+		expect(body(await execute(tool, { name: "claim", work: "use prerequisite" })).goal_id).toBe("dependent");
 	});
-
-	test("a completed Goal can be delegated again without copying it", async () => {
-		const { paths, root, tool } = runtime("worker");
-		const first = body(await execute(tool, { name: "claim", work: "first pass" }, root));
-		await execute(tool, { name: "report", status: "completed", summary: "first pass complete" }, root);
+	test("a fresh execution can claim a completed Goal without copying it or inheriting parent identity", async () => {
+		const { paths, tool } = runtime();
+		const first = body(await execute(tool, { name: "claim", work: "first pass" }));
+		await execute(tool, { name: "report", status: "completed", summary: "first pass complete" });
 		delete process.env.CODEFLOW_COMMITMENT_ID;
-		process.env.CODEFLOW_EXECUTION_ID = "exec-worker-2";
-		let secondTool: any;
-		organization({ on() {}, registerTool(value: unknown) { secondTool = value; } } as never);
-		const second = body(await execute(secondTool, { name: "claim", work: "follow-up from new evidence" }, root));
+		process.env.CODEFLOW_EXECUTION_ID = "exec-followup";
+		process.env.CODEFLOW_PARENT_COMMITMENT_ID = "obsolete-parent";
+		const second = body(await execute(tool, { name: "claim", work: "follow-up from new evidence" }));
 		expect(second.commitment_id).not.toBe(first.commitment_id);
 		expect(commitmentHistory(paths).map((view) => view.commitment.goal_id)).toEqual([paths.runId, paths.runId]);
+		expect(commitmentHistory(paths).every((view) => view.commitment.parent_commitment_id === null)).toBe(true);
+	});
+});
+
+describe("outer runner orphan supervision", () => {
+	test("startup admission failure exits before tool registration or any provider work", () => {
+		const { paths } = runtime();
+		const source = `import organization from ${JSON.stringify(path.resolve(import.meta.dir, "../../runtime/extensions/codeflow-organization/index.ts"))}; organization({ on() {}, registerTool() { console.log("UNSAFE_TOOL_REGISTRATION"); } }); console.log("UNSAFE_CONTINUATION");`;
+		const probe = Bun.spawnSync([process.execPath, "-e", source], {
+			env: { ...process.env, CODEFLOW_RUN_ID: paths.runId, CODEFLOW_TEAM_AGENT_ID: "missing-agent", CODEFLOW_TEAM_RUNNER_PID: String(process.pid) },
+		});
+		expect(probe.exitCode).toBe(1);
+		expect(probe.stderr.toString()).toContain("Agent startup rejected");
+		expect(probe.stdout.toString()).not.toContain("UNSAFE_");
 	});
 
-	test("delegate explicitly reuses or creates a Goal without inferring from objective presence", async () => {
-		const { paths, root, tool } = runtime("root");
-		await execute(tool, { name: "claim", work: "coordinate dependent work" }, root);
-		await expect(execute(tool, {
-			name: "delegate",
-			focus: "missing Goal selection",
-		}, root)).rejects.toThrow(/exactly one of goal_id or new_goal/);
-		await expect(execute(tool, {
-			name: "delegate",
-			goal_id: paths.runId,
-			new_goal: { goal_id: "ambiguous", objective: "must not be created" },
-			focus: "conflicting Goal selection",
-		}, root)).rejects.toThrow(/exactly one of goal_id or new_goal/);
-		expect(fs.existsSync(paths.goalPath("ambiguous"))).toBe(false);
-		createGoal(paths, { id: "dependency", objective: "finish dependency" });
-		createGoal(paths, { id: "existing", objective: "existing outcome", dependencies: ["dependency"] });
-
-		const reused = body(await execute(tool, {
-			name: "delegate",
-			goal_id: "existing",
-			focus: "continue the existing outcome",
-		}, root));
-		expect(reused).toEqual({ goal_id: "existing", status: "waiting", execution_id: null });
-
-		const created = body(await execute(tool, {
-			name: "delegate",
-			new_goal: {
-				goal_id: "new-outcome",
-				objective: "deliver a materially different outcome",
-				dependencies: ["dependency"],
-			},
-			focus: "begin after the dependency",
-		}, root));
-		expect(created).toEqual({ goal_id: "new-outcome", status: "waiting", execution_id: null });
-		expect(fs.existsSync(paths.goalPath("existing"))).toBe(true);
-		expect(fs.existsSync(paths.goalPath("new-outcome"))).toBe(true);
+	test("runner death signals Pi gracefully before a bounded hard-stop backstop", async () => {
+		let alive = true;
+		const calls: unknown[] = [];
+		const stop = registerTeamRunnerSupervisor({ on() {} } as never, 1234, {
+			pid: 5678, intervalMs: 2, killGraceMs: 2, alive: (pid) => { expect(pid).toBe(1234); return alive; },
+			kill: (pid, signal) => calls.push([pid, signal]),
+		});
+		try {
+			await Bun.sleep(10); expect(calls).toEqual([]);
+			alive = false;
+			await Bun.sleep(20); expect(calls).toEqual([[-5678, "SIGTERM"], [-5678, "SIGKILL"]]);
+		} finally { stop(); }
 	});
-
-	test("child bootstrap carries Goal, focus, and lineage without a prewritten Commitment", () => {
-		const env = buildChildEnvironment({}, "/tmp/project", {
-			goalId: "child-goal",
-			focus: "investigate the failing parser tests",
-			parentCommitmentId: "c_parent",
-		}, "exec-child");
-		expect(env).toMatchObject({
-			CODEFLOW_GOAL_ID: "child-goal",
-			CODEFLOW_EXECUTION_ID: "exec-child",
-			CODEFLOW_PARENT_COMMITMENT_ID: "c_parent",
-			CODEFLOW_WORK_FOCUS: "investigate the failing parser tests",
-			CODEFLOW_PROCESS_KIND: "worker",
+	test("shutdown disposes supervision and invalid runner identities fail closed", async () => {
+		let shutdown: (() => void) | undefined;
+		let probes = 0;
+		registerTeamRunnerSupervisor({ on(_event: string, handler: () => void) { shutdown = handler; } } as never, 1234, {
+			pid: 5678, intervalMs: 2, alive: () => { probes++; return false; }, kill() { throw new Error("unexpected kill"); },
 		});
-		expect(env.CODEFLOW_COMMITMENT_ID).toBeUndefined();
-	});
-
-	test("launch failure is attributed without inventing a Commitment", async () => {
-		const { paths, root } = runtime("root");
-		const outcome = await spawnWorker({
-			goalId: paths.runId,
-			focus: "bounded investigation",
-			parentCommitmentId: "c_parent",
-		}, undefined, root, {
-			executionId: "exec-launch-failure",
-			resolve() { throw new Error("missing provider config"); },
-		});
-		expect(outcome).toMatchObject({
-			execution_id: "exec-launch-failure",
-			commitment_id: null,
-			status: "interrupted",
-			runtime_failure_reasons: ["WORKER_LAUNCH_FAILURE"],
-		});
-		expect(commitmentHistory(paths)).toEqual([]);
-	});
-
-	test("a failed PID publication keeps its slot until the spawned process really closes", async () => {
-		const { paths, root } = runtime("root");
-		const child = new EventEmitter() as any;
-		Object.assign(child, { pid: 999_999, stdout: new PassThrough(), stderr: new PassThrough(), exitCode: null, signalCode: null });
-		const signals: string[] = [];
-		child.kill = (kind: string) => { signals.push(kind); return true; };
-		let releases = 0;
-		let settled = false;
-		const running = spawnWorker({ goalId: paths.runId, focus: "bounded work", parentCommitmentId: "c_parent" }, undefined, root, {
-			executionId: "exec-attach-failed",
-			lease: { attach() { throw new Error("subtree was closed"); }, release() { releases++; } },
-			resolve: () => ({ provider: "test", model: "test", systemPrompts: ["agent"], promptPaths: ["/tmp/agent.md"] }),
-			spawnProcess: (() => child) as never,
-		}).then((outcome) => { settled = true; return outcome; });
-		await Bun.sleep(20);
-		expect(signals).toEqual(["SIGTERM"]);
-		expect({ releases, settled }).toEqual({ releases: 0, settled: false });
-		child.exitCode = 1;
-		child.emit("close", 1);
-		expect(await running).toMatchObject({ status: "interrupted", runtime_failure_reasons: ["WORKER_LAUNCH_FAILURE"] });
-		expect(releases).toBe(1);
-	});
-
-	test("delegate returns immediately and feedback includes the eventual Worker result", async () => {
-		const { paths, root } = runtime("root");
-		const launch = delegateWorker({
-			goalId: paths.runId,
-			focus: "bounded work",
-			parentCommitmentId: "c_parent",
-		}, undefined, root, {
-			executionId: "exec-async",
-			resolve: () => ({
-				provider: "test-provider",
-				model: "test-model",
-				systemPrompts: ["worker", "engineering"],
-				promptPaths: ["/tmp/worker.md", "/tmp/engineering.md"],
-			}),
-			spawnProcess: (() => {
-				const child = new EventEmitter() as any;
-				child.pid = 222;
-				child.stdout = new PassThrough();
-				child.stderr = new PassThrough();
-				child.exitCode = null;
-				child.signalCode = null;
-				child.kill = () => true;
-				setTimeout(() => {
-					child.exitCode = 0;
-					child.emit("close", 0);
-				}, 5);
-				return child;
-			}) as never,
-		});
-		expect(launch).toEqual({ execution_id: "exec-async", goal_id: paths.runId, status: "running" });
-		await Bun.sleep(20);
-		expect(takeWorkerUpdates().find((update) => "exit_code" in update)).toMatchObject({
-			execution_id: "exec-async",
-			status: "interrupted",
-			runtime_failure_reasons: ["COMMITMENT_CLAIM_MISSING"],
-		});
-	});
-
-	test("feedback collection returns Claim and progress without waiting for a Worker", async () => {
-		const { paths, root } = runtime("root");
-		const parent = claimTestWork(paths, {
-			goalId: paths.runId,
-			workerExecutionId: "exec-root-progress",
-			work: "coordinate progress feedback",
-		});
-		let child: (EventEmitter & {
-			pid: number;
-			stdout: PassThrough;
-			stderr: PassThrough;
-			exitCode: number | null;
-			signalCode: null;
-			kill: () => boolean;
-		}) | undefined;
-		delegateWorker({
-			goalId: paths.runId,
-			focus: "bounded work with progress",
-			parentCommitmentId: parent.id,
-		}, undefined, root, {
-			executionId: "exec-progress",
-			resolve: () => ({
-				provider: "test-provider",
-				model: "test-model",
-				systemPrompts: ["worker", "engineering"],
-				promptPaths: ["/tmp/worker.md", "/tmp/engineering.md"],
-			}),
-			spawnProcess: (() => {
-				child = new EventEmitter() as typeof child;
-				child!.pid = 333;
-				child!.stdout = new PassThrough();
-				child!.stderr = new PassThrough();
-				child!.exitCode = null;
-				child!.signalCode = null;
-				child!.kill = () => true;
-				return child;
-			}) as never,
-		});
-		const commitment = claimTestWork(paths, {
-			goalId: paths.runId,
-			parentCommitmentId: parent.id,
-			workerExecutionId: "exec-progress",
-			work: "implement with observable progress",
-		});
-		const progress = submitReceipt(paths, {
-			commitmentId: commitment.id,
-			status: "progress",
-			summary: "implementation ready for feedback",
-			remaining: ["finish verification"],
-		});
-		const updates = takeWorkerUpdates();
-		expect(updates[0]).toMatchObject({
-			execution_id: "exec-progress",
-			goal_id: paths.runId,
-			commitment_id: commitment.id,
-			status: "running",
-		});
-		expect(updates[1]).toMatchObject({
-			execution_id: "exec-progress",
-			goal_id: paths.runId,
-			commitment_id: commitment.id,
-			receipt_id: progress.id,
-			status: "progress",
-		});
-
-		const terminal = submitReceipt(paths, {
-			commitmentId: commitment.id,
-			status: "completed",
-			summary: "verification complete",
-		});
-		child!.exitCode = 0;
-		child!.emit("close", 0);
-		await Bun.sleep(0);
-		expect(takeWorkerUpdates().find((update) => "exit_code" in update)).toMatchObject({
-			execution_id: "exec-progress",
-			receipt_id: terminal.id,
-			status: "completed",
-		});
+		shutdown!(); await Bun.sleep(10); expect(probes).toBe(0);
+		for (const runnerPid of [0, -1, NaN, 5678, 2_147_483_648]) {
+			expect(() => registerTeamRunnerSupervisor({ on() {} } as never, runnerPid, { pid: 5678 })).toThrow(/runner PID/);
+		}
 	});
 });

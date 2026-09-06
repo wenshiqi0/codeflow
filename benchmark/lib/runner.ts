@@ -119,6 +119,7 @@ export interface BenchmarkRunOptions {
 	modelNameOrPath?: string;
 	/** Defaults to detecting the fixture driver tag. */
 	driverMode?: "fixture" | "codeflow";
+	executionMethod?: "single-executor";
 	/**
 	 * Real-mode workspace provisioning: a fresh isolated repo@base_commit per
 	 * attempt (the clone seam). Omitted in fixture mode, which provisions an
@@ -624,6 +625,7 @@ export async function runBenchmark(options: BenchmarkRunOptions): Promise<Benchm
 		},
 		consumption_metrics: { axes: [...CONSUMPTION_METRICS] },
 		driver_mode: driverMode,
+		...(options.executionMethod ? { execution_method: options.executionMethod } : {}),
 		observation,
 	};
 

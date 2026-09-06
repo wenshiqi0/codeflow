@@ -20,6 +20,60 @@ const HOST_ROOTS = [
 
 type Environment = Record<string, string | undefined>;
 
+/** A bounded shell lexer for common command wrappers, not a security sandbox. */
+function shellSegments(command: string): string[][] {
+	const segments: string[][] = [];
+	let words: string[] = [];
+	let word = "";
+	let quote = "";
+	const flushWord = () => { if (word) words.push(word); word = ""; };
+	const flushSegment = () => { flushWord(); if (words.length) segments.push(words); words = []; };
+	for (let index = 0; index < command.length; index++) {
+		const char = command[index];
+		if (char === "\\" && quote !== "'") { word += command[++index] ?? ""; continue; }
+		if (quote) { if (char === quote) quote = ""; else word += char; continue; }
+		if (char === "'" || char === '"') { quote = char; continue; }
+		if (/[;|&()\n]/.test(char)) { flushSegment(); continue; }
+		if (/\s/.test(char)) { flushWord(); continue; }
+		word += char;
+	}
+	flushSegment();
+	return segments;
+}
+
+function unwrapCommand(input: string[]): string[] {
+	const words = [...input];
+	while (words.length) {
+		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) { words.shift(); continue; }
+		const executable = path.basename(words[0]);
+		if (["command", "exec", "sudo", "nohup", "setsid", "env", "if", "then", "do", "!"].includes(executable)) {
+			words.shift();
+			while (words[0]?.startsWith("-")) {
+				const option = words.shift();
+				if (["-u", "--unset", "--user", "-g", "--group", "-C", "--chdir"].includes(option!)) words.shift();
+			}
+			continue;
+		}
+		if (executable === "timeout") {
+			words.shift();
+			while (words[0]?.startsWith("-")) {
+				if (["-s", "--signal", "-k", "--kill-after"].includes(words.shift()!)) words.shift();
+			}
+			words.shift(); // duration
+			continue;
+		}
+		break;
+	}
+	return words;
+}
+
+function codeTeamCommand(command: string): string[] | null {
+	const segments = shellSegments(command);
+	if (segments.length !== 1 || /[\n;&|<>`]|\$\(/.test(command)) return null;
+	const words = unwrapCommand(segments[0]);
+	return path.basename(words[0] ?? "") === "codeteam" ? words : null;
+}
+
 function realPath(target: string): string {
 	try {
 		return fs.realpathSync(target).split(path.sep).join("/");
@@ -100,44 +154,6 @@ function readOnlyRuntimeCommand(normalized: string): boolean {
 	return new Set(["cat", "echo", "grep", "ls", "pwd", "rg", "test"]).has(firstWord);
 }
 
-function readOnlyInspectionCommand(normalized: string): boolean {
-	// Before Claim, inspection must be unambiguously read-only. Composed shell
-	// programs, redirection, substitution, and executable hooks are substantive
-	// because their effects cannot be established from the first command alone.
-	if (!normalized || /[\n;&|<>`]|\$\(/.test(normalized)) return false;
-	const words = normalized.split(/\s+/);
-	while (words[0] === "command") words.shift();
-	const executable = path.basename(words[0] ?? "");
-	if (executable === "git") return readOnlyGitCommand(normalized);
-	if (executable === "find") {
-		return !/(?:^|\s)-(?:delete|exec|execdir|fls|fprint|fprint0|fprintf|ok|okdir)(?:\s|$)/.test(
-			normalized,
-		);
-	}
-	if (executable === "rg" && /(?:^|\s)--pre(?:=|\s|$)/.test(normalized)) return false;
-	return new Set([
-		"basename", "cat", "dirname", "file", "grep", "head", "jq", "ls",
-		"pwd", "realpath", "rg", "stat", "tail", "test", "wc", "which",
-	]).has(executable);
-}
-
-export function preClaimToolViolation(
-	toolName: string,
-	input: unknown,
-	environment: Environment = process.env,
-): string | null {
-	if (
-		(environment.CODEFLOW_PROCESS_KIND !== "worker" && environment.CODEFLOW_PROCESS_KIND !== "root")
-		|| environment.CODEFLOW_COMMITMENT_ID
-	) return null;
-	if (toolName === "read" || toolName === "collaborate") return null;
-	if (toolName === "bash") {
-		const command = (input as { command?: unknown } | null)?.command;
-		if (typeof command === "string" && readOnlyInspectionCommand(command.trim())) return null;
-	}
-	return "Claim a Commitment before substantive work; before Claim, only read-only repository inspection is allowed";
-}
-
 export function runtimeBashViolation(
 	command: string | undefined,
 	environment: Environment = process.env,
@@ -167,6 +183,14 @@ export function runtimeBashViolation(
 		...(canonicalRunState === null ? [] : [canonicalRunState]),
 	];
 	if (!offenders.some((marker) => normalized.includes(marker))) return null;
+	// codeteam owns its validated metadata writes; invoking its public commands
+	// is different from directly editing Runtime files. Engineering helper output
+	// paths remain subject to the ordinary Runtime write boundary.
+	const words = codeTeamCommand(normalized);
+	if (words) {
+		if (["start", "goal", "spawn", "followup", "resume", "status", "inspect", "watch", "sub", "usage", "finish", "stop", "--help", "-h"].includes(words[1] ?? "")) return null;
+		if (!words.slice(1).some((word) => offenders.some((marker) => word.includes(marker)))) return null;
+	}
 	if (readOnlyRuntimeCommand(normalized)) return null;
 	return "Codeflow runtime is read-only during a run";
 }

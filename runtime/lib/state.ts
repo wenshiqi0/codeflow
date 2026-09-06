@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { type GoalRecord, goalRecords, loadGoal } from "./goals";
 import {
 	foldReceipts,
@@ -128,10 +130,16 @@ export function taskState(paths: RunPaths): TaskState {
 	});
 	const hasOpen = root.status === "active" || goals.some((goal) => goal.status === "active");
 	const childrenClosed = goals.every((goal) => goal.status === "completed" || goal.status === "blocked");
-	const status: GoalStatus = hasOpen
+	let status: GoalStatus = hasOpen
 		? "active"
 		: root.status === "completed" && !childrenClosed
 			? "blocked"
 			: root.status;
+	// An executor Receipt, even under the root Goal, never closes an outer Task.
+	const teamFile = path.join(paths.runDir, "team.json");
+	if (fs.existsSync(teamFile)) {
+		const team = JSON.parse(fs.readFileSync(teamFile, "utf8"));
+		status = team.status === "open" ? (hasOpen ? "active" : "pending") : team.status;
+	}
 	return { task_id: task.id, objective: task.objective, status, root, goals };
 }

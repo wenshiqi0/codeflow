@@ -1,7 +1,7 @@
 /**
  * Real-mode process seams (contract §1.7, tests/benchmark/fakes/README.md).
  *
- * Real mode (`benchmark run` WITHOUT `--fixture`) drives a REAL Codeflow
+ * Real mode (`benchmark run` WITHOUT `--fixture`) drives a single-executor Codeflow
  * process per instance attempt, provisions the workspace from the dataset
  * source repo at `base_commit`, and asks the official SWE-bench harness for
  * verdicts. Everything external is a spawned command behind four environment
@@ -14,7 +14,7 @@
  *
  * Each seam has an explicit production default under benchmark/scripts
  * (the live boundary: real model credentials, network, Docker, and the
- * official harness itself). Tests never exercise the production defaults —
+ * official harness itself). Tests substitute offline seams —
  * they pin the seam contract, which both sides implement.
  *
  * Driver protocol (fakes/README §1): spawn
@@ -34,8 +34,8 @@
  *
  * Provisioning protocol (fakes/README §3): spawn
  *   <bin> <repo> <base_commit> <workspaceDir>
- * postcondition: workspaceDir is a git working tree whose HEAD is exactly
- * base_commit. The runner never mutates the dataset cache, any source clone,
+ * postcondition: workspaceDir contains the exact base_commit source tree in
+ * a synthetic one-commit repository. The runner never mutates the dataset cache, any source clone,
  * or Codeflow's own checkouts — provisioning only writes inside the attempt's
  * workspace directory.
  *
@@ -627,8 +627,8 @@ export interface SourceCloneProvisionerOptions {
 }
 
 /**
- * Provision a fresh isolated workspace whose HEAD is exactly the instance's
- * base_commit, cloned from the dataset `repo`. Never writes anywhere outside
+ * Provision a fresh isolated workspace containing the instance's base_commit
+ * source tree with synthetic baseline history. Never writes anywhere outside
  * the workspace directory; a provisioning failure is an attempt infra_error.
  */
 export function createSourceCloneWorkspaceProvisioner(

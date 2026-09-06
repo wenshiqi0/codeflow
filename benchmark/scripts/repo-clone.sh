@@ -50,7 +50,7 @@ fi
 # historical blobs. If the commit is absent (history rewrite or partial
 # mirror), fetch it explicitly and retry once.
 #
-# A Worker must not see the repository's later history: it can otherwise find
+# An executor must not see the repository's later history: it can otherwise find
 # an upstream fix by searching commits after the benchmark base. Once the
 # exact base tree is materialized, replace its object database with a synthetic
 # one-commit repository. This preserves ordinary `git diff` patch extraction

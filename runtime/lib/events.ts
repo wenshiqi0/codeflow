@@ -33,12 +33,16 @@ export const EVENT_KINDS = [
 	"execution_interrupted",
 	"artifact_written",
 	"runner_exited",
+	"agent_assigned",
+	"agent_execution_finished",
 ] as const;
 
 export type EventKind = (typeof EVENT_KINDS)[number];
 
 export const EVENT_STATUSES = [
 	"STARTED",
+	"STARTING",
+	"IDLE",
 	"CREATED",
 	"UPDATED",
 	"RUNNING",
@@ -90,6 +94,12 @@ const ALLOWED_PAYLOAD_KEYS = new Set([
 	"goal_id",
 	"pid",
 	"run_id",
+	"agent_id",
+	"mode",
+	"resume_commitment_id",
+	"exit_code",
+	"remaining",
+	"orchestration",
 ]);
 
 /** An event summary is one bounded mechanical line. */

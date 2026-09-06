@@ -81,6 +81,10 @@ describe("root Agent launch boundary", () => {
 				args: process.argv.slice(2),
 				model: process.env.CODEFLOW_AGENT_MODEL,
 				parent: process.env.CODEFLOW_PARENT_COMMITMENT_ID ?? null,
+				team: process.env.CODEFLOW_TEAM_AGENT_ID ?? null,
+				teamRunner: process.env.CODEFLOW_TEAM_RUNNER_PID ?? null,
+				shellReady: process.env.CODEFLOW_TEAM_SHELL_READY ?? null,
+				task: process.env.CODEFLOW_RUN_ID,
 			}));
 		`);
 		const runtimeDir = path.resolve(import.meta.dir, "../../runtime");
@@ -98,6 +102,11 @@ describe("root Agent launch boundary", () => {
 				CODEFLOW_RUNS_DIR: path.join(dir, "runs"),
 				CODEFLOW_AGENT_MODEL: "environment-provider/environment-model",
 				CODEFLOW_PARENT_COMMITMENT_ID: "unrelated-parent",
+				CODEFLOW_RUN_ID: "task-calling-worker",
+				CODEFLOW_EXECUTION_ID: "exec-calling-worker",
+				CODEFLOW_TEAM_AGENT_ID: "agent-calling-worker",
+				CODEFLOW_TEAM_RUNNER_PID: "1234",
+				CODEFLOW_TEAM_SHELL_READY: "exec-calling-worker",
 			},
 			timeout: 5_000,
 		});
@@ -106,6 +115,10 @@ describe("root Agent launch boundary", () => {
 		const observed = JSON.parse(fs.readFileSync(capture, "utf8"));
 		expect(observed.model).toBe("explicit-provider/explicit-model");
 		expect(observed.parent).toBeNull();
+		expect(observed.team).toBeNull();
+		expect(observed.teamRunner).toBeNull();
+		expect(observed.shellReady).toBeNull();
+		expect(observed.task).not.toBe("task-calling-worker");
 		const args: string[] = observed.args;
 		expect(args[args.indexOf("--provider") + 1]).toBe("explicit-provider");
 		expect(args[args.indexOf("--model") + 1]).toBe("explicit-model");

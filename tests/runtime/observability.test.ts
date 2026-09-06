@@ -111,11 +111,12 @@ test("telemetry records request start and message_end wall time as provider late
 	}
 });
 
-test("collaborate actions preserve privacy-safe organization telemetry categories", () => {
-	for (const action of ["inspect", "claim", "report", "delegate"] as const) {
+test("collaborate actions preserve privacy-safe executor telemetry categories", () => {
+	for (const action of ["inspect", "claim", "report"] as const) {
 		expect(operationKind("collaborate", { action: { name: action } })).toBe(action);
 	}
 	expect(operationKind("collaborate", { action: { name: "unknown" } })).toBe("other");
+	expect(operationKind("collaborate", { action: { name: "delegate" } })).toBe("other");
 	expect(operationKind("read", { path: "runtime/lib/state.ts" })).toBe("source_discovery");
 	expect(operationKind("bash", { command: "rg -n collaborate runtime" })).toBe("source_discovery");
 	expect(operationKind("bash", { command: "bun test tests/runtime" })).toBe("execute");

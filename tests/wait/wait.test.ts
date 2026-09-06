@@ -92,6 +92,18 @@ describe("scanning", () => {
 		writeEvent(1, "b", "commitment_claimed", "RUNNING");
 		expect(scan(events, 0, []).events.map((event) => event.seq)).toEqual([1, 3]);
 	});
+	test("passes only bounded identifiers alongside the public event projection", () => {
+		writeEvent(4, "c-one", "receipt_submitted", "PROGRESS", {
+			task_id: "task-one", goal_id: "goal-one", agent_id: "agent-one", execution_id: "exec-one",
+			commitment_id: "c_one", receipt_id: "r_one", prompt: "PRIVATE", session_path: "/private/session.jsonl",
+		});
+		const result = scan(events, 0, []).events[0];
+		expect(result).toMatchObject({ task_id: "task-one", agent_id: "agent-one", execution_id: "exec-one", receipt_id: "r_one" });
+		expect(result).not.toHaveProperty("prompt"); expect(result).not.toHaveProperty("session_path");
+		writeEvent(5, "a", "agent_assigned", "STARTING", { execution_id: "../../escape", agent_id: "a".repeat(129) });
+		const invalid = scan(events, 4, []).events[0];
+		expect(invalid).not.toHaveProperty("execution_id"); expect(invalid).not.toHaveProperty("agent_id");
+	});
 
 	test("since excludes what the caller already saw", () => {
 		writeEvent(1, "a", "commitment_claimed", "RUNNING");

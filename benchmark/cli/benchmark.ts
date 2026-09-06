@@ -13,6 +13,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeJsonAtomic } from "../../runtime/lib/paths";
+import { evaluatePreparedBenchmark, prepareBenchmark, PREPARED_MANIFEST, reportPreparedBenchmark } from "../lib/prepared";
 import {
 	type BenchmarkBudgets,
 	BenchmarkBudgetError,
@@ -29,11 +30,14 @@ import {
 
 const USAGE = `usage: codeflow benchmark <command> [options]
 
-  run                               run a benchmark over the SWE-bench
-                                    Verified dataset (default: real mode —
-                                    a real Codeflow process per instance,
-                                    repo@base_commit workspaces, and the
-                                    official harness evaluator)
+  run                               single-executor baseline: one Pi executor
+                                    per instance and the official evaluator;
+                                    not an outer-orchestration measurement
+  prepare                           provision fresh workspaces and allowlisted
+                                    issues for outer codeteam orchestration;
+                                    starts no model or evaluator
+  evaluate                          freeze a finished outer Task's patch and
+                                    invoke the official evaluator; no model
   report                            rebuild report.json from an existing
                                     benchmark run's artifacts
 
@@ -67,6 +71,20 @@ report options:
   --run <dir>                       benchmark output dir
   --out <file>                      report destination
                                     (default <run>/report.json)
+
+prepare options:
+  --dataset <path|hub-id>           pinned dataset (test split)
+  --instances <file>               required nonempty allowlist, one attempt each
+  --out <new-dir>                  required new prepared-run directory
+
+evaluate options:
+  --run <dir>                      prepared-run directory
+  --task <task-id>                  Task created inside its prepared workspace;
+                                    must be finished with all executors stopped
+  --model-config <id>              required provenance label for the outer setup
+
+Prepared results attest the official patch verdict, not isolation of the outer
+host conversation or its usage. Outer-host usage is unavailable, never zero.
 
   --help                            this usage
 `;
@@ -260,6 +278,8 @@ async function runCommand(argv: string[]): Promise<number> {
 		console.log(
 			JSON.stringify({
 				benchmark_run_id: result.benchmarkRunId,
+				execution_method: fixtureDir === undefined ? "single-executor" : "fixture",
+				outer_orchestration_measurement: false,
 				out_dir: result.outDir,
 				report: path.join(result.outDir, "report.json"),
 				counts: result.report.counts,
@@ -322,9 +342,31 @@ async function runRealMode(inputs: {
 		evaluator: createProcessHarnessEvaluator(),
 		workspaceProvisioner: createSourceCloneWorkspaceProvisioner(),
 		benchmarkRunId: inputs.benchmarkRunId,
-		modelNameOrPath: `codeflow:${inputs.modelConfig}`,
+		modelNameOrPath: `codeflow-single-executor:${inputs.modelConfig}`,
 		driverMode: "codeflow",
+		executionMethod: "single-executor",
 	});
+}
+
+async function preparedCommand(command: "prepare" | "evaluate", argv: string[]): Promise<number> {
+	const parsed = parseOptions(argv, command === "prepare"
+		? ["--dataset", "--instances", "--out"]
+		: ["--run", "--task", "--model-config"]);
+	if ("error" in parsed) return usageError(parsed.error);
+	if (parsed.help) { console.log(USAGE); return 0; }
+	if (new Set(parsed.options.map((option) => option.name)).size !== parsed.options.length) return usageError("duplicate option");
+	const required = command === "prepare" ? ["--dataset", "--instances", "--out"] : ["--run", "--task", "--model-config"];
+	for (const name of required) if (!optionValue(parsed.options, name)) return usageError(`${name} is required`);
+	try {
+		const value = (name: string) => optionValue(parsed.options, name)!;
+		const result = command === "prepare"
+			? prepareBenchmark({ dataset: value("--dataset"), instances: readAllowlist(value("--instances")), outDir: value("--out") })
+			: await evaluatePreparedBenchmark({ runDir: value("--run"), taskId: value("--task"), modelConfig: value("--model-config") });
+		console.log(JSON.stringify(result));
+		return 0;
+	} catch (error) {
+		return runtimeError((error as Error).message);
+	}
 }
 
 const REPORT_OPTIONS = ["--run", "--out"] as const;
@@ -343,6 +385,12 @@ function reportCommand(argv: string[]): number {
 	const out = optionValue(options, "--out") ?? path.join(runDir, "report.json");
 
 	try {
+		if (fs.existsSync(path.join(runDir, PREPARED_MANIFEST))) {
+			const report = reportPreparedBenchmark(runDir);
+			writeJsonAtomic(out, report);
+			console.log(JSON.stringify({ report: out, execution_method: "outer-managed", not_official: true, cases: report.cases }));
+			return 0;
+		}
 		const report = buildBenchmarkReport(runDir);
 		writeJsonAtomic(out, report);
 		console.log(JSON.stringify({ report: out, counts: report.counts, resolved_rate: report.resolved_rate }));
@@ -359,7 +407,7 @@ export async function main(argv: string[]): Promise<number> {
 	switch (command) {
 		case undefined:
 		case "":
-			return usageError("a subcommand is required: run | report");
+			return usageError("a subcommand is required: run | prepare | evaluate | report");
 		case "--help":
 		case "-h":
 		case "help":
@@ -367,6 +415,9 @@ export async function main(argv: string[]): Promise<number> {
 			return 0;
 		case "run":
 			return await runCommand(rest);
+		case "prepare":
+		case "evaluate":
+			return await preparedCommand(command, rest);
 		case "report":
 			return reportCommand(rest);
 		default:

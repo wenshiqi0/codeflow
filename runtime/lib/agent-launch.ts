@@ -1,12 +1,13 @@
 import * as path from "node:path";
 
-/** Root and descendants have identical capabilities; position is not a role. */
+/** Pi executes assigned work; codeteam supplies a shared control CLI. */
 export const AGENT_TOOL_ALLOWLIST = ["read", "write", "edit", "bash", "collaborate"] as const;
 
 export function agentExtensions(runtimeDir: string): string[] {
 	return [
 		"provider-profiles",
 		"codeflow-organization",
+		"team-shell",
 		"host-guard",
 		"codeflow-context",
 		"bash-compressor",

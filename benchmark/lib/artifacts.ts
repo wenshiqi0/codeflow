@@ -63,6 +63,8 @@ export interface BenchmarkManifest {
 		axes: ConsumptionMetricName[];
 	};
 	driver_mode: "fixture" | "codeflow";
+	/** Missing on historical runs; never infer that they used the current execution method. */
+	execution_method?: "single-executor";
 	observation: ObservationConfig;
 }
 

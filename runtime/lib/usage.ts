@@ -36,6 +36,9 @@ export interface UsageRecord {
 	worker_kind: "worker" | "service";
 	commitment_id: string | null;
 	goal_id: string | null;
+	/** Optional on historical records; never infer one executor's activity from a peer. */
+	agent_id?: string | null;
+	execution_id?: string | null;
 	turn: number;
 	provider: string;
 	model: string;
@@ -131,6 +134,8 @@ export function usageRecordFromMessage(message: unknown, turn: number): UsageRec
 		worker_kind: env("CODEFLOW_PROCESS_KIND") === "service" ? "service" : "worker",
 		commitment_id: env("CODEFLOW_COMMITMENT_ID") ?? null,
 		goal_id: env("CODEFLOW_GOAL_ID") ?? null,
+		agent_id: env("CODEFLOW_TEAM_AGENT_ID") ?? null,
+		execution_id: env("CODEFLOW_EXECUTION_ID") ?? null,
 		turn,
 		provider,
 		model,

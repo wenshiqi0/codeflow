@@ -76,8 +76,7 @@ export function operationKind(tool: string, input: unknown): ToolCallRecord["ope
 	if (tool === "edit" || tool === "write") return "edit";
 	if (tool === "collaborate") {
 		const action = asRecord(asRecord(input).action).name;
-		if (action === "inspect" || action === "claim" || action === "report"
-			|| action === "delegate") return action;
+		if (action === "inspect" || action === "claim" || action === "report") return action;
 		return "other";
 	}
 	if (tool === "read") return "source_discovery";

@@ -1,5 +1,5 @@
 /**
- * Durable state for one Codemark initial-organization run.
+ * Historical v1 state for the retired Codemark inner-Agent initial-organization experiment.
  *
  * Codemark deliberately does not create Codeflow Tasks, Commitments, Agent
  * executions, or Receipts. Stable proposal ids and explicit benchmark markers
@@ -653,6 +653,14 @@ export function readInitialOrganization(runDir: string): InitialOrganization {
 	assertArtifact(parsed);
 	assertAcyclic(parsed);
 	return parsed;
+}
+
+/** Read a frozen v1 artifact from the retired inner-Agent measurement. */
+export function readPublishedOrganization(runDir: string): InitialOrganization {
+	const artifact: unknown = JSON.parse(fs.readFileSync(publishedArtifactPath(runDir), "utf8"));
+	assertArtifact(artifact);
+	assertAcyclic(artifact);
+	return artifact;
 }
 
 export function writeInitialOrganization(runDir: string, organization: InitialOrganization): InitialOrganization {

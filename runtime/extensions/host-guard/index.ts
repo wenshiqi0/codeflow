@@ -1,14 +1,12 @@
-/** Fails closed when a Worker tries to modify the host Codeflow runtime. */
+/** Protects host Runtime files and run metadata independently of Claim state. */
 
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
-	preClaimToolViolation,
 	runtimeBashViolation,
 	runtimeWriteViolation,
 } from "./policy";
 
 const VIOLATION_TYPE = "codeflow:host_runtime_violation";
-const CLAIM_REQUIRED_TYPE = "codeflow:claim_required";
 
 export default function (pi: ExtensionAPI): void {
 	pi.on("tool_call", (event) => {
@@ -24,9 +22,5 @@ export default function (pi: ExtensionAPI): void {
 			pi.appendEntry(VIOLATION_TYPE, { tool: event.toolName, reason });
 			return { block: true, reason, terminate: true };
 		}
-		const claimReason = preClaimToolViolation(event.toolName, event.input);
-		if (!claimReason) return undefined;
-		pi.appendEntry(CLAIM_REQUIRED_TYPE, { tool: event.toolName, reason: claimReason });
-		return { block: true, reason: claimReason };
 	});
 }

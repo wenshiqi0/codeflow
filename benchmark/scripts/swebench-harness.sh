@@ -156,7 +156,7 @@ import json, sys
 
 report = json.load(open(sys.argv[1]))
 entry = report.get(sys.argv[2]) if isinstance(report, dict) else None
-if isinstance(entry, dict) and "resolved" in entry:
+if isinstance(entry, dict) and isinstance(entry.get("resolved"), bool):
     print("resolved" if entry["resolved"] else "unresolved")
 else:
     print("not_evaluated")

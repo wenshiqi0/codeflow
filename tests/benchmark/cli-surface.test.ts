@@ -37,6 +37,17 @@ describe("benchmark CLI discoverability", () => {
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("run");
 		expect(result.stdout).toContain("report");
+		expect(result.stdout).toContain("single-executor baseline");
+		expect(result.stdout).toContain("prepare");
+		expect(result.stdout).toContain("evaluate");
+	});
+
+	test("outer prepare/evaluate help and missing arguments never start a model", () => {
+		for (const command of ["prepare", "evaluate"]) {
+			expect(runCodeflow(["benchmark", command, "--help"]).exitCode).toBe(0);
+			expect(runCodeflow(["benchmark", command]).exitCode).toBe(2);
+			expect(runCodeflow(["benchmark", command, "--unknown"]).exitCode).toBe(2);
+		}
 	});
 
 	test("codeflow benchmark run --help and report --help exit 0", () => {

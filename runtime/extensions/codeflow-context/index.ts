@@ -21,7 +21,7 @@ const RUN_FACTS_CUSTOM_TYPE = "codeflow:run_facts";
 const RUN_FACT_THRESHOLDS = [0.5, 0.7] as const;
 export const AGENT_CONTEXT_STOP_UTILIZATION = 0.8;
 export const CONTEXT_BUDGET_INTERRUPTED_SUMMARY =
-	"Execution context reached 80% utilization; resume the same open Commitment with fresh context to reconcile unfinished descendants.";
+	"Execution context reached 80% utilization; resume the same open Commitment with fresh context to reconcile unfinished work.";
 
 function readIfPresent(file: string): string {
 	try {
@@ -35,7 +35,7 @@ function reportContextBudgetLimit(paths: RunPaths, goalId: string, executionId: 
 	if (commitmentId) {
 		if (loadTerminalReceipt(paths, commitmentId)) return;
 		// Context exhaustion is a Runtime interruption, not the Agent's semantic
-		// blocker. Keep parent identity open so nested Commitments remain resumable.
+		// blocker. Keep the original Commitment open for exact stopped-attempt resume.
 		recordRuntimeFailure(paths, commitmentId, ["CONTEXT_BUDGET_EXCEEDED"], CONTEXT_BUDGET_INTERRUPTED_SUMMARY);
 		return;
 	}

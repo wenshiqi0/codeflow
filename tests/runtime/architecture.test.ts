@@ -30,6 +30,9 @@ describe("single current architecture", () => {
 			"runtime/extensions/codeflow-task",
 			"runtime/quality/test-patch.ts",
 			"runtime/cli/commitment.ts",
+			"runtime/extensions/codeflow-organization/worker-launcher.ts",
+			"runtime/extensions/codeflow-organization/feedback.ts",
+			"runtime/lib/agent-capacity.ts",
 			"references/patterns.md",
 			"references/work-methods",
 		]) expect(fs.existsSync(path.join(root, relative))).toBe(false);
@@ -59,7 +62,7 @@ describe("single current architecture", () => {
 		]) expect(source).not.toContain(residue);
 	});
 
-	test("the internal codeteam command has no organization bypass", () => {
+	test("the outer codeteam command retains engineering helpers and has no legacy identity", () => {
 		const runtimeBin = path.join(root, "runtime", "bin");
 		const launcherPath = path.join(runtimeBin, "codeteam");
 		const launcher = fs.readFileSync(launcherPath, "utf8");
@@ -70,7 +73,8 @@ describe("single current architecture", () => {
 		expect(launcher).not.toContain("goal create");
 		expect(launcher).not.toContain("receipt submit");
 		expect(launcher).not.toContain("recall goal");
-		expect(launcher).toContain("evidence run|batch|log");
+		expect(launcher).toContain("evidence");
+		expect(launcher).toContain("check");
 		const help = Bun.spawnSync(["codeteam", "--help"], {
 			cwd: root,
 			env: {
@@ -83,12 +87,33 @@ describe("single current architecture", () => {
 		expect(help.stdout.toString()).toContain("usage: codeteam <command>");
 	});
 
-	test("a Worker cannot recursively start another Task", () => {
+	test("the Pi extension graph has no recursive launcher or feedback keepalive", () => {
+		const extensions = filesBelow(path.join(root, "runtime/extensions"))
+			.filter((file) => file.endsWith(".ts"));
+		const source = extensions.map((file) => fs.readFileSync(file, "utf8")).join("\n");
+		expect(source).not.toMatch(/from ["'][^"']*(?:worker-launcher|agent-capacity|\/feedback)["']/);
+		const organization = fs.readFileSync(path.join(root, "runtime/extensions/codeflow-organization/index.ts"), "utf8");
+		expect(organization).not.toMatch(/registerWorkerFeedback|delegateWorker|hasLiveWorkers|sendMessage/);
+		expect(organization).toContain("validateTeamAgentStartup");
+		expect(organization).toContain("process.exit(1)");
+	});
+
+	test("codeteam validates Worker arguments without rejecting its identity", () => {
+		const result = Bun.spawnSync(["bash", path.join(root, "runtime/bin/codeteam"), "spawn", "task-existing"], {
+			cwd: root,
+			env: { ...process.env, CODEFLOW_RUN_ID: "task-existing", CODEFLOW_EXECUTION_ID: "exec-inner", CODEFLOW_TEAM_AGENT_ID: "agent-inner" },
+		});
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr.toString()).toContain("spawn <task>");
+		expect(result.stderr.toString()).not.toContain("outer-loop only");
+	});
+
+	test("standalone entry validates arguments before starting a nested execution", () => {
 		const result = Bun.spawnSync(
-			["bash", path.join(root, "runtime/bin/codeflow"), "exec", "nested"],
+			["bash", path.join(root, "runtime/bin/codeflow"), "exec", "--invalid", "nested"],
 			{ cwd: root, env: { ...process.env, CODEFLOW_RUN_ID: "task-existing" } },
 		);
 		expect(result.exitCode).toBe(1);
-		expect(result.stderr.toString()).toContain("cannot start inside a Codeflow Task");
+		expect(result.stderr.toString()).toContain("unknown exec option");
 	});
 });

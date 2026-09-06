@@ -5,11 +5,6 @@ RUNTIME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLI_DIR="$RUNTIME_DIR/cli"
 LIB_DIR="$RUNTIME_DIR/lib"
 
-if [[ -z "${CODEFLOW_RUN_ID:-}" ]]; then
-  echo "codeteam: error: CODEFLOW_RUN_ID is not set" >&2
-  exit 1
-fi
-
 if PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
   cd "$PROJECT_ROOT"
 fi
@@ -20,6 +15,20 @@ usage() {
   cat <<'EOF'
 usage: codeteam <command> [options]
 
+  start [--model provider/model] '<objective>'
+  goal <task> <goal-id> '<objective>' [--depends a,b]
+  spawn <task> [--goal id] '<focus>'
+  followup <task> <agent-id> '<focus>'
+  resume <task> <agent-id> '<focus>'
+  status <task>
+  inspect <task> [--goal id|--commitment id|--receipt id]
+  watch <task> [--since seq] [--idle seconds]  # continuous NDJSON; usage extends patience silently
+  sub <task> [--since seq] [--timeout seconds]
+  usage <task>
+  finish <task> --status completed|blocked --summary '<result>' [--remaining '<work>']
+  stop <task> [agent-id]
+
+Execution-only helpers (inside an assigned Agent):
   evidence run|batch|log
   check source [paths...]
 EOF
@@ -27,10 +36,12 @@ EOF
 
 case "${1:-}" in
   evidence)
+    if [[ -z "${CODEFLOW_RUN_ID:-}" ]]; then echo "codeteam: CODEFLOW_RUN_ID is not set" >&2; exit 1; fi
     shift
     exec bun "$CLI_DIR/evidence.ts" "$@"
     ;;
   check)
+    if [[ -z "${CODEFLOW_RUN_ID:-}" ]]; then echo "codeteam: CODEFLOW_RUN_ID is not set" >&2; exit 1; fi
     if [[ "${2:-}" != "source" ]]; then
       echo "codeteam: error: check requires source" >&2
       exit 1
@@ -40,9 +51,36 @@ case "${1:-}" in
     ;;
   -h|--help)
     usage
+    exit 0
     ;;
+  start|goal|spawn|followup|resume|status|inspect|watch|sub|usage|finish|stop) ;;
   *)
     usage >&2
     exit 1
     ;;
 esac
+
+# Only actual assignment execution needs provider credentials. Read-only status,
+# Task creation, and control commands never source credential configuration.
+case "$1" in
+  spawn|followup|resume)
+    CODEFLOW_CONFIG_HOME="${CODEFLOW_HOME:-$HOME/.codeflow}"
+    INHERITED_KIMI_API_KEY="${KIMI_API_KEY:-}"
+    INHERITED_ZHIPU_API_KEY="${ZHIPU_API_KEY:-}"
+    INHERITED_ZHIPU_BACKUP_API_KEY="${ZHIPU_BACKUP_API_KEY:-}"
+    INHERITED_MIMO_API_KEY="${MIMO_API_KEY:-}"
+    INHERITED_DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-}"
+    if [[ -f "$CODEFLOW_CONFIG_HOME/.env" ]]; then
+      set -a
+      source "$CODEFLOW_CONFIG_HOME/.env"
+      set +a
+    fi
+    [[ -n "$INHERITED_KIMI_API_KEY" ]] && export KIMI_API_KEY="$INHERITED_KIMI_API_KEY"
+    [[ -n "$INHERITED_ZHIPU_API_KEY" ]] && export ZHIPU_API_KEY="$INHERITED_ZHIPU_API_KEY"
+    [[ -n "$INHERITED_ZHIPU_BACKUP_API_KEY" ]] && export ZHIPU_BACKUP_API_KEY="$INHERITED_ZHIPU_BACKUP_API_KEY"
+    [[ -n "$INHERITED_MIMO_API_KEY" ]] && export MIMO_API_KEY="$INHERITED_MIMO_API_KEY"
+    [[ -n "$INHERITED_DEEPSEEK_API_KEY" ]] && export DEEPSEEK_API_KEY="$INHERITED_DEEPSEEK_API_KEY"
+    ;;
+  sub|usage) exec bun "$CLI_DIR/outer.ts" "$@" ;;
+esac
+exec bun "$CLI_DIR/team.ts" "$@"

@@ -1,12 +1,12 @@
 /**
- * `codeflow sub` — the outer loop's whole listening surface.
+ * `codeflow sub` — bounded event reads; codeteam watch adds continuous activity tracking.
  *
  * One blocking call, never a poll: an execute loop that makes no progress must
  * cost the observer nothing. The caller passes the highest sequence it has
  * seen and gets back everything newer, so reconnecting never replays.
  *
  * File names carry sequence, subject, kind, and status. For a terminal event
- * the observer also reads exactly two whitelisted body fields: the closed
+ * the observer also reads whitelisted identifiers, the closed
  * `reasons` enum and the bounded one-line `summary`. It never reads refs,
  * provider errors, diagnostics, or model prose.
  *
@@ -36,6 +36,12 @@ export interface ObservedEvent {
 	file: string;
 	reasons?: string[];
 	summary: string;
+	task_id?: string;
+	agent_id?: string;
+	execution_id?: string;
+	goal_id?: string;
+	commitment_id?: string;
+	receipt_id?: string;
 }
 
 export interface ScanResult {
@@ -50,7 +56,7 @@ export interface ScanResult {
  * filtered kinds still advance it and a later call is not forced to re-examine
  * them. It is also why gaps in the sequence are harmless.
  */
-export function scan(directory: string, since: number, kinds: string[]): ScanResult {
+export function scan(directory: string, since: number, kinds: string[], seen?: ReadonlySet<string>): ScanResult {
 	let waterMark = since;
 	const events: ObservedEvent[] = [];
 
@@ -71,6 +77,7 @@ export function scan(directory: string, since: number, kinds: string[]): ScanRes
 		const seq = Number.parseInt(match.groups.seq, 10);
 		waterMark = Math.max(waterMark, seq);
 		if (seq <= since) continue;
+		if (seen?.has(name)) continue;
 		if (kinds.length > 0 && !kinds.includes(match.groups.kind)) continue;
 		const observed: ObservedEvent = {
 			seq,
@@ -84,7 +91,11 @@ export function scan(directory: string, since: number, kinds: string[]): ScanRes
 			const body = JSON.parse(fs.readFileSync(path.join(directory, name), "utf8")) as {
 				reasons?: unknown;
 				summary?: unknown;
-			};
+			} & Record<string, unknown>;
+			for (const key of ["task_id", "agent_id", "execution_id", "goal_id", "commitment_id", "receipt_id"] as const) {
+				const value = body[key];
+				if (typeof value === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(value)) observed[key] = value;
+			}
 			if (typeof body.summary === "string" && body.summary.trim()) {
 				observed.summary = eventSummary(body.summary);
 			}

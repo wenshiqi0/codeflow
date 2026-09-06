@@ -456,6 +456,20 @@ describe("official evaluator wrapper: pinned report location and shape (WRAP-3/4
 		expect(result.exitCode).toBe(0);
 		expect(result.lastStdoutLine).toBe("not_evaluated");
 	});
+
+	test("WRAP-5c: only a boolean resolved field is an official verdict", () => {
+		const world = buildWorld();
+		const predictions = writePredictions(world, "pred-wrap5c.jsonl", {
+			instance_id: INSTANCE_ID, model_name_or_path: MODEL_NAME, model_patch: "diff --git a/fix.py b/fix.py\n",
+		});
+		for (const [index, value] of ["false", 1, null, []].entries()) {
+			const result = runWrapper(world, { predictions, runId: `${EVAL_RUN_ID}-malformed-${index}`, instance: INSTANCE_ID }, {
+				PINNED_HARNESS_RESOLVED_JSON: JSON.stringify(value),
+			});
+			expect(result.exitCode).toBe(0);
+			expect(result.lastStdoutLine).toBe("not_evaluated");
+		}
+	});
 });
 
 /* ------------------------------------------------------------------ *

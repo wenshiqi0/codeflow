@@ -44,6 +44,7 @@ export type ToolOperationKind =
 	| "inspect"
 	| "claim"
 	| "report"
+	/** Historical v4 ledger decoding only; the current Pi surface cannot emit delegation. */
 	| "delegate"
 	| "evidence_log"
 	| "evidence_run"

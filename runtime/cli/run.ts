@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-/** Start or resume the root Agent for one Task. */
+/** Standalone single-executor baseline. Use codeteam for outer orchestration. */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -154,7 +154,6 @@ export async function run(
 	entry: "exec" | "resume" = "exec",
 	options: RunOptions = {},
 ): Promise<number> {
-	if (process.env.CODEFLOW_RUN_ID) return fail(`${entry} cannot start inside a Codeflow Task`, entry);
 	let prompt: string;
 	let model: string | undefined;
 	let resolved;
@@ -196,6 +195,9 @@ export async function run(
 	};
 	delete childEnv.CODEFLOW_PARENT_COMMITMENT_ID;
 	delete childEnv.CODEFLOW_WORK_FOCUS;
+	delete childEnv.CODEFLOW_TEAM_AGENT_ID;
+	delete childEnv.CODEFLOW_TEAM_RUNNER_PID;
+	delete childEnv.CODEFLOW_TEAM_SHELL_READY;
 	if (resumedCommitment) childEnv.CODEFLOW_COMMITMENT_ID = resumedCommitment.id;
 	else delete childEnv.CODEFLOW_COMMITMENT_ID;
 	const child = Bun.spawn(
@@ -203,7 +205,7 @@ export async function run(
 			resolved,
 			resumedCommitment
 				? "Re-ground the Task from durable state and continue it to closure."
-				: "Inspect the Task and organize the work needed to close it.",
+				: "Inspect the assigned Task, claim bounded work, implement and verify it, then report a Receipt.",
 			agentExtensions(RUNTIME_DIR),
 			AGENT_TOOL_ALLOWLIST,
 		),
@@ -289,6 +291,8 @@ async function resume(argv: string[]): Promise<number> {
 	if (argv.length !== 1 || argv[0].startsWith("--")) return fail("resume requires exactly one task id", "resume");
 	if (process.env.CODEFLOW_RUN_ID) return fail("resume cannot run inside a Codeflow task", "resume");
 	try {
+		const teamFile = path.join(resolveRunsDir(process.env.CODEFLOW_RUNS_DIR), argv[0], "team.json");
+		if (fs.existsSync(teamFile)) return fail("outer-managed Tasks require codeteam resume <task> <agent> '<focus>'", "resume");
 		const source = loadResumeSource(resolveRunsDir(process.env.CODEFLOW_RUNS_DIR), argv[0]);
 		return await run(["Re-ground from durable Task, Goal, Commitment, Receipt, and current external state; then continue the Task."], "resume", { resume: source });
 	} catch (error) {

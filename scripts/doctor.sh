@@ -45,19 +45,18 @@ for required in \
   "$RUNTIME_DIR/models.json" \
   "$RUNTIME_DIR/providers.json.example" \
   "$RUNTIME_DIR/AGENTS.md" \
-  "$ROOT_DIR/references/worker.md" \
-  "$ROOT_DIR/references/engineering-methods.md" \
-  "$ROOT_DIR/references/organization-methods.md" \
+  "$ROOT_DIR/references/agent.md" \
   "$RUNTIME_DIR/lib/canonical.ts" \
   "$RUNTIME_DIR/lib/tasks.ts" \
   "$RUNTIME_DIR/lib/goals.ts" \
   "$RUNTIME_DIR/lib/commitment/index.ts" \
   "$RUNTIME_DIR/lib/executions.ts" \
+  "$RUNTIME_DIR/lib/team.ts" \
   "$RUNTIME_DIR/lib/state.ts" \
   "$RUNTIME_DIR/lib/inspection.ts" \
   "$RUNTIME_DIR/cli/run.ts" \
   "$RUNTIME_DIR/extensions/codeflow-organization/index.ts" \
-  "$RUNTIME_DIR/extensions/codeflow-organization/worker-launcher.ts" \
+  "$RUNTIME_DIR/bin/codeteam" \
   "$RUNTIME_DIR/extensions/codeflow-context/index.ts"; do
   if [[ -f "$required" ]]; then
     ok "${required#"$RUNTIME_DIR"/}"
@@ -73,9 +72,9 @@ else
 fi
 
 if bun "$RUNTIME_DIR/cli/run.ts" debug runtime >/dev/null 2>&1; then
-  ok "Worker configuration resolves"
+  ok "Agent configuration resolves"
 else
-  bad "Worker configuration does not resolve"
+  bad "Agent configuration does not resolve"
 fi
 
 section "Credentials"
@@ -87,7 +86,7 @@ const config = JSON.parse(fs.readFileSync(path.join(runtime, "config.json"), "ut
 const builtins = JSON.parse(fs.readFileSync(path.join(runtime, "models.json"), "utf8")).providers;
 const localPath = path.join(runtime, "providers.json");
 const local = fs.existsSync(localPath) ? JSON.parse(fs.readFileSync(localPath, "utf8")).providers : {};
-const executors = [["worker", config.worker], ...Object.entries(config.services).map(([name, value]) => [`service:${name}`, value])];
+const executors = [["agent", config.agent], ...Object.entries(config.services).map(([name, value]) => [`service:${name}`, value])];
 const impact = new Map();
 for (const [name, executor] of executors) {
   const [provider, ...modelParts] = String(executor.model ?? "").split("/");
@@ -122,4 +121,5 @@ if [[ "$FAIL" -gt 0 ]]; then
   exit 1
 fi
 echo "Ready. Start a Task with:"
-echo "  codeflow exec \"<objective>\""
+echo "  codeteam start \"<objective>\"  (outer-managed Task; no executor starts yet)"
+echo "  codeflow exec \"<objective>\"  (single-executor baseline)"
