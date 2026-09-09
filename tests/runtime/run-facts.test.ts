@@ -9,6 +9,7 @@ import {
 } from "../../runtime/extensions/codeflow-context";
 import { commitmentHistory, loadReceiptChain, submitReceipt } from "../../runtime/lib/commitment";
 import { loadWorkerReport } from "../../runtime/lib/executions";
+import { deliverEvent } from "../../runtime/lib/events";
 import { scan } from "../../runtime/lib/wait";
 import { readRunFactsRecords, summarizePrefixCache } from "../../runtime/lib/observability/run-facts";
 import { RunPaths } from "../../runtime/lib/paths";
@@ -23,6 +24,7 @@ const saved = {
 	goalId: process.env.CODEFLOW_GOAL_ID,
 	executionId: process.env.CODEFLOW_EXECUTION_ID,
 	processKind: process.env.CODEFLOW_PROCESS_KIND,
+	agentId: process.env.CODEFLOW_TEAM_AGENT_ID,
 };
 afterEach(() => {
 	for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
@@ -33,6 +35,7 @@ afterEach(() => {
 		CODEFLOW_GOAL_ID: saved.goalId,
 		CODEFLOW_EXECUTION_ID: saved.executionId,
 		CODEFLOW_PROCESS_KIND: saved.processKind,
+		CODEFLOW_TEAM_AGENT_ID: saved.agentId,
 	})) {
 		if (value === undefined) delete process.env[key];
 		else process.env[key] = value;
@@ -44,6 +47,7 @@ function harness(paths: RunPaths, kind: "root" | "worker" = "root") {
 	process.env.CODEFLOW_RUN_ID = paths.runId;
 	process.env.CODEFLOW_RUNS_DIR = paths.code;
 	delete process.env.CODEFLOW_COMMITMENT_ID;
+	delete process.env.CODEFLOW_TEAM_AGENT_ID;
 	process.env.CODEFLOW_GOAL_ID = paths.runId;
 	process.env.CODEFLOW_EXECUTION_ID = "exec-facts";
 	process.env.CODEFLOW_PROCESS_KIND = kind;
@@ -72,7 +76,85 @@ function harness(paths: RunPaths, kind: "root" | "worker" = "root") {
 	};
 }
 
+function pressureEvents(paths: RunPaths) {
+	return scan(paths.events, 0, ["context_pressure"]).events.map(event =>
+		JSON.parse(fs.readFileSync(path.join(paths.events, event.file), "utf8")));
+}
+
 describe("execution-local run facts", () => {
+	test("context pressure is durable before and after Claim, and only rises once per threshold", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-pressure-")); dirs.push(root);
+		const paths = new RunPaths(path.join(root, "runs"), "task-pressure");
+		const runtime = harness(paths);
+		process.env.CODEFLOW_TEAM_AGENT_ID = "agent-pressure";
+		let tokens = 499;
+		const ctx = { getContextUsage: () => ({ tokens, contextWindow: 1000, percent: tokens / 10 }), getSystemPrompt: () => "system" };
+		const sample = () => runtime.handlers.get("context")!({ messages: [runtime.bootstrapMessage] }, ctx);
+		sample(); expect(pressureEvents(paths)).toHaveLength(0);
+		for (tokens of [500, 610, 699]) sample();
+		expect(pressureEvents(paths)).toHaveLength(1);
+		expect(pressureEvents(paths)[0]).toMatchObject({
+			task_id: paths.runId, goal_id: paths.runId, execution_id: "exec-facts", agent_id: "agent-pressure", status: "UPDATED",
+			context_pressure: { basis: "pi_estimate", utilization: 0.5, threshold: 0.5, tokens: 500, context_window: 1000 },
+		});
+		expect(pressureEvents(paths)[0]).not.toHaveProperty("commitment_id");
+		const commitment = claimTestWork(paths, { goalId: paths.runId, workerExecutionId: "exec-facts", work: "continue after the initial pressure signal" });
+		process.env.CODEFLOW_COMMITMENT_ID = commitment.id;
+		for (tokens of [700, 750, 600, 700]) sample();
+		expect(pressureEvents(paths).map(event => event.context_pressure.threshold)).toEqual([0.5, 0.7]);
+		expect(pressureEvents(paths)[1]).toMatchObject({ commitment_id: commitment.id, execution_id: "exec-facts", agent_id: "agent-pressure" });
+		expect(loadReceiptChain(paths, commitment.id).terminal).toBeNull();
+		expect(scan(paths.events, 0, ["execution_interrupted", "receipt_submitted"]).events).toHaveLength(0);
+	});
+
+	test("a new execution of the same Agent starts at its highest observed pressure threshold", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-pressure-")); dirs.push(root);
+		const paths = new RunPaths(path.join(root, "runs"), "task-pressure");
+		for (const executionId of ["exec-first", "exec-followup"]) {
+			const runtime = harness(paths);
+			process.env.CODEFLOW_EXECUTION_ID = executionId;
+			process.env.CODEFLOW_TEAM_AGENT_ID = "agent-reused";
+			const ctx = { getContextUsage: () => ({ tokens: 750, contextWindow: 1000, percent: 75 }), getSystemPrompt: () => "system" };
+			for (let i = 0; i < 2; i++) runtime.handlers.get("context")!({ messages: [runtime.bootstrapMessage] }, ctx);
+		}
+		expect(pressureEvents(paths).map(event => [event.agent_id, event.execution_id, event.context_pressure.threshold])).toEqual([
+			["agent-reused", "exec-first", 0.7], ["agent-reused", "exec-followup", 0.7],
+		]);
+	});
+
+	test("unavailable or invalid usage produces no pressure event and remains unknown", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-pressure-")); dirs.push(root);
+		const paths = new RunPaths(path.join(root, "runs"), "task-pressure");
+		const runtime = harness(paths);
+		for (const usage of [undefined, { tokens: null, contextWindow: 1000 }, { tokens: 900, contextWindow: 0 },
+			{ tokens: NaN, contextWindow: 1000 }, { tokens: Infinity, contextWindow: 1000 },
+			{ tokens: -100, contextWindow: 1000 }, { tokens: 900, contextWindow: Infinity }]) {
+			runtime.handlers.get("context")!({ messages: [runtime.bootstrapMessage] }, { getContextUsage: () => usage, getSystemPrompt: () => "system" });
+		}
+		expect(pressureEvents(paths)).toHaveLength(0);
+		expect(readRunFactsRecords(paths.runFactsLedger).every(record => record.context_utilization.basis === "unknown")).toBe(true);
+	});
+
+	test("pressure delivery validates attribution and numeric measurements and strips nested extras", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-pressure-")); dirs.push(root);
+		const paths = new RunPaths(path.join(root, "runs"), "task-pressure");
+		const pressure = { basis: "pi_estimate", utilization: 0.7, threshold: 0.7, tokens: 700, context_window: 1000 };
+		const deliver = (payload: Record<string, unknown>, kind = "context_pressure") => deliverEvent({
+			stagingDir: paths.tmp, targetDir: paths.events, counterPath: paths.eventSeq, subject: "exec-pressure", kind, status: "UPDATED",
+			payload: { task_id: paths.runId, goal_id: paths.runId, execution_id: "exec-pressure", context_pressure: pressure, ...payload },
+		});
+		for (const invalid of [{ tokens: -1 }, { context_window: 0 }, { utilization: 0.2 }, { threshold: 0.6 },
+			{ basis: "unknown" }, { tokens: NaN }, { context_window: Infinity }]) {
+			expect(() => deliver({ context_pressure: { ...pressure, ...invalid } })).toThrow(/invalid context pressure/);
+		}
+		expect(() => deliver({ execution_id: undefined })).toThrow(/execution_id/);
+		expect(() => deliver({}, "goal_updated")).toThrow(/require a context_pressure event/);
+		expect(pressureEvents(paths)).toHaveLength(0);
+		deliver({ context_pressure: { ...pressure, transcript: "PRIVATE_CONTEXT_SENTINEL" } });
+		expect(pressureEvents(paths)[0].context_pressure).toEqual(pressure);
+		expect(JSON.stringify(pressureEvents(paths))).not.toContain("PRIVATE_CONTEXT_SENTINEL");
+	});
+
 	test("records the complete prompt shape and only injects facts at utilization thresholds", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeflow-facts-"));
 		dirs.push(root);
@@ -218,7 +300,10 @@ describe("execution-local run facts", () => {
 		const ctx = {
 			getContextUsage: () => ({ tokens: utilization * 1_000, contextWindow: 1_000, percent: utilization * 100 }),
 			getSystemPrompt: () => "system",
-			abort: () => { aborts++; },
+			abort: () => {
+				expect(pressureEvents(paths).at(-1).context_pressure.threshold).toBe(0.8);
+				aborts++;
+			},
 			shutdown: () => { shutdowns++; },
 		};
 		const context = runtime.handlers.get("context")!;
@@ -240,6 +325,8 @@ describe("execution-local run facts", () => {
 			reasons: ["CONTEXT_BUDGET_EXCEEDED"],
 			summary: CONTEXT_BUDGET_INTERRUPTED_SUMMARY,
 		});
+		expect(pressureEvents(paths).map(event => event.context_pressure.threshold)).toEqual([0.7, 0.8]);
+		expect(pressureEvents(paths).at(-1).seq).toBeLessThan(interrupted[0].seq);
 		expect(scan(paths.events, 0, ["run_finished", "worker_reported", "receipt_submitted"]).events).toHaveLength(0);
 		expect({ aborts, shutdowns }).toEqual({ aborts: 1, shutdowns: 1 });
 
@@ -247,6 +334,7 @@ describe("execution-local run facts", () => {
 		context({ messages }, ctx);
 		expect(loadReceiptChain(paths, commitment.id).receipts).toHaveLength(0);
 		expect(scan(paths.events, 0, ["execution_interrupted"]).events).toHaveLength(1);
+		expect(pressureEvents(paths)).toHaveLength(2);
 		expect({ aborts, shutdowns }).toEqual({ aborts: 1, shutdowns: 1 });
 	});
 
@@ -271,6 +359,9 @@ describe("execution-local run facts", () => {
 		const interrupted = scan(paths.events, 0, ["execution_interrupted"]).events;
 		expect(interrupted).toHaveLength(1);
 		expect(interrupted[0].reasons).toEqual(["CONTEXT_BUDGET_EXCEEDED"]);
+		expect(pressureEvents(paths)).toHaveLength(1);
+		expect(pressureEvents(paths)[0]).toMatchObject({ execution_id: "exec-facts", context_pressure: { threshold: 0.8 } });
+		expect(pressureEvents(paths)[0]).not.toHaveProperty("agent_id");
 		expect(scan(paths.events, 0, ["run_finished", "worker_reported", "receipt_submitted"]).events).toHaveLength(0);
 	});
 });

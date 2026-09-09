@@ -204,8 +204,8 @@ export async function run(
 		buildAgentArgv(
 			resolved,
 			resumedCommitment
-				? "Re-ground the Task from durable state and continue it to closure."
-				: "Inspect the assigned Task, claim bounded work, implement and verify it, then report a Receipt.",
+				? "Re-ground the Task from durable state, continue the existing Commitment, and report your contribution and any remaining work before ending this execution."
+				: "Inspect the assigned Task, claim bounded work, implement and verify it, and report your contribution and any remaining work before ending this execution.",
 			agentExtensions(RUNTIME_DIR),
 			AGENT_TOOL_ALLOWLIST,
 		),

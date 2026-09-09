@@ -63,7 +63,7 @@ describe("concise Receipt chain", () => {
 		expect(inspectCommitment(paths, commitment.id).receipts.map((receipt) => receipt.id)).toEqual([first.id, second.id]);
 	});
 
-	test("blocked requires remaining work and completed forbids it", () => {
+	test("blocked requires remaining work; completed may record what remains", () => {
 		const paths = runtime();
 		const blocked = claimTestWork(paths, { goalId: paths.runId, work: "needs access" });
 		expect(() => submitReceipt(paths, {
@@ -72,12 +72,17 @@ describe("concise Receipt chain", () => {
 			summary: "access missing",
 		})).toThrow(/must explain what remains/);
 		const completed = claimTestWork(paths, { goalId: paths.runId, work: "complete work" });
-		expect(() => submitReceipt(paths, {
+		const receipt = submitReceipt(paths, {
 			commitmentId: completed.id,
 			status: "completed",
-			summary: "claimed completion",
-			remaining: ["unfinished item"],
-		})).toThrow(/cannot contain remaining work/);
+			summary: "core work done",
+			remaining: ["follow-up work remains for the outer caller"],
+		});
+		const folded = loadReceiptChain(paths, completed.id);
+		expect(folded.terminal?.id).toBe(receipt.id);
+		expect(folded.terminal?.status).toBe("completed");
+		expect(folded.remaining).toEqual(["follow-up work remains for the outer caller"]);
+		expect(commitmentHistory(paths).find((view) => view.commitment.id === completed.id)?.status).toBe("completed");
 	});
 
 	test("events and Goal inspection distinguish progress from closure", () => {

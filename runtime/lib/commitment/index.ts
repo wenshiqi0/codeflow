@@ -501,9 +501,6 @@ export function submitReceipt(paths: RunPaths, options: SubmitReceiptOptions): R
 	if (options.status === "blocked" && remaining.length === 0) {
 		throw new CliError("a blocked Receipt must explain what remains");
 	}
-	if (options.status === "completed" && remaining.length > 0) {
-		throw new CliError("a completed Receipt cannot contain remaining work");
-	}
 	const content: Omit<ReceiptRecord, "id"> = {
 		schema_version: RECEIPT_SCHEMA_VERSION,
 		seq: nextSeq(paths.semanticSeq),

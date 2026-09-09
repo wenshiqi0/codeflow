@@ -69,4 +69,20 @@ describe("Pi executor prompt contracts", () => {
 		]) expect(agent).toMatch(expression);
 		expect(agent).not.toMatch(/Do not create or launch other Agents|keeps any Parent alive|Child feedback|every depth|Root Agent owns/);
 	});
+	test("completed reports describe a finished contribution and preserve remaining work", () => {
+		const agent = fs.readFileSync(path.join(root, "references/agent.md"), "utf8");
+		expect(agent).toMatch(/completed` Receipt\s+ends your contribution and may include remaining work/);
+		expect(agent).toMatch(/record unfinished\s+work in `remaining`/);
+		expect(agent).toMatch(/Under\s+context pressure, leave this report while enough context remains/);
+		expect(agent).not.toMatch(/widen work or evidence coverage before closing/);
+		const tools: any[] = [];
+		organization({ on() {}, registerTool(value: unknown) { tools.push(value); } } as never);
+		const report = tools[0].parameters.properties.action.anyOf.find((entry: any) => entry.properties.name.const === "report");
+		expect(report.description).toContain("A completed report may include remaining work");
+		for (const entry of ["runtime/cli/run.ts", "runtime/cli/team-runner.ts"]) {
+			const source = fs.readFileSync(path.join(root, entry), "utf8");
+			expect(source).toContain("report your contribution and any remaining work before ending this execution");
+			expect(source).not.toContain("continue it to closure");
+		}
+	});
 });

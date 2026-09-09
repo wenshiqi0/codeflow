@@ -147,7 +147,7 @@ catch (error) { console.error(error.message); process.exitCode = 1; }`;
 	});
 	test("finish checks executions and open work rather than inferring completion from a stopped process", async () => {
 		const { paths } = fixture();
-		expect(() => finishTeam(paths, "completed", "No evidence")).toThrow(/actual completed/);
+		expect(() => finishTeam(paths, "completed", "No evidence")).toThrow(/recorded Agent Receipt/);
 		const agent = launchTeamAgent(paths, { focus: "Unfinished" }, false);
 		expect(() => finishTeam(paths, "blocked", "Not yet", ["Work"])).toThrow(/execution to stop/);
 		const claim = claimTestWork(paths, { goalId: paths.runId, workerExecutionId: agent.execution_id, work: "Unfinished", pid: 2_000_000_000 });
@@ -156,6 +156,31 @@ catch (error) { console.error(error.message); process.exitCode = 1; }`;
 		expect(() => finishTeam(paths, "completed", "Process stopped")).toThrow(/open Commitment/);
 		const resumed = launchTeamAgent(paths, { mode: "resume", agentId: agent.agent_id, focus: "Recover original work" }, false);
 		expect(resumed.resume_commitment_id).toBe(claim.id); expect(resumed.session_path).not.toBe(agent.session_path);
+	});
+	test("a completed contribution with remaining work keeps dependent assignments waiting", () => {
+		const { paths } = fixture();
+		createTeamGoal(paths, { id: "contract", objective: "Establish the contract" });
+		createTeamGoal(paths, { id: "implementation", objective: "Implement it", dependencies: ["contract"] });
+		const first = launchTeamAgent(paths, { goalId: "contract", focus: "Inspect behavior" }, false);
+		const claim = claimTestWork(paths, { goalId: "contract", workerExecutionId: first.execution_id, work: first.focus });
+		submitReceipt(paths, { commitmentId: claim.id, status: "completed", summary: "Initial investigation recorded", remaining: ["Verify another consumer"] });
+		completeAgentExecution(paths, first.agent_id, first.execution_id, { status: "idle", summary: "Contribution ended", exit_code: 0 });
+		expect(teamStatus(paths).status).toBe("open");
+		expect(() => launchTeamAgent(paths, { goalId: "implementation", focus: "Implement" }, false)).toThrow(/dependencies/);
+		const next = launchTeamAgent(paths, { goalId: "contract", focus: "Verify another consumer" }, false);
+		finishAssignment(paths, next);
+		expect(launchTeamAgent(paths, { goalId: "implementation", focus: "Implement" }, false).goal_id).toBe("implementation");
+	});
+
+	test.each(["completed", "blocked"] as const)("outer completion judges recorded work independently of the Agent's %s label", (status) => {
+		const { paths } = fixture();
+		const agent = launchTeamAgent(paths, { focus: "Inspect the change" }, false);
+		const claim = claimTestWork(paths, { goalId: paths.runId, workerExecutionId: agent.execution_id, work: agent.focus });
+		submitReceipt(paths, { commitmentId: claim.id, status, summary: "Inspection recorded; external verification remains", remaining: ["Run external verification"] });
+		completeAgentExecution(paths, agent.agent_id, agent.execution_id, { status: "idle", summary: "Contribution ended", exit_code: 0 });
+		expect(taskState(paths).status).toBe("pending");
+		expect(() => finishTeam(paths, "completed", "Verification remains", ["Run external verification"])).toThrow(/remaining work/);
+		expect(finishTeam(paths, "completed", "Outer caller completed external verification and reviewed the evidence").status).toBe("completed");
 	});
 	test("stopped reservations and duplicate runners cannot start Pi or overwrite an Agent", async () => {
 		const { paths } = fixture();

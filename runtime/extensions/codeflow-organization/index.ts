@@ -78,7 +78,7 @@ const ACTION_SCHEMAS = {
 		summary: Type.String({ minLength: 1 }),
 		effects: Type.Optional(Type.Array(Effect)),
 		remaining: Type.Optional(StringArray),
-	}, { additionalProperties: false, description: "Report progress, completion, or a blocker. Before claim, only blocked is valid." }),
+	}, { additionalProperties: false, description: "Report progress, a finished contribution, or a blocker. A completed report may include remaining work. Before claim, only blocked is valid." }),
 } as const;
 
 function parameters() {

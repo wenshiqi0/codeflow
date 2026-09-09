@@ -97,7 +97,7 @@ export default function offlineAgent(pi) {
     }
     if (!loadTerminalReceipt(paths, id) && !(focus === "progress-only" && progressed)) {
       progressed = true;
-      return fauxAssistantMessage([fauxToolCall("collaborate", { action: { name: "report", status: focus === "progress-only" ? "progress" : "completed", summary: "Offline evidence for " + focus } })]);
+      return fauxAssistantMessage([fauxToolCall("collaborate", { action: { name: "report", status: focus === "progress-only" ? "progress" : "completed", summary: "Offline evidence for " + focus, remaining: ["follow-up verification remains for the outer caller"] } })]);
     }
     return fauxAssistantMessage([{ type: "text", text: "PUBLIC_AGENT_MEMORY:" + execution }]);
   }));
@@ -279,7 +279,7 @@ describe("outer Agent runner", () => {
 		const second = claim("Second work");
 		submitReceipt(f.paths, { commitmentId: second.id, status: "progress", summary: "not done" });
 		expect(classifyAgentCompletion(f.paths, execution, observation).status).toBe("interrupted");
-		submitReceipt(f.paths, { commitmentId: second.id, status: "completed", summary: "second done" });
+		submitReceipt(f.paths, { commitmentId: second.id, status: "completed", summary: "second done", remaining: ["follow-up remains for the outer caller"] });
 		expect(classifyAgentCompletion(f.paths, execution, observation).status).toBe("idle");
 		expect(classifyAgentCompletion(f.paths, execution, { ...observation, stopReason: "error" }).reasons).toEqual(["PROVIDER_FAILURE"]);
 		expect(agentExitReasons({ ...observation, cancelled: true, diagnostics: "CODEFLOW_CONTEXT_BUDGET_EXCEEDED" })).toEqual(["CONTEXT_BUDGET_EXCEEDED"]);
@@ -306,6 +306,8 @@ describe("outer Agent runner", () => {
 		const claims = commitmentHistory(f.paths);
 		expect(claims).toHaveLength(2);
 		expect(claims.every(view => view.folded.terminal?.status === "completed")).toBe(true);
+		expect(claims[0].folded.terminal?.status).toBe("completed");
+		expect(claims[0].folded.remaining).toEqual(["follow-up verification remains for the outer caller"]);
 		expect(new Set(claims.map(view => view.commitment.worker_execution_id))).toEqual(new Set([first.execution_id, next.execution_id]));
 	}, 40_000);
 

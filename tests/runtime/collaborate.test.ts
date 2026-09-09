@@ -6,6 +6,7 @@ import { Value } from "typebox/value";
 import organization, { registerTeamRunnerSupervisor } from "../../runtime/extensions/codeflow-organization";
 import { commitmentHistory, loadReceiptChain, submitReceipt } from "../../runtime/lib/commitment";
 import { createGoal } from "../../runtime/lib/goals";
+import { goalState } from "../../runtime/lib/state";
 import { createTask } from "../../runtime/lib/tasks";
 import { RunPaths } from "../../runtime/lib/paths";
 import { scan } from "../../runtime/lib/wait";
@@ -79,11 +80,15 @@ describe("executor-only collaborate protocol", () => {
 		const claimed = body(await execute(tool, { name: "claim", work: "repair the parser", done_when: ["regression passes"] }));
 		await execute(tool, { name: "report", status: "progress", summary: "isolated the failure", remaining: ["repair and verify"] });
 		expect(loadReceiptChain(paths, claimed.commitment_id).terminal).toBeNull();
-		const receipt = body(await execute(tool, { name: "report", status: "completed", summary: "parser repaired and verified", effects: [{ file: "src/parser.ts" }] }));
-		expect(loadReceiptChain(paths, claimed.commitment_id).terminal?.id).toBe(receipt.receipt_id);
+		const receipt = body(await execute(tool, { name: "report", status: "completed", summary: "parser repaired and verified", effects: [{ file: "src/parser.ts" }], remaining: ["prompt sync remains for the outer caller"] }));
+		const folded = loadReceiptChain(paths, claimed.commitment_id);
+		expect(folded.terminal?.id).toBe(receipt.receipt_id);
+		expect(folded.terminal?.status).toBe("completed");
+		expect(folded.remaining).toEqual(["prompt sync remains for the outer caller"]);
 		const recalled = body(await execute(tool, { name: "inspect", receipt_id: receipt.receipt_id }));
 		expect(recalled.commitment.id).toBe(claimed.commitment_id);
 		expect(recalled.receipt.summary).toBe("parser repaired and verified");
+		expect(recalled.receipt.remaining).toEqual(["prompt sync remains for the outer caller"]);
 		await expect(execute(tool, { name: "inspect", commitment_id: claimed.commitment_id, receipt_id: receipt.receipt_id })).rejects.toThrow(/at most one/);
 	});
 	test("pre-claim blockers prevent fabricated claims and only blocked is accepted", async () => {
@@ -112,10 +117,13 @@ describe("executor-only collaborate protocol", () => {
 		submitReceipt(paths, { commitmentId: prior.id, status: "completed", summary: "prerequisite established" });
 		expect(body(await execute(tool, { name: "claim", work: "use prerequisite" })).goal_id).toBe("dependent");
 	});
-	test("a fresh execution can claim a completed Goal without copying it or inheriting parent identity", async () => {
+	test("a completed Receipt with remaining leaves the Goal claimable for a fresh execution", async () => {
 		const { paths, tool } = runtime();
 		const first = body(await execute(tool, { name: "claim", work: "first pass" }));
-		await execute(tool, { name: "report", status: "completed", summary: "first pass complete" });
+		await execute(tool, { name: "report", status: "completed", summary: "first pass complete", remaining: ["second pass remains"] });
+		const closed = goalState(paths, paths.runId);
+		expect(closed.status).toBe("pending");
+		expect(closed.remaining).toEqual(["second pass remains"]);
 		delete process.env.CODEFLOW_COMMITMENT_ID;
 		process.env.CODEFLOW_EXECUTION_ID = "exec-followup";
 		process.env.CODEFLOW_PARENT_COMMITMENT_ID = "obsolete-parent";

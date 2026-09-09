@@ -44,8 +44,15 @@ Runtime 不因 Claim 状态拦截普通工程工具。内层
 无活动只提醒检查，既不是判死也不是执行超时。取消观察不停止 Worker。底层文件
 通知和兜底扫描在程序内处理，不再要求模型反复调用 `sub + timeout`。`sub` 仍可用于
 历史/诊断读取。宿主需要保留异步句柄；CLI 本身不能唤醒已结束的宿主对话。
+`watch` 同时输出持久化的 `context_pressure` 事件：按 execution 在 50%、70%、80%
+压力升级时各通知一次，携带 Pi 用量估计、窗口大小和触发阈值；80% 信号先于预算中断。
+外层结合回执判断接续工作，断线后可用 `--since` 继续读取。
 
 `progress` Receipt 保持 Commitment 开放；`completed` 和 `blocked` 关闭它。
+`completed` 表示执行器交付了本轮贡献，允许记录剩余工作；外层读取回执中的实际成果、
+证据和 `remaining`，决定后续分派与整体完成。执行器可在上下文仍有余量时完成回执并结束，
+后续工作继续复用 Goal，选择旧 session 或新 Agent。Goal 的最新报告仍有 remaining 时，
+其投影保持 pending（依赖未满足时为 waiting）。
 Runtime 中断不是 Receipt。外层必须先确认全部执行器停止、没有开放 Commitment，才能
 `finish` Task。Task 收口是外层记录，不伪造某个执行器的 Receipt。
 

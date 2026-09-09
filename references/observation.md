@@ -7,6 +7,16 @@ transcript. Usage-only growth extends per-execution patience without producing
 stdout. `attention` and `settled` are notifications, not process exit or Task
 completion. Only Task finish or observer cancellation ends the stream.
 
+Context pressure arrives as `type: "event"` with `event.kind: "context_pressure"`.
+Its `context_pressure` object contains `basis: "pi_estimate"`, `utilization`,
+`threshold`, `tokens`, and `context_window`. Utilization and threshold are ratios
+(for example, `0.7` is 70%). Each execution emits only when reaching a higher
+50%, 70%, or 80% level; a jump reports the highest reached level once. Unknown
+estimates emit no signal. Use the event's Agent/execution identity to interpret
+its scope, including events replayed by `--since`. The 80% event is persisted
+before the existing budget interruption. Read pressure with the durable progress
+reports to prepare the next assignment; observing it does not stop a Worker.
+
 Some host shell tools return a handle after a short transport wait. That does
 not mean the watch timed out. Empty reads should stay inside host-side code,
 not produce a fresh model decision to run `sub` or inspect usage again. Surface

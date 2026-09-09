@@ -80,7 +80,7 @@ codeteam finish <task> --status blocked --summary '<blocker>' --remaining '<work
 Busy Agents and full capacity reject new assignments without queueing or
 waiting for model work. Start one asynchronous `watch` per active Task and keep
 its process/session handle across followups. It streams assignments, Claims,
-progress Receipts, status changes, and attention notices as NDJSON. Usage-only
+progress Receipts, context pressure, status changes, and attention notices as NDJSON. Usage-only
 increments silently extend that execution's inactivity window; unchanged
 snapshots produce no output. Read the same stream, rather than running a new
 `sub` after each fixed timeout. `sub` remains a bounded historical/diagnostic read.
@@ -91,6 +91,14 @@ The stream stays open while the Task is open, including idle periods awaiting
 followup. Task finish closes it; cancelling the observer does not stop Workers.
 Usage arrives after a model response, so a pending request or long tool can be
 alive without new usage. A busy peer's usage never proves this Worker is active.
+
+`context_pressure` events report Pi's context estimate at the 50%, 70%, and 80%
+thresholds, once per rising level in each execution. Read their Agent/execution
+identity and numeric measurements alongside progress Receipts to plan remaining
+work and session reuse. They are durable events, available after reconnecting
+with `--since`; they do not change work state. The 80% event precedes the existing
+context-budget interruption, whose stopped execution must be reconciled before
+recovery. Missing estimates produce no pressure signal.
 
 Use the host's asynchronous transport to consume the persistent stream. Handle
 transport-level empty waits programmatically with the same handle; they are not
@@ -122,18 +130,25 @@ is unavailable, not zero.
 Agents self-author Commitments after grounded inspection. Claim records work
 responsibility, not tool permission; Runtime does not gate engineering tools on
 Claim status. `progress` keeps one open; `completed` or `blocked` closes it.
-A crashed process, provider
-error, missing Receipt, or 80% context interruption is not a semantic blocker
-or success. Inspect Runtime failures and existing effects before deciding on
-an explicitly authorized recovery. Do not silently retry external model calls.
+`completed` means the Agent has finished its contribution and may include
+remaining work. Read the summary, effects, verification limits, and remaining
+work to decide what to assign next. Reuse the Goal for a continuation; choose
+an idle Agent's session only when its context and available space are useful,
+or spawn a fresh Agent from the durable reports.
+A crashed process, provider error, missing Receipt, or 80% context interruption
+is not a semantic blocker or success. Inspect Runtime failures and existing
+effects before deciding on an explicitly authorized recovery. Do not silently
+retry external model calls.
 
 An Agent's terminal Receipt does not close the outer Task. Inspect results,
 verify the integrated diff against the user's outcome, and resolve or disclose
 remaining work. `finish` requires all execution processes stopped and every
 Commitment terminal; it records your Task conclusion without fabricating an
-Agent Receipt. A `completed` Receipt alone is not independent correctness or
-official benchmark evidence. Runtime activity and an idle Agent are not proof
-that the user outcome is achieved.
+Agent Receipt. Your Task conclusion is based on the combined evidence and
+remaining work, independently of the Agents' terminal status labels. A
+`completed` Receipt alone is not independent correctness or official benchmark
+evidence. Runtime activity and an idle Agent are not proof that the user outcome
+is achieved.
 
 `codeflow exec` remains a single-executor convenience/baseline, not outer-loop
 orchestration. Old `codemark` Manager live tests are retired; historical report

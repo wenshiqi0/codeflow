@@ -35,6 +35,7 @@ export const EVENT_KINDS = [
 	"runner_exited",
 	"agent_assigned",
 	"agent_execution_finished",
+	"context_pressure",
 ] as const;
 
 export type EventKind = (typeof EVENT_KINDS)[number];
@@ -73,13 +74,38 @@ export const EVENT_REASONS = [
 
 export type EventReason = (typeof EVENT_REASONS)[number];
 
+export const CONTEXT_PRESSURE_THRESHOLDS = [0.5, 0.7, 0.8] as const;
+export interface ContextPressure {
+	basis: "pi_estimate";
+	utilization: number;
+	threshold: (typeof CONTEXT_PRESSURE_THRESHOLDS)[number];
+	tokens: number;
+	context_window: number;
+}
+
+/** Project only known numeric observations; never forward arbitrary nested data. */
+export function parseContextPressure(value: unknown): ContextPressure | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return;
+	const data = value as Record<string, unknown>;
+	if (data.basis !== "pi_estimate"
+		|| typeof data.utilization !== "number" || !Number.isFinite(data.utilization)
+		|| typeof data.threshold !== "number" || !(CONTEXT_PRESSURE_THRESHOLDS as readonly number[]).includes(data.threshold)
+		|| data.utilization < data.threshold
+		|| typeof data.tokens !== "number" || !Number.isFinite(data.tokens) || data.tokens < 0
+		|| typeof data.context_window !== "number" || !Number.isFinite(data.context_window) || data.context_window <= 0
+		|| data.utilization !== data.tokens / data.context_window) return;
+	return { basis: "pi_estimate", utilization: data.utilization, threshold: data.threshold as ContextPressure["threshold"],
+		tokens: data.tokens, context_window: data.context_window };
+}
+
 export const MAX_EVENT_SUMMARY_CHARS = 240;
 export const MAX_EVENT_LOG_SIDE_CHARS = 100;
 
 /**
  * The event body is deliberately not an arbitrary object. Besides the
  * contract fields written by deliverEvent, payloads may carry only identifiers
- * and pointers. Diagnostics and provider prose have no legal route into events.
+ * and pointers, plus validated context-pressure measurements. Diagnostics and
+ * provider prose have no legal route into events.
  */
 const ALLOWED_PAYLOAD_KEYS = new Set([
 	"reasons",
@@ -100,6 +126,7 @@ const ALLOWED_PAYLOAD_KEYS = new Set([
 	"exit_code",
 	"remaining",
 	"orchestration",
+	"context_pressure",
 ]);
 
 /** An event summary is one bounded mechanical line. */
@@ -192,6 +219,18 @@ export function deliverEvent(options: {
 			throw new Error(`event payload field is not allowed: ${key}`);
 		}
 	}
+	let pressure: ContextPressure | undefined;
+	if (options.kind === "context_pressure") {
+		pressure = parseContextPressure(options.payload.context_pressure);
+		if (options.status !== "UPDATED" || !pressure) throw new Error("invalid context pressure event");
+		for (const key of ["task_id", "goal_id", "execution_id", "agent_id", "commitment_id"]) {
+			const value = options.payload[key];
+			if (value === undefined && (key === "agent_id" || key === "commitment_id")) continue;
+			if (typeof value !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(value)) throw new Error(`invalid context pressure ${key}`);
+		}
+	} else if (options.payload.context_pressure !== undefined) {
+		throw new Error("context pressure measurements require a context_pressure event");
+	}
 	const reasons = options.payload.reasons;
 	if (reasons !== undefined) {
 		if (!Array.isArray(reasons)) throw new Error("event reasons must be an array");
@@ -208,6 +247,7 @@ export function deliverEvent(options: {
 	const name = eventName(seq, options.subject, options.kind, options.status);
 	const body = {
 		...options.payload,
+		...(pressure ? { context_pressure: pressure } : {}),
 		schema_version: 1,
 		seq,
 		kind: options.kind,

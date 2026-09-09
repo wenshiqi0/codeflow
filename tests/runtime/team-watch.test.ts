@@ -216,3 +216,58 @@ describe("one persistent Task observation context", () => {
 		}
 	});
 });
+
+describe("context pressure projection through the persistent stream", () => {
+	const measurement = { basis: "pi_estimate", utilization: 0.86, threshold: 0.8, tokens: 172_000, context_window: 200_000 };
+	function writePressure(paths: RunPaths, agent: ReturnType<typeof launchTeamAgent>, seq: number,
+		pressure: unknown = measurement, extra: Record<string, unknown> = {}) {
+		fs.writeFileSync(path.join(paths.events, `${String(seq).padStart(5, "0")}--${agent.agent_id}--context_pressure--UPDATED.json`),
+			JSON.stringify({ task_id: paths.runId, goal_id: agent.goal_id, agent_id: agent.agent_id,
+				execution_id: agent.execution_id, context_pressure: pressure, ...extra }) + "\n");
+	}
+
+	test("streams the whitelist projection once, attributed to the owning execution, with no session leakage", async () => {
+		const { paths } = fixture();
+		const a = launchTeamAgent(paths, { focus: "Pressured" }, false);
+		const b = launchTeamAgent(paths, { focus: "Peer" }, false);
+		const m = monitor(paths);
+		const cursor = scan(paths.events, 0, []).waterMark;
+		writePressure(paths, a, cursor + 1, { ...measurement, model_prose: "private model prose", session_path: "/private/a/session.jsonl" },
+			{ session: "PRIVATE_SESSION_SENTINEL" });
+		await until(() => m.messages.some((x: any) => x.type === "event" && x.event?.kind === "context_pressure"));
+		const message = m.messages.find((x: any) => x.type === "event" && x.event?.kind === "context_pressure")!;
+		expect(message).toMatchObject({ schema_version: 1, task_id: paths.runId, type: "event" });
+		expect(message.event).toMatchObject({ kind: "context_pressure", status: "UPDATED", seq: cursor + 1,
+			agent_id: a.agent_id, execution_id: a.execution_id, goal_id: a.goal_id, context_pressure: measurement });
+		expect(JSON.stringify(message.event)).not.toContain("private model prose");
+		expect(JSON.stringify(m.messages)).not.toContain("PRIVATE_SESSION_SENTINEL");
+		expect(m.messages.some((x: any) => x.type === "event" && x.event?.kind === "context_pressure" && x.event?.agent_id === b.agent_id)).toBe(false);
+		// Silent usage renewals cycle the loop; the seen set must not re-emit the same event.
+		for (let i = 0; i < 3; i++) { await Bun.sleep(40); appendUsageRecord(paths, record(paths, a)); }
+		await Bun.sleep(120);
+		expect(m.messages.filter((x: any) => x.type === "event" && x.event?.seq === cursor + 1)).toHaveLength(1);
+		m.cancel.abort(); expect(await m.done).toBe("cancelled");
+	});
+
+	test("reconnecting with since replays nothing and attributes a later signal to its own execution", async () => {
+		const { paths } = fixture();
+		const a = launchTeamAgent(paths, { focus: "First" }, false);
+		const b = launchTeamAgent(paths, { focus: "Second" }, false);
+		let cursor = scan(paths.events, 0, []).waterMark;
+		writePressure(paths, a, cursor + 1);
+		const first = monitor(paths, 10_000, cursor);
+		await until(() => first.messages.some((x: any) => x.type === "event" && x.event?.kind === "context_pressure"));
+		first.cancel.abort(); await first.done;
+		cursor = scan(paths.events, 0, []).waterMark;
+		const second = monitor(paths, 10_000, cursor);
+		await Bun.sleep(150);
+		expect(second.messages.some((x: any) => x.type === "event" && x.event?.seq <= cursor)).toBe(false);
+		writePressure(paths, b, cursor + 1, { ...measurement, utilization: 0.55, threshold: 0.5, tokens: 110_000 });
+		await until(() => second.messages.some((x: any) => x.type === "event" && x.event?.kind === "context_pressure"));
+		const event = (second.messages.find((x: any) => x.type === "event" && x.event?.kind === "context_pressure")!).event as any;
+		expect(event.agent_id).toBe(b.agent_id);
+		expect(event.execution_id).toBe(b.execution_id);
+		expect(event.context_pressure).toEqual({ ...measurement, utilization: 0.55, threshold: 0.5, tokens: 110_000 });
+		second.cancel.abort(); await second.done;
+	});
+});

@@ -73,6 +73,25 @@ describe("Goal and Commitment protocol", () => {
 		expect(Object.keys(goalState(paths, paths.runId))).not.toContain("runnable");
 	});
 
+	test("a completed contribution can leave work for another Commitment in the same Goal", () => {
+		const paths = runtime();
+		createTask(paths, "Ship feature");
+		createGoal(paths, { id: "contract", objective: "Establish the contract" });
+		createGoal(paths, { id: "implementation", objective: "Implement behavior", dependencies: ["contract"] });
+		const first = claimTestWork(paths, { goalId: "contract", work: "Investigate the contract" });
+		submitReceipt(paths, {
+			commitmentId: first.id, status: "completed", summary: "Identified behavior; one consumer still needs checking",
+			remaining: ["Check the second consumer"],
+		});
+		expect(commitmentHistory(paths)[0].status).toBe("completed");
+		expect(goalState(paths, "contract")).toMatchObject({ status: "pending", remaining: ["Check the second consumer"] });
+		expect(goalState(paths, "implementation").status).toBe("waiting");
+		const next = claimTestWork(paths, { goalId: "contract", work: "Check the second consumer" });
+		submitReceipt(paths, { commitmentId: next.id, status: "completed", summary: "Both consumers verified" });
+		expect(goalState(paths, "contract")).toMatchObject({ status: "completed", remaining: [] });
+		expect(goalState(paths, "implementation").status).toBe("pending");
+	});
+
 	test("only completed and blocked are terminal Receipt outcomes", () => {
 		const paths = runtime();
 		createTask(paths, "Ship feature");

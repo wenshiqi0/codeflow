@@ -43,7 +43,7 @@ Agent 状态是 Runtime 元数据：`starting` 表示已预留，`running` 表�
 
 `status` / `inspect` / `watch` / `sub` / `usage` 提供观测。`watch` 是一个持续的只读
 NDJSON 流，同一进程跨越 spawn、idle 和 followup，Task 收口或观察者取消时退出。
-它输出原始派工 Goal/focus、Claim、进展 Receipt、状态变化和需要检查的信号；
+它输出原始派工 Goal/focus、Claim、进展 Receipt、上下文压力、状态变化和需要检查的信号；
 不输出重复快照或逐次 usage。`--since` 控制事件重放，`--idle` 默认 300 秒，表示
 逐 execution 的无活动观察窗口，不是执行时限。新 usage、状态或执行相关事件会静默
 延长该 execution 的观察窗口；其他 Agent 的活动不会掩盖它的停滞。无活动、进程
@@ -55,7 +55,8 @@ NDJSON 流，同一进程跨越 spawn、idle 和 followup，Task 收口或观察
 宿主应保留一个异步监听句柄，在程序层处理空的传输等待，只把有意义的变化交回外层。
 CLI 本身不保证能唤醒已经结束的宿主对话。观测不启动模型，也不读取 session、
 transcript 或隐藏推理。事件投影除 enum/summary 外允许携带 Task/Goal/Agent/execution/
-Commitment/Receipt 的受限标识符，便于直接 inspect，不携带工具参数、输出或私有推理。
+Commitment/Receipt 的受限标识符，便于直接 inspect；`context_pressure` 事件还投影经过
+校验的用量估计、上下文窗口与触发阈值，不携带工具参数、输出或私有推理。
 
 `stop` 先阻止该 execution 继续启动/被复用，再停止其记录的进程，保留开放 Commitment。
 runner 死亡不直接表示工作安全停止；先 stop/reconcile，再显式 resume。PID 与启动身份
@@ -67,8 +68,9 @@ Pi 正常退出、runner 发现 Pi 被强杀、外层 stop 都能核验并回收
 
 `finish` 是外层明确的 Task 结论，状态 `completed | blocked`，带 `summary` 和可选
 `remaining`；completed 不允许 remaining，blocked 必须说明 remaining。必须所有 Agent
-进程退出、所有 Commitment 终结后才能 finish；completed 还需真实 completed 工作证据。
-外层负责验证整体结果、解释已关闭 blocker 是否已被解决/覆盖。finish 写 Task 控制状态与
+进程退出、所有 Commitment 终结后才能 finish；completed 还需至少一条真实 Agent 终态回执。
+外层依据报告内容和证据验证整体结果、处理剩余工作，并解释已关闭 blocker 如何被解决/覆盖；
+Agent 的终态标签不替代外层的 Task 结论。finish 写 Task 控制状态与
 `run_finished` 事件，不伪造 Agent Receipt。Task 控制状态为 `open | completed | blocked`。
 Agent 在根 Goal 写终结 Receipt 也不会自动关闭这个外层 Task。
 
@@ -135,8 +137,18 @@ effects    可选；Git、文件、外部系统或服务的可观察引用
 remaining  可选；未完成工作
 ```
 
-progress 保持 Commitment 开放；completed 与 blocked 终结它。completed 的 remaining
-必须为空；blocked 必须说明 remaining。Runtime crash、provider failure、取消、超时、
+progress 保持 Commitment 开放；completed 与 blocked 终结它。completed 表示本轮贡献
+已经交付，允许携带非空 remaining；回执准确描述已确认事实、修改与验证结果、证据引用、
+验证范围及未完成工作。blocked 表示存在具体阻塞，必须说明 remaining。
+Agent 可在有用的工作边界或上下文压力下提交 completed 回执并正常结束本轮；外层读取
+报告与证据后，决定继续分派、调整边界或收口。后续工作在同一 Goal 下自行声明新的
+Commitment，已终结的 Commitment 保留原样。
+
+Goal 状态是报告投影：最新报告声明了 remaining 时，completed 回执结束这次贡献，
+Goal 保持 pending（依赖未满足时为 waiting），不会仅凭该 completed 标签放行依赖。
+外层仍需结合 Goal 的完整报告与证据判断整体结果；空 remaining 也不是独立验收证明。
+
+Runtime crash、provider failure、取消、超时、
 输出截断、缺少 Claim/Receipt 都是事件，不是模型语义结果。Receipt 不得承载日志、diff、
 指标标签或私有 checkpoint；观测从真实事件与状态推导，不要求模型声明统计事实。
 
@@ -152,6 +164,17 @@ fresh spawn/resume 不复制其他 session。followup 恢复本 Agent 的真实 
 私有执行状态而非持久工作协议；外层只用结构化结果评估工作，不读取工具对话/推理。
 Pi session 的 cwd 必须与 Task 仓库一致，缺少有效 session 时不能声称复用了上下文。
 
+Agent 应在仍有余量时，把当前成果、验证范围和接续工作写入 completed 回执并正常结束。
+Runtime 在每次 provider request 前使用 Pi 的 context usage 估计检查 50%、70%、80%
+三个阈值，持久写入 `context_pressure(UPDATED)` 事件。每个 execution 只在首次达到
+更高档位时发出一条；一次跨过多个阈值时只报告当前最高档位，回落再上升不重复通知。
+新的 execution（包括 followup/resume）独立判断阈值，旧执行的信号保留原有归属。
+事件包含 Task、Goal、execution、可用的 Agent/Commitment id，以及 `context_pressure`
+对象：`basis=pi_estimate`、`utilization` 比值、`threshold` 比值、`tokens` 与
+`context_window`。未知或无效估计不生成压力事件，不把缺失用量当作零。
+`watch` 通过现有 `type=event` 流输出该事件，`--since` 可用于断线后的持久事件接续。
+外层据此结合进度回执评估接续工作和 session 余量；压力事件本身不结束执行或承诺。
+80% 压力事件先落盘，再进入下面的既有中断路径。
 Pi context utilization 达到 80% 时，在下一 provider request 前停止，记录
 `CONTEXT_BUDGET_EXCEEDED`，不写假的 blocked/completed。开放 Commitment 保持开放；
 进程确认停止后由外层显式 resume，使用新 session 继续原承诺。禁用自动 compaction，

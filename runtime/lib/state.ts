@@ -48,11 +48,14 @@ function reduceHistory(
 	const hasOpen = history.some((view) => view.folded.terminal === null);
 	const terminal = receipts.filter((receipt) => isTerminalStatus(receipt.status));
 	const dependenciesComplete = dependencies.every((id) => dependencyStates.get(id) === "completed");
+	const reports = foldReceipts(receipts);
 	let status: GoalStatus;
 	if (hasOpen) status = "active";
-	else if (terminal.length > 0) status = terminal.at(-1)!.status as ReceiptStatus;
+	else if (terminal.at(-1)?.status === "completed" && reports.remaining.length > 0) {
+		// A finished contribution can leave the Goal ready for more work.
+		status = dependenciesComplete ? "pending" : "waiting";
+	} else if (terminal.length > 0) status = terminal.at(-1)!.status as ReceiptStatus;
 	else status = dependenciesComplete ? "pending" : "waiting";
-	const reports = foldReceipts(receipts);
 	return {
 		goal_id: goalId,
 		objective,

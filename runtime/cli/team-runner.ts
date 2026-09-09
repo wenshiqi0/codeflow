@@ -110,8 +110,8 @@ export async function runTeamAgent(paths: RunPaths, agentId: string, executionId
 		const resolved = resolveAgent(path.join(RUNTIME_DIR, "config.json"), team.model);
 		const argv = buildAgentArgv(resolved,
 			agent.mode === "resume"
-				? "Continue your existing open Commitment from the current durable state. Execute and verify the assigned work, then report a Receipt."
-				: "Read the current assignment and Goal, claim bounded work, execute and verify it, then report a Receipt. Previous assignments in this session are historical context, not current instructions.",
+				? "Continue your existing open Commitment from the current durable state. Execute and verify the assigned work, and report your contribution and any remaining work before ending this execution."
+				: "Read the current assignment and Goal, claim bounded work, execute and verify it, and report your contribution and any remaining work before ending this execution. Previous assignments in this session are historical context, not current instructions.",
 			agentExtensions(RUNTIME_DIR), AGENT_TOOL_ALLOWLIST);
 		argv[0] = path.join(RUNTIME_DIR, "bin", "pi");
 		argv.push("--session", agent.session_path);

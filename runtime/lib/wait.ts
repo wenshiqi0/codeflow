@@ -8,7 +8,8 @@
  * File names carry sequence, subject, kind, and status. For a terminal event
  * the observer also reads whitelisted identifiers, the closed
  * `reasons` enum and the bounded one-line `summary`. It never reads refs,
- * provider errors, diagnostics, or model prose.
+ * provider errors, diagnostics, or model prose. A context_pressure event
+ * contributes only the parseContextPressure whitelist projection.
  *
  * A directory scan is the authority; the filesystem watch is only a hint about
  * when to scan. That ordering matters: `fs.watch` semantics differ across
@@ -20,7 +21,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DEFAULT_RUNS_DIR } from "./paths";
-import { EVENT_REASONS, eventSummary } from "./events";
+import { EVENT_REASONS, eventSummary, parseContextPressure, type ContextPressure } from "./events";
 
 const EVENT_NAME =
 	/^(?<seq>\d{5})--(?<subject>[a-z0-9-]+)--(?<kind>[a-z_]+)--(?<status>[A-Z_]+)\.json$/;
@@ -42,6 +43,8 @@ export interface ObservedEvent {
 	goal_id?: string;
 	commitment_id?: string;
 	receipt_id?: string;
+	/** Whitelist projection from parseContextPressure; never raw payload. */
+	context_pressure?: ContextPressure;
 }
 
 export interface ScanResult {
@@ -106,6 +109,13 @@ export function scan(directory: string, since: number, kinds: string[], seen?: R
 				)
 			) {
 				observed.reasons = body.reasons.map((reason) => String(reason));
+			}
+			// Context pressure is a measurement, not prose: only the validated
+			// whitelist structure crosses the observation plane, and a malformed
+			// body degrades to an event without the projection, never an error.
+			if (observed.kind === "context_pressure" && observed.status === "UPDATED") {
+				const pressure = parseContextPressure(body.context_pressure);
+				if (pressure) observed.context_pressure = pressure;
 			}
 		} catch {
 			// An old or malformed body cannot erase the authoritative filename

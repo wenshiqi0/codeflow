@@ -243,3 +243,107 @@ describe("waiting", () => {
 		expect(result.events).toHaveLength(1);
 	});
 });
+
+describe("context pressure projection", () => {
+	const measurement = {
+		basis: "pi_estimate",
+		utilization: 0.72,
+		threshold: 0.7,
+		tokens: 144_000,
+		context_window: 200_000,
+	};
+
+	test("other event kinds and statuses cannot expose pressure measurements", () => {
+		writeEvent(1, "agent-pressure", "goal_updated", "UPDATED", { context_pressure: measurement });
+		writeEvent(2, "agent-pressure", "context_pressure", "BLOCKED", { context_pressure: measurement });
+		const results = scan(events, 0, []).events;
+		expect(results).toHaveLength(2);
+		expect(results.every(event => event.context_pressure === undefined)).toBe(true);
+	});
+
+	test("attaches only the parsed whitelist, never the raw measurement payload", () => {
+		writeEvent(2, "agent-pressure", "context_pressure", "UPDATED", {
+			task_id: "task-one",
+			goal_id: "task-one",
+			agent_id: "agent-one",
+			execution_id: "exec-one",
+			commitment_id: "c_one",
+			context_pressure: {
+				...measurement,
+				model_prose: "the model feels squeezed",
+				session_path: "/private/session.jsonl",
+			},
+			prompt: "PRIVATE",
+		});
+		const [event] = scan(events, 0, []).events;
+		expect(event).toMatchObject({ kind: "context_pressure", status: "UPDATED" });
+		expect(event.context_pressure).toEqual(measurement);
+		expect(event.commitment_id).toBe("c_one");
+		expect(JSON.stringify(event)).not.toContain("model_prose");
+		expect(JSON.stringify(event)).not.toContain("/private/session.jsonl");
+		expect(JSON.stringify(event)).not.toContain("PRIVATE");
+	});
+
+	test("a malformed measurement degrades to an event without the projection", () => {
+		const malformed = [
+			{ ...measurement, basis: "vibes" },
+			{ ...measurement, threshold: 0.6 },
+			{ ...measurement, utilization: "high" },
+			{ ...measurement, tokens: -1 },
+			{ ...measurement, context_window: 0 },
+			// utilization below the crossed threshold is not a pressure event
+			{ ...measurement, utilization: 0.6, threshold: 0.7, tokens: 120_000 },
+			// tokens/context_window must equal utilization exactly
+			{ ...measurement, utilization: 0.75, tokens: 145_000 },
+		];
+		for (const [index, bad] of malformed.entries()) {
+			writeEvent(3 + index, "agent-pressure", "context_pressure", "UPDATED", { context_pressure: bad });
+		}
+		writeEvent(10, "agent-pressure", "context_pressure", "UPDATED", { context_pressure: "high" });
+		const results = scan(events, 0, []).events;
+		expect(results).toHaveLength(8);
+		expect(results.every((event) => event.kind === "context_pressure" && !("context_pressure" in event))).toBe(
+			true,
+		);
+	});
+
+	test("delivers a pressure signal in real time with its projection", async () => {
+		const pending = wait({
+			runsDir: dir,
+			runId: "run-1",
+			since: 0,
+			kinds: ["context_pressure"],
+			timeoutSeconds: 10,
+		});
+		await Bun.sleep(150);
+		writeEvent(1, "agent-pressure", "context_pressure", "UPDATED", {
+			execution_id: "exec-one",
+			agent_id: "agent-one",
+			context_pressure: measurement,
+		});
+		const result = await pending;
+		expect(result.events).toHaveLength(1);
+		expect(result.events[0].context_pressure).toEqual(measurement);
+	}, 15_000);
+
+	test("reconnecting at the watermark never replays the same pressure signal", async () => {
+		writeEvent(1, "agent-pressure", "context_pressure", "UPDATED", { context_pressure: measurement });
+		const first = await wait({
+			runsDir: dir,
+			runId: "run-1",
+			since: 0,
+			kinds: ["context_pressure"],
+			timeoutSeconds: 2,
+		});
+		expect(first.events).toHaveLength(1);
+		const second = await wait({
+			runsDir: dir,
+			runId: "run-1",
+			since: first.seq,
+			kinds: ["context_pressure"],
+			timeoutSeconds: 1,
+		});
+		expect(second.events).toEqual([]);
+		expect(second.seq).toBe(first.seq);
+	});
+});

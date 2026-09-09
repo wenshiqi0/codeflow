@@ -6,6 +6,7 @@ import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { canonicalJson } from "../../lib/canonical";
 import { loadCommitment, loadTerminalReceipt, recordRuntimeFailure } from "../../lib/commitment";
 import { recordExecutionFailure } from "../../lib/executions";
+import { CONTEXT_PRESSURE_THRESHOLDS, deliverEvent } from "../../lib/events";
 import { CONTEXT_BUDGET_ABORT_MARKER } from "../../lib/runtime-signals";
 import {
 	appendRunFactsRecord,
@@ -50,6 +51,7 @@ export default function (pi: ExtensionAPI) {
 	let previousWorkerContextHash: string | null = null;
 	let workerContextShape: WorkerContextShape | null = null;
 	let notifiedThresholdIndex = -1;
+	let emittedPressureThresholdIndex = -1;
 	let contextBudgetStopTriggered = false;
 
 	pi.on("before_agent_start", (event) => {
@@ -98,9 +100,13 @@ export default function (pi: ExtensionAPI) {
 		const rawToolShape = canonicalShape(activeTools);
 		const toolSchemaShape: ToolSchemaShape = { ...rawToolShape, count: activeTools.length };
 		const usage = ctx.getContextUsage();
+		const measurement = usage && usage.tokens !== null && Number.isFinite(usage.tokens) && usage.tokens >= 0
+			&& Number.isFinite(usage.contextWindow) && usage.contextWindow > 0 && Number.isFinite(usage.tokens / usage.contextWindow)
+			? { tokens: usage.tokens, context_window: usage.contextWindow, utilization: usage.tokens / usage.contextWindow }
+			: undefined;
 		const contextUtilization: ContextUtilization =
-			usage && usage.tokens !== null && usage.contextWindow > 0
-				? { value: usage.tokens / usage.contextWindow, basis: "pi_estimate" }
+			measurement
+				? { value: measurement.utilization, basis: "pi_estimate" }
 				: { basis: "unknown" };
 		const facts = {
 			execution_rounds_elapsed: executionRoundsElapsed,
@@ -158,6 +164,24 @@ export default function (pi: ExtensionAPI) {
 				message_prefix_invalidated: messagePrefixInvalidated,
 			},
 		);
+		const pressureThresholdIndex = measurement
+			? CONTEXT_PRESSURE_THRESHOLDS.findLastIndex(threshold => measurement.utilization >= threshold)
+			: -1;
+		if (measurement && pressureThresholdIndex > emittedPressureThresholdIndex) {
+			const threshold = CONTEXT_PRESSURE_THRESHOLDS[pressureThresholdIndex];
+			const agentId = process.env.CODEFLOW_TEAM_AGENT_ID;
+			deliverEvent({
+				stagingDir: paths.tmp, targetDir: paths.events, counterPath: paths.eventSeq,
+				subject: executionId, kind: "context_pressure", status: "UPDATED",
+				payload: {
+					task_id: taskId, goal_id: goalId, execution_id: executionId,
+					...(agentId ? { agent_id: agentId } : {}), ...(commitmentId ? { commitment_id: commitmentId } : {}),
+					context_pressure: { basis: "pi_estimate", threshold, ...measurement },
+					summary: `Context utilization is ${(measurement.utilization * 100).toFixed(1)}% (Pi estimate); reached the ${threshold * 100}% threshold.`,
+				},
+			});
+			emittedPressureThresholdIndex = pressureThresholdIndex;
+		}
 		const shouldStopForContextBudget = !contextBudgetStopTriggered
 			&& contextUtilization.basis === "pi_estimate"
 			&& contextUtilization.value >= AGENT_CONTEXT_STOP_UTILIZATION;

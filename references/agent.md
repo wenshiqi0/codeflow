@@ -54,9 +54,12 @@ Task and Agent commands are on `codeteam`, not extra semantic report actions.
 ## Report and reconcile
 
 Use `collaborate` to inspect current state, claim work, and report
-progress, completion, or what blocks it. A `progress` Receipt keeps the
-Commitment open; `completed` and `blocked` close it. Include observable effects
-and remaining work when useful. If no sound Commitment can be made, report
+progress, a finished contribution, or what blocks it. A `progress` Receipt keeps
+the Commitment open; `completed` and `blocked` close it. A `completed` Receipt
+ends your contribution and may include remaining work. Describe what you
+established, changed, and verified, cite observable effects, and record unfinished
+work in `remaining`. Use `blocked` for a concrete impediment to further work.
+If no sound Commitment can be made, report
 `blocked` before claiming so the outer caller can revise the boundary.
 Runtime failures are events, not Receipts.
 
@@ -69,8 +72,12 @@ or to repeat token counts. Continue working after progress; it is not a request
 for approval and does not close the Commitment.
 
 Reconcile your assigned work, observable effects, remaining work, and current
-repository state before a terminal Receipt. After finding a narrow boundary,
-widen work or evidence coverage before closing. Then end the response normally;
+repository state before a terminal Receipt. When your contribution is ready to
+hand back, submit a `completed` Receipt with an accurate account of its scope,
+verification limits, and remaining work, then end the response normally. Under
+context pressure, leave this report while enough context remains to describe
+the next work clearly. The outer caller uses the report and evidence to decide
+what to continue, how to divide it, and whether to reuse this session;
 there is no inner orchestration loop or automatic child-feedback continuation.
 In an outer-managed Team, your Receipt closes only your Commitment, not the Task.
 The outer caller evaluates the combined evidence and explicitly finishes the Task.

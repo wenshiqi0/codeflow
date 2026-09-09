@@ -334,7 +334,7 @@ export function finishTeam(paths: RunPaths, status: "completed" | "blocked", sum
 		if (agents(paths).some(a => busy(a) || a.pid !== null || a.runner_pid !== null || listTeamTools(paths, a.execution_id).length > 0)) throw new Error("Task finish requires every Agent execution to stop");
 		const history = commitmentHistory(paths);
 		if (history.some(v => !v.folded.terminal)) throw new Error("Task finish requires every open Commitment to be reconciled by its Agent; resume interrupted work first");
-		if (status === "completed" && !history.some(v => v.folded.terminal?.status === "completed")) throw new Error("Task completion requires actual completed work evidence");
+		if (status === "completed" && !history.some(v => v.folded.terminal)) throw new Error("Task completion requires a recorded Agent Receipt");
 		team.status = status; team.summary = summary.trim(); team.remaining = remaining.map(s => s.trim()); team.finished_at = nowIso();
 		writeJsonAtomic(teamFile(paths), team);
 		event(paths, "run_finished", status.toUpperCase(), { summary: eventSummary(team.summary), remaining: team.remaining, orchestration: "outer" });
