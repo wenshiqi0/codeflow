@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "pools": [
+    {
+      "model": "zhipuai-coding-plan/glm-5.3",
+      "accounts": [
+        { "id": "main", "apiKeyEnv": "ZHIPU_API_KEY" },
+        { "id": "backup", "apiKeyEnv": "ZHIPU_BACKUP_API_KEY" }
+      ]
+    }
+  ]
+}

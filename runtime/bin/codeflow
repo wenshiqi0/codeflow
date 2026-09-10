@@ -30,6 +30,7 @@ usage: codeflow <command> [options]
   sub <task-id> [--since <seq>]     subscribe to a Task's event stream
   goals <task-id>                   show reduced Task and Goal state
   usage <task-id>                   show per-turn and total model usage
+  accounts add|list|use             register model accounts and select the active account
   audit <task-id> [--force]         gated audit of a blocked or stale Task
   stop <task-id>                    terminate a running Task
   benchmark run|report              SWE-bench Verified benchmark runs and reports
@@ -65,6 +66,10 @@ case "${1:-}" in
     ;;
   ls|sub|goals|usage|stop|audit)
     exec bun "$CLI_DIR/outer.ts" "$@"
+    ;;
+  accounts)
+    shift
+    exec bun "$CLI_DIR/accounts.ts" "$@"
     ;;
   benchmark)
     # Pure report/help/fixture paths need no provider environment. Real runs

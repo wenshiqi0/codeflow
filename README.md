@@ -122,6 +122,37 @@ codemark report --run <historical-codemark-dir>
 provider 来自 `runtime/models.json` 及可选本机 `runtime/providers.json`；不要提交密钥。
 外层宿主模型和上下文由宿主设置，不由 Pi 的 `agent.model` 冒充。
 
+### 固定模型的账号池
+
+为同一 `provider/model` 注册多个账号，正常请求持续使用当前账号。遇到认证失败、余额不足、
+限流、超时、网络或服务端错误时，按注册顺序尝试下一个账号；切换后的账号会继续被使用，
+直到它再次报错。当前账号持久保存并由同一配置下的 Pi 进程共享。
+
+密钥通过环境变量或 `$CODEFLOW_HOME/.env` 提供（`CODEFLOW_HOME` 默认 `~/.codeflow`）。
+注册命令只接收环境变量名：
+
+```bash
+codeflow accounts add zhipuai-coding-plan/glm-5.3 main --key-env ZHIPU_API_KEY
+codeflow accounts add zhipuai-coding-plan/glm-5.3 backup --key-env ZHIPU_BACKUP_API_KEY
+codeflow accounts list
+
+# 手动切换，后续请求持续使用所选账号
+codeflow accounts use zhipuai-coding-plan/glm-5.3 backup
+```
+
+每次模型请求最多尝试池内每个账号一次，全部失败后报告账号池耗尽；参数、上下文和工具错误
+直接报告，主动取消会停止请求。模型、会话和已完成的工具结果保留。未配置账号池的模型沿用
+现有单 key 配置。账号列表与状态只展示账号标识及环境变量名。
+
+配置文件为 `$CODEFLOW_HOME/account-pools.json`（可用 `CODEFLOW_ACCOUNT_POOLS_PATH` 指定），
+格式见 [账号池示例](runtime/account-pools.json.example)。共享状态保存在
+`$CODEFLOW_HOME/account-pool-state`（可用 `CODEFLOW_ACCOUNT_POOL_STATE_DIR` 指定）。
+注册账号后，新启动的 Pi 进程加载配置；自动或手动切换会在现有进程的下一次请求生效。
+池内请求在完整响应成功后交付文本及工具调用，失败尝试的部分输出会丢弃；等待期间的真实
+生成活动仍会更新存活检查。切换原因以不含密钥的 `[codeflow:account-switch]` 记录输出。
+每个账号默认允许连续 10 分钟无生成活动，超过后切换；可通过
+`CODEFLOW_ACCOUNT_POOL_TIMEOUT_MS` 调整这个等待窗口（正整数，单位毫秒）。
+
 ```bash
 bun install
 bun run typecheck

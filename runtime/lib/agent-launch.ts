@@ -6,6 +6,7 @@ export const AGENT_TOOL_ALLOWLIST = ["read", "write", "edit", "bash", "collabora
 export function agentExtensions(runtimeDir: string): string[] {
 	return [
 		"provider-profiles",
+		"account-pool",
 		"codeflow-organization",
 		"team-shell",
 		"host-guard",

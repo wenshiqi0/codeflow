@@ -121,6 +121,7 @@ describe("capability is the loaded tool surface", () => {
 		);
 		expect(childExtensions).toEqual([
 			"provider-profiles",
+			"account-pool",
 			"codeflow-organization",
 			"team-shell",
 			"host-guard",
