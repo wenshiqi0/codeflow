@@ -133,6 +133,9 @@ function igniteWatchdog(runId: string, processKind: "root" | "worker"): void {
 }
 
 export default function (pi: ExtensionAPI) {
+	// Pooled attempts keep partial content private until a complete response.
+	// Real content events still establish progress for the existing idle guard.
+	pi.events.on("codeflow:account-pool-progress", () => markProgress(currentCtx));
 	pi.on("before_agent_start", () => {
 		if (ignited) return;
 		ignited = true;

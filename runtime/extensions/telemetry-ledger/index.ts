@@ -154,11 +154,11 @@ export default function (pi: ExtensionAPI): void {
 		requestStartedAt = new Date().toISOString();
 	});
 
-	pi.on("message_end", (event) => {
-		const message = asRecord(event.message);
+	const recordMessage = (value: unknown) => {
+		const message = asRecord(value);
 		if (message.role !== "assistant") return;
 		const rawUsage = asRecord(message.usage);
-		const hasUsage = typeof event.message === "object" && event.message !== null && "usage" in message;
+		const hasUsage = typeof value === "object" && value !== null && "usage" in message;
 		// Pi's assistant message timestamp marks the message/request origin, not
 		// when message_end is observed. Use the event boundary's wall clock so
 		// request_started_at -> at measures the completed provider round.
@@ -233,7 +233,9 @@ export default function (pi: ExtensionAPI): void {
 			},
 		};
 		appendAttemptUsageRecord(usageFile, record);
-	});
+	};
+	pi.on("message_end", event => recordMessage(event.message));
+	pi.events.on("codeflow:account-pool-discarded", recordMessage);
 
 	pi.on("tool_call", (event) => {
 		const emitting = lastEmitting;

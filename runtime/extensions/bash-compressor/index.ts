@@ -21,6 +21,7 @@ const RUNTIME_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const CONFIG_FILE = path.join(RUNTIME_DIR, "config.json");
 const PI_PATH = path.join(RUNTIME_DIR, "bin", "pi");
 const PROVIDER_PROFILES_EXTENSION = path.join(RUNTIME_DIR, "extensions", "provider-profiles", "index.ts");
+const ACCOUNT_POOL_EXTENSION = path.join(RUNTIME_DIR, "extensions", "account-pool", "index.ts");
 export const ZIPPER_TIMEOUT_MS = 20_000;
 
 interface CompressionService {
@@ -52,6 +53,7 @@ export function runZipper(prompt: string, externalSignal?: AbortSignal): Promise
 			"--system-prompt", service.systemPrompt,
 			"--no-extensions",
 			"--extension", PROVIDER_PROFILES_EXTENSION,
+			"--extension", ACCOUNT_POOL_EXTENSION,
 			"--no-context-files",
 			"--no-session",
 			"--no-tools",

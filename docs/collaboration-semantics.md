@@ -152,6 +152,12 @@ Runtime crash、provider failure、取消、超时、
 输出截断、缺少 Claim/Receipt 都是事件，不是模型语义结果。Receipt 不得承载日志、diff、
 指标标签或私有 checkpoint；观测从真实事件与状态推导，不要求模型声明统计事实。
 
+可选的固定模型账号池在 provider request 内切换 API key，不创建新的 Agent、execution、
+Commitment 或会话。正常请求持续使用共享的当前账号；账号或服务故障触发有界切换，
+每次请求最多尝试每个账号一次。参数、上下文、工具错误和主动取消不触发切换。
+池内账号全部失败后仍是 Runtime/provider failure，由外层检查；不伪造 Receipt 或自动恢复
+Worker。当前账号的持久状态仅记录账号标识，密钥由请求进程的环境变量解析。
+
 ## 5. Context 与恢复
 
 每次 assignment 启动时追加确定性的当前 Goal、必要根 Goal 摘要、当前 Goal 的历史

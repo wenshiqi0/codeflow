@@ -78,7 +78,8 @@ test("telemetry records request start and message_end wall time as provider late
 	process.env.CODEFLOW_BENCHMARK_DRIVER_LEDGER_DIR = root;
 	try {
 		const handlers = new Map<string, (event: any) => void>();
-		telemetryLedger({ on(name: string, handler: (event: any) => void) { handlers.set(name, handler); } } as never);
+		const register = (name: string, handler: (event: any) => void) => { handlers.set(name, handler); };
+		telemetryLedger({ on: register, events: { on: register } } as never);
 		handlers.get("turn_start")?.({ turnIndex: 0 });
 		await Bun.sleep(25);
 		const messageOrigin = Date.now() + 60_000;
