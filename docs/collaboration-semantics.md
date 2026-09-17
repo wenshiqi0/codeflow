@@ -52,7 +52,22 @@ NDJSON 流，同一进程跨越 spawn、idle 和 followup，Task 收口或观察
 增量；必须区分“刚有活动”“进程仍存活”和“工作正确完成”。历史缺少归属的 usage
 不猜测归属。`sub` 保留为有界历史/诊断读取，不再要求外层反复 sub + timeout。
 
-宿主应保留一个异步监听句柄，在程序层处理空的传输等待，只把有意义的变化交回外层。
+`--quiet` 把同一个监听变成后台长脚本：过程不写 stdout，全部 NDJSON 追加到
+`<run>/watch.ndjson`（`--log` 可改路径），只在退出时打印一行 `watch_result`，
+包含 `outcome`、`status`、`summary`、`remaining`、`last_seq`、去重后的 attention 与
+最后一次 agents 快照。退出码区分 Task 结论、Runtime 中断与待决策：0 completed（或观察者
+取消）、2 blocked、3 进程消失/身份不符/execution interrupted、4 settled（Task 仍 open
+但没有执行在跑，只能由外层推进）、1 其他失败。settled 不设首轮宽限：已经 settled 正是
+调用方要的答案；但没有任何 Agent 的 Task 不算 settled，首次派工前启动的 watch 继续等待。
+`--stay-on-settled` 保留跨 idle 期持有单一进程的旧行为。中途审计
+由用户主动发起：`status`、`inspect`、仓库 commit 与该 journal，都不消耗外层注意力。
+`--quiet` 隐含“失败即退出”；`inactive` 默认只记录不退出（安静不等于死亡），
+需要它唤醒时显式加 `--wake-on-idle`。首个观察周期就已经存在的异常视为继承状态，
+只产生 attention 不退出，重启的观察者因此不会立刻自杀。流式模式行为不变，
+结尾同样追加这一行 `watch_result`。
+
+宿主应保留一个异步监听句柄，在程序层处理空的传输等待，只把有意义的变化交回外层；
+优先用后台进程跑 `--quiet`，让进程退出本身成为唤醒信号。
 CLI 本身不保证能唤醒已经结束的宿主对话。观测不启动模型，也不读取 session、
 transcript 或隐藏推理。事件投影除 enum/summary 外允许携带 Task/Goal/Agent/execution/
 Commitment/Receipt 的受限标识符，便于直接 inspect；`context_pressure` 事件还投影经过

@@ -18,7 +18,7 @@ codeteam followup <task> <agent-id> "<focus>"
 codeteam resume <task> <agent-id> "<focus>"
 codeteam status <task>
 codeteam inspect <task> [--goal <id> | --commitment <id> | --receipt <id>]
-codeteam watch <task> [--since <seq>] [--idle <seconds>]
+codeteam watch <task> --quiet [--since <seq>] [--idle <seconds>] [--log <path>] [--wake-on-idle]
 codeteam sub <task> [--since <seq>] [--kind <kind>,...] [--timeout <seconds>]
 codeteam usage <task>
 codeteam finish <task> --status completed|blocked --summary "<summary>" [--remaining "<work>"]
@@ -38,8 +38,15 @@ Runtime 不因 Claim 状态拦截普通工程工具。内层
 派工响应直接回显 Goal/focus 原文及是否复用上下文；外层在当前对话展示这些输入。
 执行中在重要发现、实现和验证节点给简短 progress 回执，不逐轮播报 usage。
 
-观察一个 Task 时保留一个异步 `watch` 进程/会话。它持续输出有意义的 NDJSON 变化，
-跨越 Agent idle 和 followup，Task 收口后退出。usage 增量按 Agent/execution 静默
+观察一个 Task 时保留一个异步 `watch` 进程/会话，默认用 `--quiet` 跑成后台长脚本：
+过程不写 stdout，全部 NDJSON 追加到 `<run>/watch.ndjson`，退出时只打印一行
+`watch_result`（outcome、status、summary、remaining、last_seq、attention、agents），
+退出码 0 completed / 2 blocked / 3 进程消失或执行中断 / 4 settled（Task 仍 open 但无执行在跑，
+等外层决策）/ 1 其他失败。中途审计由用户
+主动发起：`status`、`inspect`、仓库 commit 与该 journal 都随时可读。`--quiet` 隐含
+“失败即退出”，无活动默认只记录，需要唤醒时显式 `--wake-on-idle`；首个观察周期就已存在
+的异常视为继承状态，重启观察者不会立即退出。不加 `--quiet` 则保持流式输出，
+逐条 NDJSON 跨越 Agent idle 和 followup，结尾同样追加 `watch_result`，Task 收口后退出。usage 增量按 Agent/execution 静默
 延长无活动观察窗口，不让忙碌同伴掩盖另一个 Worker 的停滞；`--idle` 默认 300 秒，
 无活动只提醒检查，既不是判死也不是执行超时。取消观察不停止 Worker。底层文件
 通知和兜底扫描在程序内处理，不再要求模型反复调用 `sub + timeout`。`sub` 仍可用于

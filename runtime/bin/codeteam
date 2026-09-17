@@ -22,7 +22,11 @@ usage: codeteam <command> [options]
   resume <task> <agent-id> '<focus>'
   status <task>
   inspect <task> [--goal id|--commitment id|--receipt id]
-  watch <task> [--since seq] [--idle seconds]  # continuous NDJSON; usage extends patience silently
+  watch <task> [--quiet] [--since seq] [--idle seconds] [--log path]
+               [--wake-on-idle] [--stay-on-settled]
+               # --quiet: background script; journal on disk, one watch_result line,
+               # exit 0 completed / 2 blocked / 3 runtime interruption /
+               #      4 settled, awaiting an outer decision / 1 failure
   sub <task> [--since seq] [--timeout seconds]
   usage <task>
   finish <task> --status completed|blocked --summary '<result>' [--remaining '<work>']
