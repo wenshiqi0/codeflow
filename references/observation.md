@@ -28,27 +28,18 @@ It then prints one line:
  "attention":[],"agents":[…],"log":"…/watch.ndjson","exit_code":0}
 ```
 
-| exit | meaning |
-| --- | --- |
-| 0 | Task `completed`, or an observer you cancelled |
-| 2 | Task `blocked`; `remaining` explains what is left |
-| 3 | Runtime interruption: process missing, identity mismatch, interrupted execution |
-| 4 | settled: the Task is open, nothing is executing, the outer loop must decide |
-| 1 | another failure; stderr carries the message |
+[`SKILL.md`](../SKILL.md) lists what each exit code means. Two of them are why a
+quiet watch exists at all.
 
-Exit code 3 is the reason a quiet watch exists: a dead Worker reaches the outer
-loop as a process exit rather than as a line nobody is reading. It means the
-execution needs inspection, not that the work failed, and never that a Receipt
-should be invented. Reconcile with `status` and `inspect`, then decide whether
-to `resume`.
+Exit `3` carries a dead Worker to the outer loop as a process exit rather than
+as a line nobody is reading. It means the execution needs inspection, not that
+the work failed, and never that a Receipt should be invented. Reconcile with
+`status` and `inspect`, then decide whether to `resume`.
 
 Exit `4` is the end of an assignment round, not an error: every Agent is idle or
 interrupted, no process is alive, and the Task stays open until the outer loop
 runs `followup`, `spawn`, or `finish`. Take the decision, then start the next
-watch with `--since <last_seq>`. A Task that has never assigned work is not
-settled — a watch started before the first assignment keeps waiting — and
-`--stay-on-settled` restores the older behavior of holding one process across
-idle periods.
+watch with `--since <last_seq>`.
 
 A failure condition already true in the watch's first cycle is inherited, not
 observed: it produces an `attention` record and does not raise exit `3`.
