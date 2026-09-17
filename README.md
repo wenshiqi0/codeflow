@@ -18,7 +18,8 @@ codeteam followup <task> <agent-id> "<focus>"
 codeteam resume <task> <agent-id> "<focus>"
 codeteam status <task>
 codeteam inspect <task> [--goal <id> | --commitment <id> | --receipt <id>]
-codeteam watch <task> --quiet [--since <seq>] [--idle <seconds>] [--log <path>] [--wake-on-idle]
+codeteam watch <task> --quiet [--since <seq>] [--idle <seconds>] [--log <path>]
+                     [--wake-on-idle] [--stay-on-settled]
 codeteam sub <task> [--since <seq>] [--kind <kind>,...] [--timeout <seconds>]
 codeteam usage <task>
 codeteam finish <task> --status completed|blocked --summary "<summary>" [--remaining "<work>"]
@@ -38,19 +39,19 @@ Runtime 不因 Claim 状态拦截普通工程工具。内层
 派工响应直接回显 Goal/focus 原文及是否复用上下文；外层在当前对话展示这些输入。
 执行中在重要发现、实现和验证节点给简短 progress 回执，不逐轮播报 usage。
 
-观察一个 Task 时保留一个异步 `watch` 进程/会话，默认用 `--quiet` 跑成后台长脚本：
-过程不写 stdout，全部 NDJSON 追加到 `<run>/watch.ndjson`，退出时只打印一行
-`watch_result`（outcome、status、summary、remaining、last_seq、attention、agents），
-退出码 0 completed / 2 blocked / 3 进程消失或执行中断 / 4 settled（Task 仍 open 但无执行在跑，
-等外层决策）/ 1 其他失败。中途审计由用户
-主动发起：`status`、`inspect`、仓库 commit 与该 journal 都随时可读。`--quiet` 隐含
-“失败即退出”，无活动默认只记录，需要唤醒时显式 `--wake-on-idle`；首个观察周期就已存在
-的异常视为继承状态，重启观察者不会立即退出。不加 `--quiet` 则保持流式输出，
-逐条 NDJSON 跨越 Agent idle 和 followup，结尾同样追加 `watch_result`，Task 收口后退出。usage 增量按 Agent/execution 静默
-延长无活动观察窗口，不让忙碌同伴掩盖另一个 Worker 的停滞；`--idle` 默认 300 秒，
-无活动只提醒检查，既不是判死也不是执行超时。取消观察不停止 Worker。底层文件
-通知和兜底扫描在程序内处理，不再要求模型反复调用 `sub + timeout`。`sub` 仍可用于
-历史/诊断读取。宿主需要保留异步句柄；CLI 本身不能唤醒已结束的宿主对话。
+派工后用 `watch --quiet` 起一个后台进程：过程不写 stdout，全部 NDJSON 追加到
+`<run>/watch.ndjson`，退出时只打印一行 `watch_result`，退出码给出被唤醒的原因
+（0 completed / 1 其他失败 / 2 blocked / 3 进程消失或执行中断 / 4 settled，即 Task 仍 open
+但没有执行在跑）。一个 quiet watch 覆盖一个派工轮次：退出后决定 followup / spawn / finish，
+再带 `--since <last_seq>` 起下一个。中途审计由用户主动发起，`status`、`inspect`、仓库 commit
+与该 journal 随时可读，不消耗外层注意力。
+
+`--idle` 默认 300 秒，是观察窗口不是执行时限：无活动只发一条 attention，不退出，
+也不是判死；usage 增量按 Agent/execution 静默延长该窗口，不让忙碌同伴掩盖另一个
+Worker 的停滞。取消观察不停止 Worker。完整的退出码语义与宿主消费方式见
+[`SKILL.md`](SKILL.md) 和 [`references/observation.md`](references/observation.md)。
+不加 `--quiet` 则保持流式输出，结尾同样追加 `watch_result`，适合真人实时阅读或没有
+后台进程的宿主。`sub` 仍可用于历史/诊断读取。CLI 本身不能唤醒已结束的宿主对话。
 `watch` 同时输出持久化的 `context_pressure` 事件：按 execution 在 50%、70%、80%
 压力升级时各通知一次，携带 Pi 用量估计、窗口大小和触发阈值；80% 信号先于预算中断。
 外层结合回执判断接续工作，断线后可用 `--since` 继续读取。

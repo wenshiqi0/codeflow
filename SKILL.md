@@ -65,7 +65,8 @@ codeteam start [--model provider/model] '<user outcome>'
 codeteam goal <task> <goal-id> '<distinct outcome>' [--depends a,b]
 codeteam spawn <task> [--goal id] '<bounded focus>'
 codeteam status <task>
-codeteam watch <task> --quiet [--since <seq>] [--idle 300] [--log <path>] [--wake-on-idle]
+codeteam watch <task> --quiet [--since <seq>] [--idle 300] [--log <path>]
+                     [--wake-on-idle] [--stay-on-settled]
 codeteam inspect <task> [--goal id|--commitment id|--receipt id]
 codeteam followup <task> <agent-id> '<related next assignment>'
 codeteam resume <task> <agent-id> '<recovery focus>'
@@ -77,48 +78,50 @@ codeteam finish <task> --status blocked --summary '<blocker>' --remaining '<work
 
 `start` creates metadata, not a model Manager. Assignments return immediately.
 Busy Agents and full capacity reject new assignments without queueing or
-waiting for model work. Run one `watch --quiet` per active Task as a background
-process and keep its handle across followups. Quiet mode is a long-running
-script, not a conversation: stdout stays empty while work proceeds, every
-observation (assignments, Claims, progress Receipts, context pressure, status
-changes, attention notices) is appended to `<run>/watch.ndjson`, and the process
-exits with a single `watch_result` line carrying the Task status, summary,
-remaining work, last event seq, and the attention notices it saw. There is
-nothing to narrate in the quiet middle, so do not narrate it.
+waiting for model work. After assigning, run `watch --quiet` as a background
+process: stdout stays empty while work proceeds, every observation (assignments,
+Claims, progress Receipts, context pressure, status changes, attention notices)
+is appended to `<run>/watch.ndjson`, and the process exits with one
+`watch_result` line carrying the Task status, summary, remaining work,
+`last_seq`, and the attention notices it saw. There is nothing to narrate in the
+quiet middle, so do not narrate it.
 
-Exit codes: `0` completed (also an observer you cancelled), `2` blocked, `3` a
-Runtime interruption (process missing, identity mismatch, interrupted
-execution), `4` settled — the Task is still open but nothing is executing, so it
-waits on your decision — and `1` another failure. The code says why you were
-woken, never whether the user's outcome holds: read `watch_result`, then
-`inspect` the Receipts and the integrated diff before deciding anything.
+The exit code says why you were woken, never whether the user's outcome holds:
 
-A quiet watch therefore runs one assignment round: launch it after assigning,
-work while it is silent, and take it back when it exits. Exit `4` is the normal
-end of a round — `followup`, `spawn`, or `finish`, then start the next watch
-with `--since <last_seq>`. A Task with no Agent at all is not settled, so a
-watch started before the first assignment keeps waiting. `--stay-on-settled`
-keeps the old behavior of holding one process across idle periods; use it only
-when something else will wake you.
+| exit | meaning |
+| --- | --- |
+| `0` | Task `completed`, or an observer you cancelled |
+| `1` | another failure |
+| `2` | Task `blocked` |
+| `3` | Runtime interruption: process missing, identity mismatch, interrupted execution |
+| `4` | settled: the Task is open with nothing executing, so it waits on you |
 
-Audit the middle when you or the user actually need it, not on a schedule:
-`status`, `inspect`, the repository's own commits and diffs, and that journal
-are all available on demand and cost the Task nothing while unread. Streaming
-mode (no `--quiet`) prints every message and still ends with `watch_result`; use
-it for a live human reader or a host without background processes, knowing it
-spends model attention per line. `sub` remains a bounded historical/diagnostic
-read, not a replacement for one persistent observer.
+A quiet watch therefore runs one assignment round. Launch it after assigning,
+work while it is silent, then read `watch_result` and `inspect` the Receipts and
+the integrated diff before deciding anything. Exit `4` is the normal end of a
+round: `followup`, `spawn`, or `finish`, then start the next watch with
+`--since <last_seq>`. A Task with no Agent at all is not settled, so a watch
+started before the first assignment keeps waiting. `--stay-on-settled` holds one
+process across idle periods instead; use it only when something else wakes you.
 
-`--idle` is an observation window, not a Worker time limit. A quiet execution
-produces one attention notice, not a declaration of death or an automatic retry,
-and does not end a quiet watch unless you asked for it with `--wake-on-idle`.
-Inactivity means an execution may still be working; settled means none is. A
-failure already true in the watch's first cycle only notifies, so restarting an
-observer over a known-dead execution does not exit instantly — that Task is
-settled instead, and exit `4` says so. Task finish closes the watch;
-cancelling the observer does not stop Workers.
-Usage arrives after a model response, so a pending request or long tool can be
-alive without new usage. A busy peer's usage never proves this Worker is active.
+`--idle` is an observation window, not a Worker time limit: a quiet execution
+produces one attention notice and no exit unless you passed `--wake-on-idle`.
+Inactivity means an execution may still be working — usage only arrives after a
+model response, and a busy peer's usage never proves this Worker is alive —
+while settled means none is working. A failure already true in the watch's first
+cycle only notifies, so restarting an observer over a known-dead execution
+reports that settled Task instead of a fresh interruption. Cancelling an
+observer never stops a Worker.
+
+Audit the middle only when you or the user need it: `status`, `inspect`, the
+repository's own commits and diffs, and that journal cost the Task nothing while
+unread. Streaming mode (no `--quiet`) prints every message and still ends with
+`watch_result`; it suits a live human reader or a host with no background
+process, at the price of model attention per line. `sub` stays a bounded
+historical read. A CLI alone cannot inject a message into an already-ended host
+turn, so do not claim background wakeup without host support;
+[`references/observation.md`](references/observation.md) carries both
+host-side consumption patterns.
 
 `context_pressure` events report Pi's context estimate at the 50%, 70%, and 80%
 thresholds, once per rising level in each execution. Read their Agent/execution
@@ -127,14 +130,6 @@ work and session reuse. They are durable events, available after reconnecting
 with `--since`; they do not change work state. The 80% event precedes the existing
 context-budget interruption, whose stopped execution must be reconciled before
 recovery. Missing estimates produce no pressure signal.
-
-Start the quiet watch with whatever the host uses for background commands, then
-continue useful work. A CLI alone cannot inject a message into an already-ended
-host turn; do not claim background wakeup without host support. If the host has
-no background process, or a live stream is wanted, read
-[`references/observation.md`](references/observation.md) for both consumption
-patterns and handle transport-level empty waits programmatically with the same
-handle: they are not new Task events and need no narration.
 
 Read Claims early when their boundaries affect your decisions. If an Agent
 prematurely narrows the question, expand evidence coverage yourself or assign
