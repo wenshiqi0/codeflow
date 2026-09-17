@@ -6,7 +6,7 @@
 # project, under .codeflow/runs/. That is why RUNTIME_DIR is resolved relative
 # to this file while the working directory becomes the target repository root.
 #
-# This binary provides the single-executor baseline, metadata, and benchmark
+# This binary provides the single-executor baseline and Task metadata
 # entrypoints. codeteam is the outer loop's asynchronous Agent control plane.
 # Pi semantic actions live only in its three-action collaborate tool.
 #
@@ -16,8 +16,6 @@ set -euo pipefail
 
 RUNTIME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLI_DIR="$RUNTIME_DIR/cli"
-BENCHMARK_CLI="$(cd "$RUNTIME_DIR/.." && pwd)/benchmark/cli/benchmark.ts"
-CODEFLOW_HOME="${CODEFLOW_HOME:-$HOME/.codeflow}"
 
 usage() {
   cat <<'EOF'
@@ -33,8 +31,6 @@ usage: codeflow <command> [options]
   accounts add|list|use             register model accounts and select the active account
   audit <task-id> [--force]         gated audit of a blocked or stale Task
   stop <task-id>                    terminate a running Task
-  benchmark run|report              SWE-bench Verified benchmark runs and reports
-  benchmark prepare|evaluate        outer-managed candidate preparation/evaluation
 
 Use codeteam for asynchronous assignment and Agent session reuse.
 
@@ -71,19 +67,6 @@ case "${1:-}" in
     shift
     exec bun "$CLI_DIR/accounts.ts" "$@"
     ;;
-  benchmark)
-    # Pure report/help/fixture paths need no provider environment. Real runs
-    # continue below so the normal CODEFLOW_HOME/.env loading happens before
-    # the benchmark driver computes the provider-network exemption set.
-    if [[ "${2:-}" != "run" ]]; then
-      exec bun "$BENCHMARK_CLI" "$@"
-    fi
-    for arg in "$@"; do
-      case "$arg" in
-        --fixture|-h|--help) exec bun "$BENCHMARK_CLI" "$@" ;;
-      esac
-    done
-    ;;
 esac
 
 # Credentials come from the caller's exported shell environment, and from
@@ -97,9 +80,6 @@ case "${1:-}" in
     COMMAND="$1"
     shift
     exec bun "$CLI_DIR/run.ts" "$COMMAND" "$@"
-    ;;
-  benchmark)
-    exec bun "$BENCHMARK_CLI" "$@"
     ;;
   *)
     if [[ -n "${1:-}" ]]; then

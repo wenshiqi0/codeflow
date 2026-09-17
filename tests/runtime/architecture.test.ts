@@ -39,10 +39,7 @@ describe("single current architecture", () => {
 	});
 
 	test("active runtime has no compatibility identity or mutable-state API", () => {
-		const files = [
-			...filesBelow(path.join(root, "runtime")),
-			...filesBelow(path.join(root, "benchmark")),
-		].filter((file) => /\.(ts|json|sh)$/.test(file));
+		const files = filesBelow(path.join(root, "runtime")).filter((file) => /\.(ts|json|sh)$/.test(file));
 		const source = files.map((file) => fs.readFileSync(file, "utf8")).join("\n");
 		for (const residue of [
 			"CODEFLOW_AGENT_ROLE",

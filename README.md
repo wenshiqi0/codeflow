@@ -78,50 +78,10 @@ codeflow exec [--model <provider/model>] "<objective>"
 
 ## SWE-bench
 
-```bash
-codeflow benchmark run --dataset <pinned-snapshot> --instances <allowlist-file> --out <new-dir>
-codeflow benchmark report --run <run-dir>
-```
-
-`benchmark run` 默认测试单执行器，仍使用新工作区、数据集 allowlist 投影和官方
-SWE-bench evaluator；它不是外层编排质量的测试。新结果带 `single-executor` 标识，
-历史结果的方法未声明时保留 `legacy-unspecified`，不按新行为重新解释。
-
-外层编排与官方评测通过两个无模型入口解耦：
-
-```bash
-codeflow benchmark prepare --dataset <pinned-snapshot> --instances <allowlist-file> --out <new-dir>
-# prepare 返回每个 case 的 workspace 和 issue.json；每个 case 只有一个 fresh attempt。
-# 外层在该 workspace 中读取允许的 issue，使用 codeteam start/spawn/followup 等完成工作。
-# fix 保持未提交；确认全部执行器退出后，使用 codeteam finish 显式收口 Task。
-codeflow benchmark evaluate --run <prepared-dir> --task <task-id> --model-config <outer-setup-label>
-codeflow benchmark report --run <prepared-dir>
-```
-
-`prepare` 不启动模型或 evaluator；只发布四字段 issue、来源元数据及新工作区。
-`evaluate` 检查 Task 所属工作区、finished 状态、全部执行器退出和原 baseline，随后
-一次性冻结未提交 diff 并调用既有官方 evaluator。同一 case 不隐式重复评测或覆盖补丁；
-失败的冻结/评测目录保留为证据，需要新尝试时重新 prepare。
-
-官方 verdict 只说明候选补丁通过与否，不等于外层宿主上下文已隔离、完整成本已测量，
-或取得可提交排行榜的官方分数。两阶段报告明确标记宿主上下文及网络隔离未证明、
-`not_official: true`；Pi 使用量单列，外层宿主 usage 为不可得，不填零。禁止把 gold patch、
-隐藏测试、官方结果或历史答案送回正在受测的执行器。
-
-详见 [Benchmark contract](docs/benchmark-contract.md)。
-
-## Codemark 历史报告
-
-旧 Codemark 测量的是内层 Agent 的首次组织轮次。该 live 模式已退役：任何旧 issue、
-stdin、`--model` 或 `--out` 运行方式都会明确报错，不启动模型、不创建测量产物。
-
-```bash
-codemark report --run <historical-codemark-dir>
-```
-
-此命令只读取冻结的 `initial-organization.json` v1。历史 `manager`、`manager_claim`、
-`manager_progress`、`*_worker_*` 字段原样保留；模拟委派或终态不代表真实执行，更不能
-作为外层 `codeteam` 编排能力的测量。
+基准准备、官方评测与报告由独立的 Codemark 项目负责，不在这个仓库里。它只通过公开的
+`codeteam` JSON 命令集成，不导入本仓库源码。外层在 Codemark 准备好的 workspace 中用
+`codeteam start/spawn/followup` 完成工作、保持 fix 未提交，再由 Codemark 冻结未提交 diff
+并调用官方 evaluator。
 
 ## 配置、安装与验证
 
@@ -167,8 +127,8 @@ bun test
 ./scripts/doctor.sh
 ```
 
-仓库可作为宿主 skill 使用。公开命令包括 `codeteam`、`codeflow`、历史读取用的
-`codemark`。在仓库根目录将真实 Runtime 加入当前 shell 的 PATH，不覆盖现有启动脚本：
+仓库可作为宿主 skill 使用。公开命令是 `codeteam` 与 `codeflow`。在仓库根目录将真实
+Runtime 加入当前 shell 的 PATH，不覆盖现有启动脚本：
 
 ```bash
 export PATH="$PWD/runtime/bin:$PATH"

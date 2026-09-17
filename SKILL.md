@@ -13,8 +13,7 @@ do not treat an assignment as proof that it will remain a leaf. Coordinate from
 actual Task state without introducing a separate Manager role.
 
 Read [`docs/collaboration-semantics.md`](docs/collaboration-semantics.md) before
-running or changing the protocol. For SWE-bench preparation and official
-evaluation, also read [`docs/benchmark-contract.md`](docs/benchmark-contract.md).
+running or changing the protocol.
 
 ## Organize from actual work
 
@@ -174,10 +173,11 @@ remaining work. `finish` requires all execution processes stopped and every
 Commitment terminal; it records your Task conclusion without fabricating an
 Agent Receipt. Your Task conclusion is based on the combined evidence and
 remaining work, independently of the Agents' terminal status labels. A
-`completed` Receipt alone is not independent correctness or official benchmark
-evidence. Runtime activity and an idle Agent are not proof that the user outcome
+`completed` Receipt alone is not independent correctness or an external
+evaluator's verdict. Runtime activity and an idle Agent are not proof that the user outcome
 is achieved.
 
 `codeflow exec` remains a single-executor convenience/baseline, not outer-loop
-orchestration. Old `codemark` Manager live tests are retired; historical report
-reading is not a measurement of this architecture.
+orchestration. Benchmark preparation, official evaluation, and reporting live in
+the separate Codemark project, which integrates only through these public
+`codeteam` commands.

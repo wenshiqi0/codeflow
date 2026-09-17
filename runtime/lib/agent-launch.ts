@@ -13,7 +13,6 @@ export function agentExtensions(runtimeDir: string): string[] {
 		"codeflow-context",
 		"bash-compressor",
 		"usage-ledger",
-		"telemetry-ledger",
 		"agent-watchdog",
 	].map((name) => path.join(runtimeDir, "extensions", name, "index.ts"));
 }

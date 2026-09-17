@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-# Historical measurement reports only; never load credentials or run a Manager.
-set -euo pipefail
-RUNTIME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec bun "$RUNTIME_DIR/../codemark/cli/run.ts" "$@"
