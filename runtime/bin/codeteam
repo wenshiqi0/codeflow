@@ -22,7 +22,11 @@ usage: codeteam <command> [options]
   resume <task> <agent-id> '<focus>'
   status <task>
   inspect <task> [--goal id|--commitment id|--receipt id]
-  watch <task> [--since seq] [--idle seconds]  # continuous NDJSON; usage extends patience silently
+  watch <task> [--quiet] [--since seq] [--idle seconds] [--log path]
+               [--wake-on-idle] [--stay-on-settled]
+               # --quiet: background script; journal on disk, one watch_result line,
+               # exit 0 completed / 2 blocked / 3 runtime interruption /
+               #      4 settled, awaiting an outer decision / 1 failure
   sub <task> [--since seq] [--timeout seconds]
   usage <task>
   finish <task> --status completed|blocked --summary '<result>' [--remaining '<work>']
@@ -60,27 +64,9 @@ case "${1:-}" in
     ;;
 esac
 
-# Only actual assignment execution needs provider credentials. Read-only status,
-# Task creation, and control commands never source credential configuration.
+# Provider credentials are inherited from the caller's exported shell
+# environment; no command here sources a credential file.
 case "$1" in
-  spawn|followup|resume)
-    CODEFLOW_CONFIG_HOME="${CODEFLOW_HOME:-$HOME/.codeflow}"
-    INHERITED_KIMI_API_KEY="${KIMI_API_KEY:-}"
-    INHERITED_ZHIPU_API_KEY="${ZHIPU_API_KEY:-}"
-    INHERITED_ZHIPU_BACKUP_API_KEY="${ZHIPU_BACKUP_API_KEY:-}"
-    INHERITED_MIMO_API_KEY="${MIMO_API_KEY:-}"
-    INHERITED_DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-}"
-    if [[ -f "$CODEFLOW_CONFIG_HOME/.env" ]]; then
-      set -a
-      source "$CODEFLOW_CONFIG_HOME/.env"
-      set +a
-    fi
-    [[ -n "$INHERITED_KIMI_API_KEY" ]] && export KIMI_API_KEY="$INHERITED_KIMI_API_KEY"
-    [[ -n "$INHERITED_ZHIPU_API_KEY" ]] && export ZHIPU_API_KEY="$INHERITED_ZHIPU_API_KEY"
-    [[ -n "$INHERITED_ZHIPU_BACKUP_API_KEY" ]] && export ZHIPU_BACKUP_API_KEY="$INHERITED_ZHIPU_BACKUP_API_KEY"
-    [[ -n "$INHERITED_MIMO_API_KEY" ]] && export MIMO_API_KEY="$INHERITED_MIMO_API_KEY"
-    [[ -n "$INHERITED_DEEPSEEK_API_KEY" ]] && export DEEPSEEK_API_KEY="$INHERITED_DEEPSEEK_API_KEY"
-    ;;
   sub|usage) exec bun "$CLI_DIR/outer.ts" "$@" ;;
 esac
 exec bun "$CLI_DIR/team.ts" "$@"

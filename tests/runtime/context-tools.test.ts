@@ -128,7 +128,6 @@ describe("capability is the loaded tool surface", () => {
 			"codeflow-context",
 			"bash-compressor",
 			"usage-ledger",
-			"telemetry-ledger",
 			"agent-watchdog",
 		]);
 		expect(rootArgs).not.toContain("--no-session");

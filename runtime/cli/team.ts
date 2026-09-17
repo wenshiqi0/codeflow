@@ -6,16 +6,17 @@ import { RunPaths, DEFAULT_RUNS_DIR } from "../lib/paths";
 import { assertTeamId, assignmentView, createTeam, createTeamGoal, finishTeam, launchTeamAgent, stopTeamAgents, teamStatus } from "../lib/team";
 import { inspectCommitment, inspectGoal, inspectReceipt } from "../lib/inspection";
 import { loadTask } from "../lib/tasks";
-import { watchTeam } from "../lib/team-watch";
+import { WatchJournal, watchTeam, type TeamWatchOutcome } from "../lib/team-watch";
 
 interface Args { positional: string[]; options: Record<string, string> }
-function parse(values: string[], allowed: string[]): Args {
+function parse(values: string[], allowed: string[], flags: string[] = []): Args {
 	const positional: string[] = []; const options: Record<string, string> = {};
 	for (let i = 0; i < values.length; i++) {
 		const item = values[i];
 		if (!item.startsWith("--")) { positional.push(item); continue; }
 		const key = item.slice(2);
-		if (!allowed.includes(key) || key in options) throw new Error(`unknown or repeated option: ${item}`);
+		if (key in options || (!allowed.includes(key) && !flags.includes(key))) throw new Error(`unknown or repeated option: ${item}`);
+		if (flags.includes(key)) { options[key] = "true"; continue; }
 		const value = values[++i];
 		if (!value || value.startsWith("--")) throw new Error(`${item} requires a value`);
 		options[key] = value;
@@ -56,24 +57,41 @@ export async function main(argv: string[]): Promise<number> {
 				result = assignmentView(paths, launchTeamAgent(paths, { agentId: positional[1], focus: positional[2], mode: command })); break;
 			}
 			case "watch": {
-				const { positional, options } = parse(values, ["since", "idle"]);
-				count(positional, 1, "watch <task> [--since seq] [--idle seconds]");
+				const { positional, options } = parse(values, ["since", "idle", "log"], ["quiet", "wake-on-idle", "stay-on-settled"]);
+				count(positional, 1, "watch <task> [--since seq] [--idle seconds] [--quiet] [--log path] [--wake-on-idle] [--stay-on-settled]");
+				const paths = pathsFor(positional[0]);
+				// Quiet is the background-script shape: nothing on stdout until the run
+				// ends, a journal on disk for on-demand audit, and a Runtime failure
+				// ends the process instead of waiting for a reader that is asleep.
+				const quiet = options.quiet !== undefined;
+				const logPath = options.log !== undefined ? path.resolve(options.log)
+					: quiet ? path.join(paths.runDir, "watch.ndjson") : null;
+				const journal = new WatchJournal(paths, logPath);
 				const controller = new AbortController();
 				const cancel = () => controller.abort();
 				const outputError = (error: NodeJS.ErrnoException) => {
 					if (error.code === "EPIPE") cancel(); else throw error;
 				};
 				process.on("SIGINT", cancel); process.on("SIGTERM", cancel); process.stdout.on("error", outputError);
+				let outcome: TeamWatchOutcome = "cancelled";
 				try {
-					await watchTeam(pathsFor(positional[0]), {
+					outcome = await watchTeam(paths, {
 						since: options.since === undefined ? undefined : Number(options.since),
 						idleMs: options.idle === undefined ? undefined : Number(options.idle) * 1000,
-						signal: controller.signal, onMessage: message => console.log(JSON.stringify(message)),
+						wakeOnFailure: quiet, wakeOnIdle: options["wake-on-idle"] !== undefined,
+						// A background watch hands an idle Task back by exiting; --stay-on-settled
+						// keeps the old behavior for a caller that really wants to hold the process.
+						wakeOnSettled: quiet && options["stay-on-settled"] === undefined,
+						signal: controller.signal,
+						onMessage: message => { journal.record(message); if (!quiet) console.log(JSON.stringify(message)); },
 					});
+					const result = journal.result(outcome);
+					console.log(JSON.stringify(result));
+					return result.exit_code;
 				} finally {
+					journal.close();
 					process.off("SIGINT", cancel); process.off("SIGTERM", cancel); process.stdout.off("error", outputError);
 				}
-				return 0;
 			}
 			case "status": {
 				const { positional } = parse(values, []); count(positional, 1, "status <task>");

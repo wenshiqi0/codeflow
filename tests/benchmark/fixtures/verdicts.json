@@ -1,8 +1,0 @@
-{
-  "schema_version": 1,
-  "instances": {
-    "demo/demo-1001": "resolved",
-    "demo/demo-1002": "unresolved",
-    "demo/demo-1005": "resolved"
-  }
-}

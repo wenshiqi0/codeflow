@@ -18,7 +18,7 @@ codeteam followup <task> <agent-id> "<focus>"
 codeteam resume <task> <agent-id> "<focus>"
 codeteam status <task>
 codeteam inspect <task> [--goal <id> | --commitment <id> | --receipt <id>]
-codeteam watch <task> [--since <seq>] [--idle <seconds>]
+codeteam watch <task> --quiet [--since <seq>] [--idle <seconds>] [--log <path>] [--wake-on-idle]
 codeteam sub <task> [--since <seq>] [--kind <kind>,...] [--timeout <seconds>]
 codeteam usage <task>
 codeteam finish <task> --status completed|blocked --summary "<summary>" [--remaining "<work>"]
@@ -38,8 +38,15 @@ Runtime 不因 Claim 状态拦截普通工程工具。内层
 派工响应直接回显 Goal/focus 原文及是否复用上下文；外层在当前对话展示这些输入。
 执行中在重要发现、实现和验证节点给简短 progress 回执，不逐轮播报 usage。
 
-观察一个 Task 时保留一个异步 `watch` 进程/会话。它持续输出有意义的 NDJSON 变化，
-跨越 Agent idle 和 followup，Task 收口后退出。usage 增量按 Agent/execution 静默
+观察一个 Task 时保留一个异步 `watch` 进程/会话，默认用 `--quiet` 跑成后台长脚本：
+过程不写 stdout，全部 NDJSON 追加到 `<run>/watch.ndjson`，退出时只打印一行
+`watch_result`（outcome、status、summary、remaining、last_seq、attention、agents），
+退出码 0 completed / 2 blocked / 3 进程消失或执行中断 / 4 settled（Task 仍 open 但无执行在跑，
+等外层决策）/ 1 其他失败。中途审计由用户
+主动发起：`status`、`inspect`、仓库 commit 与该 journal 都随时可读。`--quiet` 隐含
+“失败即退出”，无活动默认只记录，需要唤醒时显式 `--wake-on-idle`；首个观察周期就已存在
+的异常视为继承状态，重启观察者不会立即退出。不加 `--quiet` 则保持流式输出，
+逐条 NDJSON 跨越 Agent idle 和 followup，结尾同样追加 `watch_result`，Task 收口后退出。usage 增量按 Agent/execution 静默
 延长无活动观察窗口，不让忙碌同伴掩盖另一个 Worker 的停滞；`--idle` 默认 300 秒，
 无活动只提醒检查，既不是判死也不是执行超时。取消观察不停止 Worker。底层文件
 通知和兜底扫描在程序内处理，不再要求模型反复调用 `sub + timeout`。`sub` 仍可用于
@@ -71,50 +78,10 @@ codeflow exec [--model <provider/model>] "<objective>"
 
 ## SWE-bench
 
-```bash
-codeflow benchmark run --dataset <pinned-snapshot> --instances <allowlist-file> --out <new-dir>
-codeflow benchmark report --run <run-dir>
-```
-
-`benchmark run` 默认测试单执行器，仍使用新工作区、数据集 allowlist 投影和官方
-SWE-bench evaluator；它不是外层编排质量的测试。新结果带 `single-executor` 标识，
-历史结果的方法未声明时保留 `legacy-unspecified`，不按新行为重新解释。
-
-外层编排与官方评测通过两个无模型入口解耦：
-
-```bash
-codeflow benchmark prepare --dataset <pinned-snapshot> --instances <allowlist-file> --out <new-dir>
-# prepare 返回每个 case 的 workspace 和 issue.json；每个 case 只有一个 fresh attempt。
-# 外层在该 workspace 中读取允许的 issue，使用 codeteam start/spawn/followup 等完成工作。
-# fix 保持未提交；确认全部执行器退出后，使用 codeteam finish 显式收口 Task。
-codeflow benchmark evaluate --run <prepared-dir> --task <task-id> --model-config <outer-setup-label>
-codeflow benchmark report --run <prepared-dir>
-```
-
-`prepare` 不启动模型或 evaluator；只发布四字段 issue、来源元数据及新工作区。
-`evaluate` 检查 Task 所属工作区、finished 状态、全部执行器退出和原 baseline，随后
-一次性冻结未提交 diff 并调用既有官方 evaluator。同一 case 不隐式重复评测或覆盖补丁；
-失败的冻结/评测目录保留为证据，需要新尝试时重新 prepare。
-
-官方 verdict 只说明候选补丁通过与否，不等于外层宿主上下文已隔离、完整成本已测量，
-或取得可提交排行榜的官方分数。两阶段报告明确标记宿主上下文及网络隔离未证明、
-`not_official: true`；Pi 使用量单列，外层宿主 usage 为不可得，不填零。禁止把 gold patch、
-隐藏测试、官方结果或历史答案送回正在受测的执行器。
-
-详见 [Benchmark contract](docs/benchmark-contract.md)。
-
-## Codemark 历史报告
-
-旧 Codemark 测量的是内层 Agent 的首次组织轮次。该 live 模式已退役：任何旧 issue、
-stdin、`--model` 或 `--out` 运行方式都会明确报错，不启动模型、不创建测量产物。
-
-```bash
-codemark report --run <historical-codemark-dir>
-```
-
-此命令只读取冻结的 `initial-organization.json` v1。历史 `manager`、`manager_claim`、
-`manager_progress`、`*_worker_*` 字段原样保留；模拟委派或终态不代表真实执行，更不能
-作为外层 `codeteam` 编排能力的测量。
+基准准备、官方评测与报告由独立的 Codemark 项目负责，不在这个仓库里。它只通过公开的
+`codeteam` JSON 命令集成，不导入本仓库源码。外层在 Codemark 准备好的 workspace 中用
+`codeteam start/spawn/followup` 完成工作、保持 fix 未提交，再由 Codemark 冻结未提交 diff
+并调用官方 evaluator。
 
 ## 配置、安装与验证
 
@@ -128,7 +95,7 @@ provider 来自 `runtime/models.json` 及可选本机 `runtime/providers.json`�
 限流、超时、网络或服务端错误时，按注册顺序尝试下一个账号；切换后的账号会继续被使用，
 直到它再次报错。当前账号持久保存并由同一配置下的 Pi 进程共享。
 
-密钥通过环境变量或 `$CODEFLOW_HOME/.env` 提供（`CODEFLOW_HOME` 默认 `~/.codeflow`）。
+密钥只通过调用方 shell 导出的环境变量提供，Runtime 不读取任何磁盘上的密钥文件。
 注册命令只接收环境变量名：
 
 ```bash
@@ -160,8 +127,8 @@ bun test
 ./scripts/doctor.sh
 ```
 
-仓库可作为宿主 skill 使用。公开命令包括 `codeteam`、`codeflow`、历史读取用的
-`codemark`。在仓库根目录将真实 Runtime 加入当前 shell 的 PATH，不覆盖现有启动脚本：
+仓库可作为宿主 skill 使用。公开命令是 `codeteam` 与 `codeflow`。在仓库根目录将真实
+Runtime 加入当前 shell 的 PATH，不覆盖现有启动脚本：
 
 ```bash
 export PATH="$PWD/runtime/bin:$PATH"

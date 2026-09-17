@@ -75,7 +75,6 @@ describe("host runtime guard", () => {
 		"bun /opt/codeflow/runtime/lib/team.ts",
 		"bun /opt/pi/node_modules/@earendil-works/pi-coding-agent/dist/cli.js -p nested",
 		"npx @earendil-works/pi-coding-agent -p nested",
-		"codemark task-existing",
 		'codeteam evidence run --command "codeteam spawn task-existing"',
 		'codeteam evidence run --command "pi -p nested"',
 	])("does not impose an executor-specific launch prohibition: %s", (command) => {
@@ -176,12 +175,12 @@ describe("host runtime guard", () => {
 		expect(runtimeWriteViolation(path.join(os.tmpdir(), "codeflow-product/src/app.ts"))).toBeNull();
 	});
 
-	test("allows project and evidence workspaces, including a nested benchmark workspace", () => {
+	test("allows project and evidence workspaces, including a nested attempt workspace", () => {
 		const project = path.join(os.tmpdir(), "codeflow-host-guard-product");
 		const evidence = path.join(os.tmpdir(), "codeflow-host-guard-evidence");
 		const runs = path.join(os.tmpdir(), "codeflow-host-guard-runs");
 		const env = environment(project, evidence, runs);
-		const nested = path.join(project, ".codeflow/benchmark/case/workspace/src/app.ts");
+		const nested = path.join(project, ".codeflow/workspaces/case/src/app.ts");
 		expect(runtimeWriteViolation(nested, env)).toBeNull();
 		expect(runtimeWriteViolation(path.join(evidence, "goal/commands/proof.json"), env)).toBeNull();
 		expect(runtimeBashViolation(`echo proof > ${nested}`, env)).toBeNull();

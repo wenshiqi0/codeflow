@@ -41,7 +41,6 @@ function fixture(respond: Parameters<typeof poolServer>[0], accounts = ["a", "b"
 			"--mode", "json", "--provider", "fixture", "--model", "fixed-model", "--no-extensions",
 			"--extension", path.join(repository, "runtime/extensions/account-pool/index.ts"),
 			"--extension", path.join(repository, "runtime/extensions/usage-ledger/index.ts"),
-			"--extension", path.join(repository, "runtime/extensions/telemetry-ledger/index.ts"),
 			"--no-skills", "--no-context-files", "--no-prompt-templates", "--no-session",
 			...(tools ? ["--tools", "bash"] : ["--no-tools"]), "-p", "Run the fixture request."],
 			{ cwd: dir, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
@@ -68,21 +67,18 @@ describe("account pool through real Pi and local HTTP", () => {
 		expect(result.stdout + result.stderr).not.toContain("fixture-key-a");
 	}, 20000);
 
-	test("discarded attempts retain reported usage in normal and benchmark ledgers", async () => {
+	test("discarded attempts retain reported usage in the Task ledger", async () => {
 		const f = fixture(request => request.account === "a" ? sse([
 			{ choices: [{ index: 0, delta: { role: "assistant", content: "PRIVATE_PARTIAL" }, finish_reason: null }], usage: { prompt_tokens: 11, completion_tokens: 2, total_tokens: 13 } },
 			{ error: { message: "service temporarily unavailable", type: "server_error" } },
 		]) : completion());
 		f.env.CODEFLOW_RUN_ID = "task-pool-usage";
 		f.env.CODEFLOW_RUNS_DIR = path.join(f.dir, "runs");
-		f.env.CODEFLOW_BENCHMARK_DRIVER_LEDGER_DIR = path.join(f.dir, "benchmark-ledger");
 		expect((await f.run()).messages.at(-1)?.stopReason).toBe("stop");
 		const records = readUsageRecords(new RunPaths(f.env.CODEFLOW_RUNS_DIR, f.env.CODEFLOW_RUN_ID));
 		expect(records.map(row => row.usage.input)).toEqual([11, 10]);
 		expect(records.map(row => row.usage.total_tokens)).toEqual([13, 13]);
-		const benchmark = fs.readFileSync(path.join(f.env.CODEFLOW_BENCHMARK_DRIVER_LEDGER_DIR, "usage.jsonl"), "utf8");
-		expect(benchmark.trim().split("\n").map(line => JSON.parse(line).usage.input)).toEqual([11, 10]);
-		expect(JSON.stringify(records) + benchmark).not.toMatch(/PRIVATE_PARTIAL|fixture-key-/);
+		expect(JSON.stringify(records)).not.toMatch(/PRIVATE_PARTIAL|fixture-key-/);
 	}, 20000);
 
 	test("Anthropic Messages rotates the x-api-key header and retains the replacement", async () => {

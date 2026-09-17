@@ -6,7 +6,7 @@
 # project, under .codeflow/runs/. That is why RUNTIME_DIR is resolved relative
 # to this file while the working directory becomes the target repository root.
 #
-# This binary provides the single-executor baseline, metadata, and benchmark
+# This binary provides the single-executor baseline and Task metadata
 # entrypoints. codeteam is the outer loop's asynchronous Agent control plane.
 # Pi semantic actions live only in its three-action collaborate tool.
 #
@@ -16,8 +16,6 @@ set -euo pipefail
 
 RUNTIME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLI_DIR="$RUNTIME_DIR/cli"
-BENCHMARK_CLI="$(cd "$RUNTIME_DIR/.." && pwd)/benchmark/cli/benchmark.ts"
-CODEFLOW_HOME="${CODEFLOW_HOME:-$HOME/.codeflow}"
 
 usage() {
   cat <<'EOF'
@@ -33,8 +31,6 @@ usage: codeflow <command> [options]
   accounts add|list|use             register model accounts and select the active account
   audit <task-id> [--force]         gated audit of a blocked or stale Task
   stop <task-id>                    terminate a running Task
-  benchmark run|report              SWE-bench Verified benchmark runs and reports
-  benchmark prepare|evaluate        outer-managed candidate preparation/evaluation
 
 Use codeteam for asynchronous assignment and Agent session reuse.
 
@@ -71,49 +67,19 @@ case "${1:-}" in
     shift
     exec bun "$CLI_DIR/accounts.ts" "$@"
     ;;
-  benchmark)
-    # Pure report/help/fixture paths need no provider environment. Real runs
-    # continue below so the normal CODEFLOW_HOME/.env loading happens before
-    # the benchmark driver computes the provider-network exemption set.
-    if [[ "${2:-}" != "run" ]]; then
-      exec bun "$BENCHMARK_CLI" "$@"
-    fi
-    for arg in "$@"; do
-      case "$arg" in
-        --fixture|-h|--help) exec bun "$BENCHMARK_CLI" "$@" ;;
-      esac
-    done
-    ;;
 esac
 
-# Credentials come from the environment. A global env file is a convenience for
-# keys that are the same everywhere; an exported shell variable always wins, so
-# a per-project override needs no file and leaves no trace on disk.
-INHERITED_KIMI_API_KEY="${KIMI_API_KEY:-}"
-INHERITED_ZHIPU_API_KEY="${ZHIPU_API_KEY:-}"
-INHERITED_ZHIPU_BACKUP_API_KEY="${ZHIPU_BACKUP_API_KEY:-}"
-INHERITED_MIMO_API_KEY="${MIMO_API_KEY:-}"
-INHERITED_DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-}"
-if [[ -f "$CODEFLOW_HOME/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$CODEFLOW_HOME/.env"
-  set +a
-fi
-[[ -n "$INHERITED_KIMI_API_KEY" ]] && export KIMI_API_KEY="$INHERITED_KIMI_API_KEY"
-[[ -n "$INHERITED_ZHIPU_API_KEY" ]] && export ZHIPU_API_KEY="$INHERITED_ZHIPU_API_KEY"
-[[ -n "$INHERITED_ZHIPU_BACKUP_API_KEY" ]] && export ZHIPU_BACKUP_API_KEY="$INHERITED_ZHIPU_BACKUP_API_KEY"
-[[ -n "$INHERITED_MIMO_API_KEY" ]] && export MIMO_API_KEY="$INHERITED_MIMO_API_KEY"
-[[ -n "$INHERITED_DEEPSEEK_API_KEY" ]] && export DEEPSEEK_API_KEY="$INHERITED_DEEPSEEK_API_KEY"
+# Credentials come from the caller's exported shell environment, and from
+# nowhere else. No launcher sources a file on disk: sourcing executes whatever
+# that file contains, ties the keys in use to a global path instead of the shell
+# that started the run, and hides a per-project override. Account pools name
+# environment variables for the same reason.
 
 case "${1:-}" in
   exec|resume)
     COMMAND="$1"
     shift
     exec bun "$CLI_DIR/run.ts" "$COMMAND" "$@"
-    ;;
-  benchmark)
-    exec bun "$BENCHMARK_CLI" "$@"
     ;;
   *)
     if [[ -n "${1:-}" ]]; then

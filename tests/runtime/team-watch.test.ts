@@ -5,7 +5,8 @@ import * as path from "node:path";
 import { RunPaths, writeJsonAtomic } from "../../runtime/lib/paths";
 import { assignmentView, beginAgentExecution, completeAgentExecution, createTeam, finishTeam, launchTeamAgent, loadAgent, teamStatus } from "../../runtime/lib/team";
 import { appendUsageRecord, usageRecordFromMessage, type UsageRecord } from "../../runtime/lib/usage";
-import { TeamActivityTracker, UsageActivityTail, watchTeam, type TeamWatchMessage } from "../../runtime/lib/team-watch";
+import { TeamActivityTracker, UsageActivityTail, WATCH_EXIT, WatchJournal, watchTeam,
+	type ProcessHealth, type TeamWatchMessage, type TeamWatchOptions } from "../../runtime/lib/team-watch";
 import { claimTestWork } from "./helpers";
 import { submitReceipt } from "../../runtime/lib/commitment";
 import { scan } from "../../runtime/lib/wait";
@@ -35,10 +36,10 @@ function record(paths: RunPaths, agent: ReturnType<typeof launchTeamAgent>, over
 		usage: { input: 1, output: 1, cache_read: 0, cache_write: 0, reasoning: 0, total_tokens: 2,
 			cost: { input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 } }, ...overrides };
 }
-function monitor(paths: RunPaths, idleMs = 10_000, since = 0) {
+function monitor(paths: RunPaths, idleMs = 10_000, since = 0, extra: Partial<TeamWatchOptions> = {}) {
 	const cancel = new AbortController(); const messages: TeamWatchMessage[] = []; let ended = false;
 	const done = watchTeam(paths, { since, idleMs, pollIntervalMs: 10, signal: cancel.signal,
-		processProbe: () => "alive", onMessage: m => messages.push(m) }).finally(() => { ended = true; });
+		processProbe: () => "alive", onMessage: m => messages.push(m), ...extra }).finally(() => { ended = true; });
 	monitors.push({ cancel, done }); return { cancel, done, messages, ended: () => ended };
 }
 async function until(condition: () => boolean, timeout = 2_000) {
@@ -269,5 +270,148 @@ describe("context pressure projection through the persistent stream", () => {
 		expect(event.execution_id).toBe(b.execution_id);
 		expect(event.context_pressure).toEqual({ ...measurement, utilization: 0.55, threshold: 0.5, tokens: 110_000 });
 		second.cancel.abort(); await second.done;
+	});
+});
+
+describe("silent background observation", () => {
+	test("a Runtime failure that appears while watching ends the loop for its host", async () => {
+		const { paths } = fixture(); const a = launchTeamAgent(paths, { focus: "Dies mid-flight" }, false);
+		let health: ProcessHealth = "alive";
+		const m = monitor(paths, 10_000, 0, { wakeOnFailure: true, processGraceMs: 0, processProbe: () => health });
+		await until(() => m.messages.some(x => x.type === "watching"));
+		health = "missing";
+		// A status change re-probes immediately; a live Worker is only re-checked periodically.
+		beginAgentExecution(paths, a.agent_id, a.execution_id, process.pid);
+		expect(await m.done).toBe("aborted");
+		expect(m.messages.at(-1)).toMatchObject({ type: "attention", reason: "process_missing" });
+		// Leaving is observation only: no invented Receipt, no state edit.
+		expect(loadAgent(paths, a.agent_id).status).toBe("running");
+		expect(teamStatus(paths).status).toBe("open");
+		expect(scan(paths.events, 0, ["receipt_submitted", "agent_execution_finished"]).events).toEqual([]);
+	});
+	test("a failure that predates the watch notifies without exiting a restarted observer", async () => {
+		const { paths } = fixture(); launchTeamAgent(paths, { focus: "Already dead" }, false);
+		const m = monitor(paths, 10_000, 0, { wakeOnFailure: true, processGraceMs: 0, processProbe: () => "missing" });
+		await until(() => m.messages.some(x => x.type === "attention"));
+		await Bun.sleep(60);
+		expect(m.messages.filter(x => x.type === "attention")).toHaveLength(1);
+		expect(m.ended()).toBe(false);
+		m.cancel.abort(); expect(await m.done).toBe("cancelled");
+	});
+	test("inactivity keeps a quiet watch waiting unless the caller asked to be woken", async () => {
+		const patient = fixture(); launchTeamAgent(patient.paths, { focus: "Long provider request" }, false);
+		const quiet = monitor(patient.paths, 50, 0, { wakeOnFailure: true });
+		await until(() => quiet.messages.some(x => x.type === "attention"));
+		await Bun.sleep(60);
+		expect(quiet.messages.filter(x => x.type === "attention")).toHaveLength(1);
+		expect(quiet.ended()).toBe(false);
+		// A restarted observer inherits the same silence and still keeps waiting.
+		const restarted = monitor(patient.paths, 50, 0, { wakeOnFailure: true, wakeOnIdle: true });
+		await until(() => restarted.messages.some(x => x.type === "attention"));
+		await Bun.sleep(60); expect(restarted.ended()).toBe(false);
+		quiet.cancel.abort(); restarted.cancel.abort();
+		const { paths } = fixture(); launchTeamAgent(paths, { focus: "Goes quiet after assignment" }, false);
+		const waking = monitor(paths, 50, 0, { wakeOnFailure: true, wakeOnIdle: true });
+		expect(await waking.done).toBe("aborted");
+		expect(waking.messages.at(-1)).toMatchObject({ type: "attention", reason: "inactive" });
+	});
+	test("an open Task with nothing executing hands control back to the outer loop", async () => {
+		const { paths } = fixture(); const a = launchTeamAgent(paths, { focus: "One assignment" }, false);
+		const running = monitor(paths, 10_000, 0, { wakeOnFailure: true, wakeOnSettled: true });
+		await until(() => running.messages.some(x => x.type === "watching"));
+		await Bun.sleep(60);
+		// A reserved or running execution is not settled work.
+		expect(running.ended()).toBe(false);
+		finishAssignment(paths, a);
+		expect(await running.done).toBe("settled");
+		expect(running.messages.at(-1)).toMatchObject({ type: "settled" });
+		expect(teamStatus(paths).status).toBe("open");
+		// Already settled when the watch starts is the answer too, not a missed signal.
+		const restarted = monitor(paths, 10_000, 0, { wakeOnFailure: true, wakeOnSettled: true });
+		expect(await restarted.done).toBe("settled");
+		// Without the option the same Task keeps one patient observer.
+		const patient = monitor(paths, 10_000, 0, { wakeOnFailure: true });
+		await until(() => patient.messages.some(x => x.type === "settled"));
+		await Bun.sleep(60); expect(patient.ended()).toBe(false);
+		patient.cancel.abort(); expect(await patient.done).toBe("cancelled");
+	});
+	test("a Task that has never assigned work is not settled work", async () => {
+		const { paths } = fixture();
+		const m = monitor(paths, 10_000, 0, { wakeOnFailure: true, wakeOnSettled: true });
+		await until(() => m.messages.some(x => x.type === "watching"));
+		await Bun.sleep(80);
+		expect(m.ended()).toBe(false);
+		m.cancel.abort(); expect(await m.done).toBe("cancelled");
+	});
+	test("the journal keeps every observation and stdout keeps only the terminal result", () => {
+		const { dir, paths } = fixture();
+		const log = path.join(dir, "nested", "watch.ndjson");
+		const journal = new WatchJournal(paths, log);
+		const message = (type: TeamWatchMessage["type"], fields: Record<string, unknown> = {}, seq = 0): TeamWatchMessage =>
+			({ schema_version: 1, task_id: paths.runId, seq, type, ...fields });
+		journal.record(message("watching", { agents: [{ agent_id: "agent-1" }] }));
+		journal.record(message("attention", { execution_id: "exec-1", reason: "inactive" }, 3));
+		journal.record(message("attention", { execution_id: "exec-1", reason: "inactive" }, 4));
+		journal.record(message("attention", { execution_id: "exec-1", reason: "process_missing" }, 5));
+		journal.record(message("finished", { status: "blocked", summary: "Provider unavailable", remaining: ["Retry"] }, 5));
+		journal.close();
+		const rows = fs.readFileSync(log, "utf-8").trim().split("\n").map(line => JSON.parse(line));
+		expect(rows).toHaveLength(5);
+		const blocked = journal.result("finished");
+		expect(blocked).toMatchObject({ type: "watch_result", outcome: "finished", status: "blocked",
+			summary: "Provider unavailable", remaining: ["Retry"], last_seq: 5, log, exit_code: WATCH_EXIT.blocked });
+		// One entry per execution and reason: the journal, not the closing line, is the history.
+		expect(blocked.attention.map(x => x.reason)).toEqual(["inactive", "process_missing"]);
+		expect(blocked.agents).toEqual([{ agent_id: "agent-1" }]);
+		expect(journal.result("cancelled").exit_code).toBe(WATCH_EXIT.completed);
+		// An open Task has no status of its own; leaving one is a Runtime interruption.
+		const interrupted = new WatchJournal(paths, null);
+		interrupted.record(message("attention", { execution_id: "exec-1", reason: "process_missing" }, 2));
+		expect(interrupted.result("aborted")).toMatchObject({ status: null, remaining: [], last_seq: 2,
+			log: null, exit_code: WATCH_EXIT.runtime });
+		expect(new WatchJournal(paths, null).result("finished")).toMatchObject({ last_seq: 0, exit_code: WATCH_EXIT.failed });
+		expect(new WatchJournal(paths, null).result("settled")).toMatchObject({ status: null, exit_code: WATCH_EXIT.settled });
+	});
+	test("the quiet CLI prints one line, journals the stream, and reports the Task in its exit code", () => {
+		const { dir, paths } = fixture(); const a = launchTeamAgent(paths, { focus: "Quiet run" }, false);
+		finishAssignment(paths, a);
+		const run = (args: string[]) => Bun.spawnSync(["bash", path.join(root, "runtime/bin/codeteam"), ...args], {
+			cwd: dir, env: { ...process.env, CODEFLOW_RUNS_DIR: paths.code }, stdout: "pipe", stderr: "pipe" });
+		finishTeam(paths, "completed", "Quiet result verified");
+		const completed = run(["watch", paths.runId, "--quiet"]);
+		expect(completed.exitCode).toBe(WATCH_EXIT.completed);
+		const lines = completed.stdout.toString().trim().split("\n");
+		expect(lines).toHaveLength(1);
+		expect(JSON.parse(lines[0])).toMatchObject({ type: "watch_result", outcome: "finished", status: "completed",
+			summary: "Quiet result verified", log: path.join(paths.runDir, "watch.ndjson") });
+		const journalled = fs.readFileSync(path.join(paths.runDir, "watch.ndjson"), "utf-8").trim().split("\n").map(l => JSON.parse(l));
+		expect(journalled.map(x => x.type)).toContain("watching");
+		expect(journalled.at(-1)).toMatchObject({ type: "finished", status: "completed" });
+		const streamed = run(["watch", paths.runId]);
+		expect(streamed.exitCode).toBe(WATCH_EXIT.completed);
+		const types = streamed.stdout.toString().trim().split("\n").map(l => JSON.parse(l).type);
+		expect(types[0]).toBe("watching");
+		// The terminal result is additive: a streaming reader keeps every message it had.
+		expect(types.slice(-2)).toEqual(["finished", "watch_result"]);
+	});
+	test("the quiet CLI reports a settled open Task with its own exit code", () => {
+		const { dir, paths } = fixture(); const a = launchTeamAgent(paths, { focus: "Settled run" }, false);
+		finishAssignment(paths, a);
+		const result = Bun.spawnSync(["bash", path.join(root, "runtime/bin/codeteam"), "watch", paths.runId, "--quiet"], {
+			cwd: dir, env: { ...process.env, CODEFLOW_RUNS_DIR: paths.code }, stdout: "pipe", stderr: "pipe" });
+		expect(result.exitCode).toBe(WATCH_EXIT.settled);
+		expect(JSON.parse(result.stdout.toString().trim())).toMatchObject({ outcome: "settled", status: null });
+	});
+	test("a blocked Task and a stopped Task are different exit codes", () => {
+		const { dir, paths } = fixture(); const a = launchTeamAgent(paths, { focus: "Blocked run" }, false);
+		const c = claimTestWork(paths, { goalId: a.goal_id, workerExecutionId: a.execution_id, work: a.focus });
+		submitReceipt(paths, { commitmentId: c.id, status: "blocked", summary: "External dependency missing",
+			remaining: ["Provision the dependency"] });
+		completeAgentExecution(paths, a.agent_id, a.execution_id, { status: "idle", summary: "Blocked", exit_code: 0 });
+		finishTeam(paths, "blocked", "External dependency missing", ["Provision the dependency"]);
+		const result = Bun.spawnSync(["bash", path.join(root, "runtime/bin/codeteam"), "watch", paths.runId, "--quiet"], {
+			cwd: dir, env: { ...process.env, CODEFLOW_RUNS_DIR: paths.code }, stdout: "pipe", stderr: "pipe" });
+		expect(result.exitCode).toBe(WATCH_EXIT.blocked);
+		expect(JSON.parse(result.stdout.toString().trim())).toMatchObject({ status: "blocked", remaining: ["Provision the dependency"] });
 	});
 });

@@ -116,19 +116,107 @@ export interface TeamWatchMessage {
 	type: "watching" | "assignment" | "event" | "status" | "settled" | "attention" | "finished";
 	[key: string]: unknown;
 }
+export type TeamWatchOutcome = "finished" | "cancelled" | "aborted" | "settled";
+
+/**
+ * Exit codes for a watch consumed as a long-running script.
+ *
+ * A background observer reports through its exit status, so the codes separate
+ * the Task's own conclusion from a Runtime failure that needs the outer loop
+ * back: `blocked` is an answer, `runtime` is an interruption.
+ */
+export const WATCH_EXIT = { completed: 0, failed: 1, blocked: 2, runtime: 3, settled: 4 } as const;
+
+export interface WatchResult {
+	schema_version: 1; task_id: string; type: "watch_result";
+	outcome: TeamWatchOutcome;
+	status: string | null; summary: string | null; remaining: string[];
+	last_seq: number; attention: TeamWatchMessage[]; agents: unknown[];
+	log: string | null; exit_code: number;
+}
+
+/**
+ * Durable journal plus one terminal line.
+ *
+ * A long observation is a script, not a conversation: every message lands in an
+ * append-only file that a human or a later command can read on demand, and only
+ * the closing result reaches stdout, where a host would otherwise spend model
+ * attention on each streamed line. The journal is the audit trail for the quiet
+ * middle; Commitments, Receipts, and repository commits remain the evidence.
+ */
+export class WatchJournal {
+	private handle: number | null = null;
+	private lastSeq = 0;
+	private finished: TeamWatchMessage | null = null;
+	private agents: unknown[] = [];
+	private readonly attention = new Map<string, TeamWatchMessage>();
+	constructor(private readonly paths: RunPaths, readonly logPath: string | null) {}
+	record(message: TeamWatchMessage): void {
+		if (this.logPath) {
+			if (this.handle === null) {
+				fs.mkdirSync(path.dirname(this.logPath), { recursive: true });
+				this.handle = fs.openSync(this.logPath, "a");
+			}
+			// One write per complete row: a concurrent observer may share this file.
+			fs.writeSync(this.handle, JSON.stringify(message) + "\n");
+		}
+		this.lastSeq = Math.max(this.lastSeq, message.seq);
+		if (Array.isArray(message.agents)) this.agents = message.agents;
+		if (message.type === "finished") this.finished = message;
+		if (message.type === "attention") {
+			const key = `${String(message.execution_id)}:${String(message.reason)}`;
+			this.attention.delete(key); this.attention.set(key, message);
+			for (const old of [...this.attention.keys()].slice(0, Math.max(0, this.attention.size - 20))) this.attention.delete(old);
+		}
+	}
+	/** The terminal line. A `finished` message is the only source of a Task status. */
+	result(outcome: TeamWatchOutcome): WatchResult {
+		const status = typeof this.finished?.status === "string" ? this.finished.status : null;
+		return { schema_version: 1, task_id: this.paths.runId, type: "watch_result", outcome,
+			status, summary: typeof this.finished?.summary === "string" ? this.finished.summary : null,
+			remaining: Array.isArray(this.finished?.remaining) ? this.finished.remaining as string[] : [],
+			last_seq: this.lastSeq, attention: [...this.attention.values()], agents: this.agents, log: this.logPath,
+			exit_code: outcome === "aborted" ? WATCH_EXIT.runtime
+				: outcome === "settled" ? WATCH_EXIT.settled
+				: outcome === "cancelled" ? WATCH_EXIT.completed
+				: status === "completed" ? WATCH_EXIT.completed
+				: status === "blocked" ? WATCH_EXIT.blocked : WATCH_EXIT.failed };
+	}
+	close(): void { if (this.handle !== null) { fs.closeSync(this.handle); this.handle = null; } }
+}
+
 export interface TeamWatchOptions {
 	since?: number;
 	idleMs?: number;
 	pollIntervalMs?: number;
 	processGraceMs?: number;
 	signal?: AbortSignal;
+	/**
+	 * Leave the loop when an execution's process dies, loses its identity, or is
+	 * interrupted after this watch started. A silent background observer has no
+	 * other way to reach its host; a streaming observer already has one per line.
+	 * Conditions that were already true in the first cycle only notify: a host
+	 * that restarts a watch over a known-dead execution must not exit instantly.
+	 */
+	wakeOnFailure?: boolean;
+	/** Also leave on an inactivity notice. Off by default: quiet is not death. */
+	wakeOnIdle?: boolean;
+	/**
+	 * Leave when no Agent execution is left running while the Task is still open.
+	 * Nothing can move until the outer loop assigns, resumes, or finishes, so a
+	 * silent observer must hand control back rather than watch an empty Task.
+	 * Unlike a failure, this needs no first-cycle grace: an already-settled Task
+	 * is exactly the answer the caller needs. A Task with no Agent at all is not
+	 * settled work — a watch started before the first assignment keeps waiting.
+	 */
+	wakeOnSettled?: boolean;
 	onMessage: (message: TeamWatchMessage) => void;
 	/** Deterministic offline tests; production probes recorded PID birth identities. */
 	processProbe?: (agent: TeamAgent) => ProcessHealth;
 }
 
 /** Never edits Task state, starts a provider, stops a Worker, or reads a private session. */
-export async function watchTeam(paths: RunPaths, options: TeamWatchOptions): Promise<"finished" | "cancelled"> {
+export async function watchTeam(paths: RunPaths, options: TeamWatchOptions): Promise<TeamWatchOutcome> {
 	const since = options.since ?? 0;
 	const idleMs = options.idleMs ?? 300_000;
 	const interval = options.pollIntervalMs ?? 1_000;
@@ -141,11 +229,15 @@ export async function watchTeam(paths: RunPaths, options: TeamWatchOptions): Pro
 	const watchers = new Map<string, fs.FSWatcher>();
 	const warned = new Map<string, string>();
 	const missingSince = new Map<string, number>();
+	// Conditions the watch inherited rather than observed: a restarted observer
+	// must notify about them and keep waiting, not exit on its second cycle.
+	const inherited = new Map<string, string>();
 	const probes = new Map<string, { at: number; status: string; health: ProcessHealth }>();
 	let seq = since;
 	let first = true;
 	let previousStatus = "";
 	let settled = false;
+	let establishing = true;
 	let notified = false;
 	let wakeup: (() => void) | undefined;
 	const wake = () => { notified = true; wakeup?.(); };
@@ -205,6 +297,7 @@ export async function watchTeam(paths: RunPaths, options: TeamWatchOptions): Pro
 				emit("finished", { status: state.status, summary: state.summary, remaining: state.remaining });
 				return "finished";
 			}
+			let escalation: string | undefined;
 			for (const agent of state.agents) {
 				const current = activity.find(a => a.execution_id === agent.execution_id)!;
 				const active = agent.status === "starting" || agent.status === "running";
@@ -233,11 +326,21 @@ export async function watchTeam(paths: RunPaths, options: TeamWatchOptions): Pro
 							: "Execution needs inspection; the observer has not stopped, resumed, or changed it." });
 					warned.set(agent.execution_id, key);
 				} else if (!key) warned.delete(agent.execution_id);
+				if (!reason) inherited.delete(agent.execution_id);
+				else if (establishing) inherited.set(agent.execution_id, reason);
+				else if (inherited.get(agent.execution_id) !== reason
+					&& (reason === "inactive" ? options.wakeOnIdle : options.wakeOnFailure)) escalation ??= reason;
 			}
+			establishing = false;
+			// The notice is already emitted and journalled; leaving hands the host a
+			// terminal result instead of a stream nobody is reading.
+			if (escalation) return "aborted";
 			const quiet = state.agents.every(a => (a.status === "idle" || a.status === "interrupted") && a.pid === null && a.runner_pid === null);
 			if (quiet && !settled) emit("settled", { status: state.status, agents, open_commitments: state.open_commitments,
 				summary: "No active Agent execution. Task remains open; keep this stream for followups or explicit finish." });
 			settled = quiet;
+			// An open Task with no live execution waits on the outer loop alone.
+			if (quiet && state.agents.length > 0 && options.wakeOnSettled) return "settled";
 			// Usage-only notifications update the per-execution deadline silently.
 			if (!notified) await new Promise<void>(resolve => { wakeup = resolve; });
 			wakeup = undefined; notified = false;
