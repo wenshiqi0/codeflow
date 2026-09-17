@@ -128,7 +128,7 @@ provider 来自 `runtime/models.json` 及可选本机 `runtime/providers.json`�
 限流、超时、网络或服务端错误时，按注册顺序尝试下一个账号；切换后的账号会继续被使用，
 直到它再次报错。当前账号持久保存并由同一配置下的 Pi 进程共享。
 
-密钥通过环境变量或 `$CODEFLOW_HOME/.env` 提供（`CODEFLOW_HOME` 默认 `~/.codeflow`）。
+密钥只通过调用方 shell 导出的环境变量提供，Runtime 不读取任何磁盘上的密钥文件。
 注册命令只接收环境变量名：
 
 ```bash

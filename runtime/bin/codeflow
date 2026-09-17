@@ -86,25 +86,11 @@ case "${1:-}" in
     ;;
 esac
 
-# Credentials come from the environment. A global env file is a convenience for
-# keys that are the same everywhere; an exported shell variable always wins, so
-# a per-project override needs no file and leaves no trace on disk.
-INHERITED_KIMI_API_KEY="${KIMI_API_KEY:-}"
-INHERITED_ZHIPU_API_KEY="${ZHIPU_API_KEY:-}"
-INHERITED_ZHIPU_BACKUP_API_KEY="${ZHIPU_BACKUP_API_KEY:-}"
-INHERITED_MIMO_API_KEY="${MIMO_API_KEY:-}"
-INHERITED_DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-}"
-if [[ -f "$CODEFLOW_HOME/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$CODEFLOW_HOME/.env"
-  set +a
-fi
-[[ -n "$INHERITED_KIMI_API_KEY" ]] && export KIMI_API_KEY="$INHERITED_KIMI_API_KEY"
-[[ -n "$INHERITED_ZHIPU_API_KEY" ]] && export ZHIPU_API_KEY="$INHERITED_ZHIPU_API_KEY"
-[[ -n "$INHERITED_ZHIPU_BACKUP_API_KEY" ]] && export ZHIPU_BACKUP_API_KEY="$INHERITED_ZHIPU_BACKUP_API_KEY"
-[[ -n "$INHERITED_MIMO_API_KEY" ]] && export MIMO_API_KEY="$INHERITED_MIMO_API_KEY"
-[[ -n "$INHERITED_DEEPSEEK_API_KEY" ]] && export DEEPSEEK_API_KEY="$INHERITED_DEEPSEEK_API_KEY"
+# Credentials come from the caller's exported shell environment, and from
+# nowhere else. No launcher sources a file on disk: sourcing executes whatever
+# that file contains, ties the keys in use to a global path instead of the shell
+# that started the run, and hides a per-project override. Account pools name
+# environment variables for the same reason.
 
 case "${1:-}" in
   exec|resume)

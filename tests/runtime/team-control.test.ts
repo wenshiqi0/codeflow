@@ -10,6 +10,7 @@ import { taskState } from "../../runtime/lib/state";
 import { scan } from "../../runtime/lib/wait";
 import { classify } from "../../runtime/cli/outer";
 
+const root = path.resolve(import.meta.dir, "../..");
 const directories: string[] = [];
 const saved = { ...process.env };
 afterEach(() => {
@@ -206,5 +207,25 @@ catch (error) { console.error(error.message); process.exitCode = 1; }`;
 		expect(() => finishTeam(paths, "blocked", "Not done", ["work"])).toThrow(/execution to stop/);
 		await stopTeamAgents(paths, agent.agent_id);
 		expect(finishTeam(paths, "blocked", "No completed work", ["work"]).status).toBe("blocked");
+	});
+});
+
+describe("provider credentials", () => {
+	test("no launcher sources a credential file on any command path", () => {
+		const { dir, paths } = fixture();
+		const home = path.join(dir, "config"); fs.mkdirSync(home);
+		// Sourcing would execute these lines and exit 77 before the CLI does anything.
+		fs.writeFileSync(path.join(home, ".env"), "echo SHOULD_NOT_BE_SOURCED >&2\nexit 77\n");
+		const run = (bin: string, args: string[]) => Bun.spawnSync(["bash", path.join(root, "runtime/bin", bin), ...args], {
+			cwd: dir, env: { ...process.env, CODEFLOW_HOME: home, CODEFLOW_RUNS_DIR: paths.code },
+			stdout: "pipe", stderr: "pipe" });
+		// Assignment commands used to load the file; every path now inherits the shell instead.
+		for (const [bin, args] of [["codeteam", ["followup", paths.runId, "agent-missing", "focus"]],
+			["codeteam", ["resume", paths.runId, "agent-missing", "focus"]],
+			["codeteam", ["status", paths.runId]], ["codeflow", ["exec"]]] as Array<[string, string[]]>) {
+			const result = run(bin, args);
+			expect(result.stderr.toString()).not.toContain("SHOULD_NOT_BE_SOURCED");
+			expect(result.exitCode).not.toBe(77);
+		}
 	});
 });
